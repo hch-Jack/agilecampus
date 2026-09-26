@@ -53,6 +53,7 @@ git push -u origin feat/任务名    # 4. 推分支，到 GitHub 开 PR
 | 事项 | 约定 |
 |---|---|
 | 分支命名 | `feat/xxx`（功能）`fix/xxx`（修复）`docs/xxx`（文档） |
+| `homepage` 分支 | 团队主页专用（GitHub Pages：https://hch-Jack.github.io/agilecampus/ ），与 master 完全隔离；改主页切该分支直推，勿在 master 上修改主页文件 |
 | 提交信息 | 沿用 `类型: 简述`（feat / fix / docs / chore / ci），缘由写清 |
 | 合并方式 | PR 用 **Squash merge**，一个 PR 压成一条提交，master 历史干净 |
 | 冲突 | `git pull --rebase origin master` 本地解决，解完**重跑 lint + 测试**再推；禁对共享分支 `--force` |
