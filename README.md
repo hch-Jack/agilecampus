@@ -33,6 +33,36 @@ npm run dev
 
 测试：`npm test`
 
+## 协作开发规范
+
+`master` 受分支保护：**不能直推**，改动一律走 Pull Request，须 **CI 全绿 + 至少 1 人 approve** 方可合并（管理员亦应走此流程，仅应急可绕过）。
+
+### 日常流程
+
+```bash
+git pull --rebase origin master   # 1. 开工前先同步最新
+git checkout -b feat/任务名        # 2. 开自己的分支
+# 3. 小步提交；推送前本地先绿：
+npm run lint
+npm test
+git push -u origin feat/任务名    # 4. 推分支，到 GitHub 开 PR
+```
+
+### 约定
+
+| 事项 | 约定 |
+|---|---|
+| 分支命名 | `feat/xxx`（功能）`fix/xxx`（修复）`docs/xxx`（文档） |
+| 提交信息 | 沿用 `类型: 简述`（feat / fix / docs / chore / ci），缘由写清 |
+| 合并方式 | PR 用 **Squash merge**，一个 PR 压成一条提交，master 历史干净 |
+| 冲突 | `git pull --rebase origin master` 本地解决，解完**重跑 lint + 测试**再推；禁对共享分支 `--force` |
+| 环境与密钥 | `.env` / `.env.test` 各自本地一份，**绝不提交**；密钥（AUTH_SECRET、令牌等）不进代码与聊天记录 |
+| 认领任务 | 动手前在 Issues 或项目看板认领/登记，避免两人同时改同一模块 |
+
+### CI
+
+`.github/workflows/ci.yml`：每次 PR 或推 master 自动跑 **lint → 测试 → 构建**（测试起 Postgres 16 容器并自动建测试库，与本地同版），任一失败禁止合并。先本地 `npm run lint` + `npm test` 全绿再推，CI 只是最后一道门。
+
 ## 生产部署（一键全栈）
 
 `docker-compose.prod.yml` 编排 `db` + `migrate`（自动建表）+ `app` 三服务，同网络起，无需手动推 schema。
