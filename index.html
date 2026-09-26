@@ -327,6 +327,23 @@
     background: var(--accent-soft);
     color: var(--accent);
   }
+  .slot.link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    text-decoration: none;
+    color: var(--primary);
+  }
+  .file-tag {
+    flex: none;
+    font-size: 11px;
+    font-weight: 600;
+    background: var(--primary-soft);
+    color: var(--primary);
+    border-radius: 4px;
+    padding: 1px 6px;
+  }
 
   /* ============ 每周记录表格 ============ */
   .week-table {
@@ -514,7 +531,9 @@
     <p class="sec-note">各阶段答辩与展示材料（PPT / PDF / 视频），上线后替换为实际文件链接。</p>
     <div class="card">
       <div class="slots cols-2">
-        <div class="slot">在此上传 · 开题阶段材料</div>
+        <a class="slot link" href="assets/agilecampus-kaiti.pptx" download>
+          <span class="file-tag">PPT</span>敏捷校园 · 开题阶段材料（点击下载）
+        </a>
         <div class="slot">在此上传 · 中期检查材料</div>
       </div>
       <div class="slots" style="margin-top:12px;">
@@ -527,8 +546,11 @@
   <div class="reveal" id="reports">
     <div class="sec-title"><span class="bar"></span><h2>项目报告</h2></div>
     <div class="card">
-      <div class="slots cols-2">
-        <div class="slot">在此上传 · 开题报告</div>
+      <video controls preload="none" playsinline
+             style="width:100%; max-height:440px; border-radius:8px; background:#1a1913;"
+             src="assets/kaiti-video.mp4"></video>
+      <p class="sec-note" style="margin:8px 0 0;">开题报告视频 · 在线播放</p>
+      <div class="slots" style="margin-top:12px;">
         <div class="slot">在此上传 · 结题报告</div>
       </div>
     </div>
