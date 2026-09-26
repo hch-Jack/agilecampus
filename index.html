@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>用户说得都队 · AgileCampus 项目主页</title>
+<style>
+  /* ============ 设计变量（取自 AgileCampus 设计系统） ============ */
+  :root {
+    --canvas: #f3f1ea;
+    --surface: #ffffff;
+    --ink: #1a1913;
+    --ink-soft: #514c43;
+    --ink-faint: #928b7e;
+    --line: #e8e3d8;
+    --line-strong: #d8d1c2;
+    --primary: #294a78;
+    --primary-soft: #e8eef8;
+    --accent: #bf6a34;
+    --accent-soft: #f6e7d5;
+    --doing: #35548c;
+    --done: #3f7a58;
+    --medium: #a9722a;
+    --low: #6f7987;
+    --font-display: Georgia, "Songti SC", "SimSun", serif;
+    --font-body: "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--canvas);
+    background-image: radial-gradient(circle at 1px 1px, rgba(28, 22, 12, 0.03) 1px, transparent 0);
+    background-size: 24px 24px;
+    font-family: var(--font-body);
+    color: var(--ink);
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+
+  /* ============ 顶部阅读进度条 ============ */
+  #progress {
+    position: fixed;
+    top: 0; left: 0;
+    height: 3px;
+    width: 0%;
+    background: linear-gradient(90deg, var(--primary), var(--accent));
+    z-index: 100;
+    transition: width 0.1s linear;
+  }
+
+  .layout {
+    max-width: 1060px;
+    margin: 0 auto;
+    padding: 0 16px 56px;
+    display: flex;
+    gap: 36px;
+    align-items: flex-start;
+  }
+  .content { flex: 1; min-width: 0; }
+
+  /* ============ 左侧目录 ============ */
+  .toc {
+    position: sticky;
+    top: 24px;
+    flex: none;
+    width: 176px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 10px;
+    box-shadow: 0 1px 2px rgba(26, 25, 19, 0.04);
+  }
+  .toc-title {
+    margin: 0 0 8px;
+    padding: 0 10px 8px;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--font-display);
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--primary);
+  }
+  .toc a {
+    display: block;
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--ink-soft);
+    text-decoration: none;
+    transition: background 0.25s, color 0.25s;
+  }
+  .toc a:hover { background: var(--primary-soft); color: var(--primary); }
+  .toc a.active {
+    background: var(--primary-soft);
+    color: var(--primary);
+    font-weight: 600;
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+
+  /* 锚点滚动时避开顶部 */
+  [id] { scroll-margin-top: 24px; }
+
+  /* ============ 入场动画（首屏） ============ */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(26px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-16px); }
+  }
+  @keyframes bounceDown {
+    0%, 100% { transform: translateY(0); opacity: 0.9; }
+    50%      { transform: translateY(8px); opacity: 0.5; }
+  }
+
+  /* ============ 滚动浮现 ============ */
+  .reveal {
+    opacity: 0;
+    transform: translateY(28px);
+    transition: opacity 0.7s cubic-bezier(0.22, 0.61, 0.36, 1), transform 0.7s cubic-bezier(0.22, 0.61, 0.36, 1);
+    transition-delay: var(--d, 0s);
+  }
+  .reveal.visible { opacity: 1; transform: translateY(0); }
+
+  /* ============ 头部横幅 ============ */
+  .hero {
+    position: relative;
+    margin: 0 0 28px;
+    min-height: 100vh;
+    min-height: 100svh; /* 移动端地址栏收起的真实视口高度 */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 64px 32px 84px;
+    background: linear-gradient(160deg, #294a78 0%, #233f68 55%, #1f3758 100%);
+    color: #ffffff;
+    overflow: hidden;
+    text-align: center;
+  }
+  /* 装饰性漂浮圆 */
+  .hero .orb {
+    position: absolute;
+    border-radius: 50%;
+    pointer-events: none;
+  }
+  .orb-1 { width: 180px; height: 180px; top: -60px; right: -40px; background: rgba(255,255,255,0.05); animation: float 7s ease-in-out infinite; }
+  .orb-2 { width: 110px; height: 110px; bottom: -30px; left: -20px; background: rgba(191,106,52,0.28); animation: float 9s ease-in-out infinite 1.2s; }
+  .orb-3 { width: 56px;  height: 56px;  top: 34%; left: 12%; background: rgba(255,255,255,0.08); animation: float 6s ease-in-out infinite 0.6s; }
+  .orb-4 { width: 30px;  height: 30px;  bottom: 22%; right: 14%; background: rgba(232,238,248,0.16); animation: float 8s ease-in-out infinite 2s; }
+
+  .hero > * { position: relative; }
+  .hero .kicker {
+    font-size: 13px;
+    letter-spacing: 4px;
+    color: #bcccea;
+    animation: fadeUp 0.7s ease both 0.1s;
+  }
+  .hero h1 {
+    margin: 12px 0 10px;
+    font-family: var(--font-display);
+    font-size: 52px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    animation: fadeUp 0.7s ease both 0.22s;
+  }
+  .hero .sub {
+    font-size: 17px;
+    color: #e8eef8;
+    animation: fadeUp 0.7s ease both 0.34s;
+  }
+  .hero .chips {
+    margin-top: 22px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    animation: fadeUp 0.7s ease both 0.46s;
+  }
+  .hero .chip {
+    display: inline-block;
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 999px;
+    padding: 3px 14px;
+    font-size: 13px;
+    transition: background 0.3s;
+  }
+  .hero .chip:hover { background: rgba(255,255,255,0.24); }
+  .hero .scroll-hint {
+    position: absolute;
+    bottom: 18px; left: 50%;
+    margin-left: -7px;
+    width: 14px; height: 14px;
+    border-left: 2px solid rgba(255,255,255,0.55);
+    border-bottom: 2px solid rgba(255,255,255,0.55);
+    transform: rotate(-45deg);
+    animation: bounceDown 1.8s ease-in-out infinite;
+  }
+
+  /* ============ 章节标题 ============ */
+  .sec-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 28px 0 12px;
+  }
+  .sec-title .bar {
+    width: 4px; height: 22px;
+    border-radius: 2px;
+    background: var(--accent);
+  }
+  .sec-title h2 {
+    font-family: var(--font-display);
+    font-size: 26px;
+    font-weight: 600;
+    color: var(--primary);
+  }
+
+  .sec-note { margin: 0 0 10px; font-size: 14px; color: var(--ink-faint); }
+
+  /* ============ 通用卡片 ============ */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 24px 28px;
+    box-shadow: 0 1px 2px rgba(26, 25, 19, 0.04);
+    transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+  }
+  .card.lift:hover {
+    transform: translateY(-4px);
+    border-color: var(--line-strong);
+    box-shadow: 0 10px 24px rgba(26, 25, 19, 0.08);
+  }
+
+  /* ============ 项目简介 ============ */
+  .intro p {
+    font-size: 16px;
+    line-height: 1.9;
+    color: var(--ink-soft);
+  }
+  .intro p + p { margin-top: 12px; }
+  .intro .tags { margin-top: 16px; }
+  .tag {
+    display: inline-block;
+    border-radius: 999px;
+    padding: 3px 12px;
+    margin: 0 8px 6px 0;
+    font-size: 13px;
+  }
+  .tag.primary { background: var(--primary-soft); color: var(--primary); }
+  .tag.accent  { background: var(--accent-soft);  color: var(--accent); }
+  .tag.low     { background: #ecedf0;             color: var(--low); }
+
+  /* ============ 成员分工 ============ */
+  .member-leader {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 14px;
+    border-left: 4px solid var(--accent);
+    padding: 18px 20px;
+  }
+  .member-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  .member {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px 20px;
+  }
+  .avatar {
+    flex: none;
+    width: 48px; height: 48px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #ffffff;
+    font-size: 21px;
+    font-weight: 600;
+    font-family: var(--font-display);
+  }
+  .member .name {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .member .role {
+    margin-top: 2px;
+    font-size: 13px;
+    color: var(--ink-faint);
+  }
+  .badge-leader {
+    display: inline-block;
+    margin-left: 6px;
+    vertical-align: 1px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-radius: 999px;
+    padding: 1px 10px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  /* ============ 上传槽位 ============ */
+  .slots { display: grid; gap: 12px; }
+  .slots.cols-2 { grid-template-columns: 1fr; } /* 上传槽位每行一个 */
+  .slot {
+    border: 1.5px dashed var(--line-strong);
+    border-radius: 8px;
+    padding: 20px 16px;
+    text-align: center;
+    font-size: 14px;
+    color: var(--ink-faint);
+    transition: border-color 0.3s, background 0.3s, color 0.3s;
+  }
+  .slot:hover {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  /* ============ 每周记录表格 ============ */
+  .week-table {
+    width: 100%;
+    border-collapse: collapse;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .week-table th {
+    background: var(--primary-soft);
+    padding: 9px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--primary);
+    text-align: left;
+  }
+  .week-table td {
+    border-top: 1px solid var(--line);
+    padding: 9px 12px;
+    font-size: 14px;
+    color: var(--ink-soft);
+  }
+  .week-table td.placeholder { color: var(--ink-faint); }
+  .week-table tr:hover td { background: rgba(232, 238, 248, 0.4); }
+
+  /* ============ 项目入口 ============ */
+  .entry-link { text-decoration: none; color: inherit; display: block; }
+  .entry {
+    border-left: 4px solid var(--primary);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 20px 24px;
+  }
+  .entry .title {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--primary);
+  }
+  .entry .desc {
+    margin-top: 3px;
+    font-size: 14px;
+    color: var(--ink-soft);
+  }
+  .entry .arrow {
+    flex: none;
+    font-size: 22px;
+    color: var(--primary);
+    transition: transform 0.3s ease;
+  }
+  .entry-link:hover .arrow { transform: translateX(6px); }
+  .entry-link:hover .entry { border-left-color: var(--accent); }
+
+  /* ============ 页脚 ============ */
+  footer {
+    margin-top: 36px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--ink-faint);
+  }
+  footer a { color: var(--primary); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  /* 中屏及以下：隐藏左侧目录 */
+  @media (max-width: 960px) {
+    .toc { display: none; }
+  }
+
+  /* ============ 窄屏适配 ============ */
+  @media (max-width: 560px) {
+    .hero { padding: 48px 20px 60px; }
+    .hero h1 { font-size: 38px; }
+    .member-grid, .slots.cols-2 { grid-template-columns: 1fr; }
+    .card { padding: 18px 16px; }
+    .week-table th:nth-child(3), .week-table td:nth-child(3) { display: none; }
+  }
+
+  /* 尊重系统「减少动态效果」偏好 */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation: none !important;
+      transition: none !important;
+    }
+    .reveal { opacity: 1; transform: none; }
+  }
+</style>
+</head>
+<body>
+<div id="progress"></div>
+<div class="layout">
+
+  <!-- ============ 左侧目录 ============ -->
+  <aside class="toc">
+    <div class="toc-title">目录</div>
+    <a href="#intro">项目简介</a>
+    <a href="#members">成员分工</a>
+    <a href="#materials">阶段展示材料</a>
+    <a href="#reports">项目报告</a>
+    <a href="#weekly">每周记录</a>
+    <a href="#screenshots">成果与系统截图</a>
+    <a href="#entry">项目入口</a>
+  </aside>
+
+  <main class="content">
+
+  <!-- ============ 头部横幅 ============ -->
+  <header class="hero">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+    <div class="orb orb-4"></div>
+    <p class="kicker">AGILECAMPUS · 项目主页</p>
+    <h1>用户说得都队</h1>
+    <p class="sub">高校实验室与教学团队的轻量化敏捷项目管理平台</p>
+    <div class="chips">
+      <span class="chip">5 名成员</span>
+      <span class="chip">1 个核心项目</span>
+      <span class="chip">4 条分工线</span>
+    </div>
+    <div class="scroll-hint"></div>
+  </header>
+
+  <!-- ============ 项目简介 ============ -->
+  <div class="reveal" id="intro">
+    <div class="sec-title"><span class="bar"></span><h2>项目简介</h2></div>
+    <div class="card intro">
+      <p>在高校实验室、课程作业及学科竞赛中，团队常依赖微信群或文档推进项目，易出现分工不明、进度不透明及过程成果分散等问题；而 Jira 等企业级工具繁琐且学习成本高。</p>
+      <p>设计 AgileCampus 的意义在于为高校团队提供一款轻量化敏捷项目管理平台，帮助学生与老师实现清晰分工、持续追踪进度及一键归档成果，同时融入 AI 助手辅助任务拆解与生成周报，降低管理门槛，提升团队协作与教学科研效率。</p>
+      <div class="tags">
+        <span class="tag primary">清晰分工</span>
+        <span class="tag primary">进度透明</span>
+        <span class="tag accent">AI 助手</span>
+        <span class="tag low">一键归档</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 成员分工 ============ -->
+  <div class="reveal" id="members">
+    <div class="sec-title"><span class="bar"></span><h2>成员分工</h2></div>
+    <div class="card lift member-leader">
+      <div class="avatar" style="background:#294a78;">黄</div>
+      <div>
+        <div class="name">黄慈涵<span class="badge-leader">队长</span></div>
+        <div class="role">后端 &amp; 部署 &amp; 开发</div>
+      </div>
+    </div>
+    <div class="member-grid">
+      <div class="card lift member">
+        <div class="avatar" style="background:#294a78;">黄</div>
+        <div>
+          <div class="name">黄飞诚</div>
+          <div class="role">UI &amp; PPT 报告</div>
+        </div>
+      </div>
+      <div class="card lift member">
+        <div class="avatar" style="background:#294a78;">顾</div>
+        <div>
+          <div class="name">顾人宽</div>
+          <div class="role">后端 &amp; 资源 &amp; AI</div>
+        </div>
+      </div>
+      <div class="card lift member">
+        <div class="avatar" style="background:#294a78;">曾</div>
+        <div>
+          <div class="name">曾瑞鑫</div>
+          <div class="role">前端 · 用户 &amp; 任务 &amp; 权限 &amp; 聊天</div>
+        </div>
+      </div>
+      <div class="card lift member">
+        <div class="avatar" style="background:#294a78;">王</div>
+        <div>
+          <div class="name">王杰锋</div>
+          <div class="role">前端 · 用户 &amp; 任务 &amp; 权限 &amp; 聊天</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 阶段展示材料 ============ -->
+  <div class="reveal" id="materials">
+    <div class="sec-title"><span class="bar"></span><h2>阶段展示材料</h2></div>
+    <p class="sec-note">各阶段答辩与展示材料（PPT / PDF / 视频），上线后替换为实际文件链接。</p>
+    <div class="card">
+      <div class="slots cols-2">
+        <div class="slot">在此上传 · 开题阶段材料</div>
+        <div class="slot">在此上传 · 中期检查材料</div>
+      </div>
+      <div class="slots" style="margin-top:12px;">
+        <div class="slot">在此上传 · 结题答辩材料</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 项目报告 ============ -->
+  <div class="reveal" id="reports">
+    <div class="sec-title"><span class="bar"></span><h2>项目报告</h2></div>
+    <div class="card">
+      <div class="slots cols-2">
+        <div class="slot">在此上传 · 开题报告</div>
+        <div class="slot">在此上传 · 结题报告</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 每周记录 ============ -->
+  <div class="reveal" id="weekly">
+    <div class="sec-title"><span class="bar"></span><h2>每周记录</h2></div>
+    <div class="card" style="padding:14px 16px;">
+      <table class="week-table">
+        <tr>
+          <th style="width:90px;">周次</th>
+          <th>本周记录</th>
+          <th style="width:150px;">附件 / 链接</th>
+        </tr>
+        <tr><td>第 1 周</td><td class="placeholder">在此填写本周完成内容…</td><td class="placeholder">在此上传 / 贴链接</td></tr>
+        <tr><td>第 2 周</td><td class="placeholder">在此填写本周完成内容…</td><td class="placeholder">在此上传 / 贴链接</td></tr>
+        <tr><td>第 3 周</td><td class="placeholder">在此填写本周完成内容…</td><td class="placeholder">在此上传 / 贴链接</td></tr>
+        <tr><td>第 4 周</td><td class="placeholder">在此填写本周完成内容…</td><td class="placeholder">在此上传 / 贴链接</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- ============ 项目成果与系统截图 ============ -->
+  <div class="reveal" id="screenshots">
+    <div class="sec-title"><span class="bar"></span><h2>项目成果与系统截图</h2></div>
+    <p class="sec-note">项目成果（部署地址 / 演示视频 / 开源仓库）与系统运行截图，上线后替换为实际图片。</p>
+    <div class="card">
+      <div class="slots cols-2">
+        <div class="slot">在此上传 · 系统截图 ①</div>
+        <div class="slot">在此上传 · 系统截图 ②</div>
+        <div class="slot">在此上传 · 系统截图 ③</div>
+        <div class="slot">在此上传 · 系统截图 ④</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 项目入口 ============ -->
+  <div class="reveal" id="entry">
+    <div class="sec-title"><span class="bar"></span><h2>项目入口</h2></div>
+    <a class="entry-link" href="https://github.com/hch-Jack/agilecampus" target="_blank" rel="noopener">
+      <div class="card lift entry">
+        <div>
+          <div class="title">GitHub 仓库 · hch-Jack/agilecampus</div>
+          <div class="desc">源代码与文档托管 · PR 审核与 CI 自动门禁 · 欢迎 Star、提 Issue 与 Pull Request</div>
+        </div>
+        <div class="arrow">→</div>
+      </div>
+    </a>
+  </div>
+
+  <!-- ============ 页脚 ============ -->
+  <footer>
+    AgileCampus · 为高校团队打造的轻量化敏捷项目管理平台 ·
+    <a href="https://github.com/hch-Jack/agilecampus" target="_blank" rel="noopener">GitHub</a>
+  </footer>
+
+  </main>
+</div>
+
+<script>
+  // ============ 顶部阅读进度条 ============
+  (function () {
+    var bar = document.getElementById("progress");
+    function update() {
+      var h = document.documentElement;
+      var max = h.scrollHeight - h.clientHeight;
+      bar.style.width = (max > 0 ? (h.scrollTop / max) * 100 : 0) + "%";
+    }
+    document.addEventListener("scroll", update, { passive: true });
+    update();
+  })();
+
+  // ============ 滚动浮现动画 ============
+  (function () {
+    var items = document.querySelectorAll(".reveal");
+    if (!("IntersectionObserver" in window)) {
+      items.forEach(function (el) { el.classList.add("visible"); });
+      return;
+    }
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) {
+          e.target.classList.add("visible");
+          io.unobserve(e.target);
+        }
+      });
+    }, { threshold: 0.12 });
+    items.forEach(function (el, i) {
+      el.style.setProperty("--d", (i % 2) * 0.08 + "s"); // 相邻区块错开半拍
+      io.observe(el);
+    });
+  })();
+
+  // ============ 目录高亮（滚动定位） ============
+  (function () {
+    var links = document.querySelectorAll(".toc a");
+    if (!links.length || !("IntersectionObserver" in window)) return;
+    var map = {};
+    links.forEach(function (a) { map[a.getAttribute("href").slice(1)] = a; });
+    var spy = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        links.forEach(function (a) { a.classList.remove("active"); });
+        var link = map[e.target.id];
+        if (link) link.classList.add("active");
+      });
+    }, { rootMargin: "-30% 0px -60% 0px" });
+    Object.keys(map).forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) spy.observe(el);
+    });
+  })();
+</script>
+</body>
+</html>
