@@ -60,6 +60,19 @@ git push -u origin feat/任务名    # 4. 推分支，到 GitHub 开 PR
 | 环境与密钥 | `.env` / `.env.test` 各自本地一份，**绝不提交**；密钥（AUTH_SECRET、令牌等）不进代码与聊天记录 |
 | 认领任务 | 动手前在 Issues 或项目看板认领/登记，避免两人同时改同一模块 |
 
+### PR 评审与合并（网页操作）
+
+1. **等 CI 全绿**：PR 页自动跑 lint、测试、构建，三个检查全部打勾（约 1-2 分钟）；有红叉禁止合并
+2. **队友评审**（PR 作者不能批准自己的 PR）：
+   - 打开 PR 链接，点「**Files changed**」查看改动内容
+   - 点右上角绿色「**Review changes**」→ 选「**Approve**」→ 点「**Submit review**」
+3. **合并**：
+   - 回到「Conversation」标签，点「**Merge pull request**」旁边的小三角 → 选「**Squash and merge**」→ 点「**Confirm squash and merge**」
+   - 合并完成后点「**Delete branch**」删除功能分支
+4. **本地收尾**：`git pull --rebase origin master` 同步最新，`git branch -d 功能分支名` 删掉本地分支
+
+> 管理员紧急情况可在网页直接 Merge（保护规则不强制管理员），常规一律走评审流程。
+
 ### CI
 
 `.github/workflows/ci.yml`：每次 PR 或推 master 自动跑 **lint → 测试 → 构建**（测试起 Postgres 16 容器并自动建测试库，与本地同版），任一失败禁止合并。先本地 `npm run lint` + `npm test` 全绿再推，CI 只是最后一道门。
