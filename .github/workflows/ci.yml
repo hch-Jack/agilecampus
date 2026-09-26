@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# 同一分支/PR 的新提交取消旧的在跑任务，避免排队堆积
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # 测试库：与本地 docker-compose.yml 同为 postgres:16
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: agilecampus
+          POSTGRES_PASSWORD: agilecampus_test
+          POSTGRES_DB: agilecampus_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agilecampus"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://agilecampus:agilecampus_test@localhost:5432/agilecampus_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      # 测试需要 .env.test（本地不提交，CI 里现造），指向上面的服务容器
+      - name: Prepare test env
+        run: echo "DATABASE_URL=$DATABASE_URL" > .env.test
+
+      - name: Push test schema
+        run: npm run db:push:test
+
+      - name: Test
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+        env:
+          AUTH_SECRET: ci-placeholder-not-for-production
+          AGILECAMPUS_URL: http://localhost:3000
