@@ -88,6 +88,52 @@ describe("joinTeam", () => {
   });
 });
 
+describe("joinTeam 按注册身份定初始角色", () => {
+  beforeEach(resetDb);
+
+  async function makeUserWithIdentity(email: string, identity: "teacher" | "student") {
+    return createUser({ email, password: "password123", name: email.split("@")[0], identity });
+  }
+
+  it("导师身份加入团队即 teacher", async () => {
+    const owner = await makeUser("owner@example.com");
+    const team = await createTeam(owner.id, "东吴实验室");
+    const t = await makeUserWithIdentity("t@example.com", "teacher");
+
+    const joined = await joinTeam(t.id, team.inviteCode);
+    expect(joined.role).toBe("teacher");
+  });
+
+  it("学生身份加入团队为 student", async () => {
+    const owner = await makeUser("owner@example.com");
+    const team = await createTeam(owner.id, "东吴实验室");
+    const s = await makeUserWithIdentity("s@example.com", "student");
+
+    const joined = await joinTeam(s.id, team.inviteCode);
+    expect(joined.role).toBe("student");
+  });
+
+  it("未填身份的存量用户按 student 处理", async () => {
+    const owner = await makeUser("owner@example.com");
+    const team = await createTeam(owner.id, "东吴实验室");
+    const legacy = await makeUser("legacy@example.com");
+
+    const joined = await joinTeam(legacy.id, team.inviteCode);
+    expect(joined.role).toBe("student");
+  });
+
+  it("导师身份自建团队仍为 admin，不因身份降级", async () => {
+    const t = await makeUserWithIdentity("owner-teacher@example.com", "teacher");
+    const team = await createTeam(t.id, "东吴实验室");
+
+    const [m] = await db
+      .select()
+      .from(teamMembers)
+      .where(and(eq(teamMembers.teamId, team.id), eq(teamMembers.userId, t.id)));
+    expect(m.role).toBe("admin");
+  });
+});
+
 describe("getTeamMembership", () => {
   beforeEach(resetDb);
 
