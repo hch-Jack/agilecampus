@@ -22,6 +22,27 @@ describe("createUser", () => {
     expect(await verifyPassword("password123", row.passwordHash)).toBe(true);
   });
 
+  it("注册时填写的身份被持久化", async () => {
+    const user = await createUser({
+      email: "lusu@example.com",
+      password: "password123",
+      name: "鲁肃",
+      identity: "teacher",
+    });
+    const [row] = await db.select().from(users).where(eq(users.id, user.id));
+    expect(row.identity).toBe("teacher");
+  });
+
+  it("不传身份时存 NULL（存量调用方 / 飞书自动建号）", async () => {
+    const user = await createUser({
+      email: "passerby@example.com",
+      password: "password123",
+      name: "路人",
+    });
+    const [row] = await db.select().from(users).where(eq(users.id, user.id));
+    expect(row.identity).toBeNull();
+  });
+
   it("重复邮箱抛出可展示错误", async () => {
     await createUser({ email: "dup@example.com", password: "password123", name: "甲" });
     await expect(

@@ -16,11 +16,18 @@ import {
 export const teamRoleEnum = pgEnum("team_role", ["admin", "teacher", "student"]);
 export type TeamRole = (typeof teamRoleEnum.enumValues)[number];
 
+// 注册时自填的身份，存在用户上、跨团队复用，可空（存量用户与飞书自动建号用户为 NULL）。
+// 刻意不含 admin：admin 是团队内权限，只能由建团或团队管理员授予，
+// 枚举里没有这个值，注册路径就无法自助提权。
+export const userIdentityEnum = pgEnum("user_identity", ["teacher", "student"]);
+export type UserIdentity = (typeof userIdentityEnum.enumValues)[number];
+
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   name: text("name").notNull(),
+  identity: userIdentityEnum("identity"),
   // 飞书绑定（一对一，可空=未绑定）：open_id 为应用内用户唯一标识，发私信用之
   feishuOpenId: text("feishu_open_id").unique(),
   feishuName: text("feishu_name"),

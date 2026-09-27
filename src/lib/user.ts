@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { db } from "@/db";
-import { users } from "@/db/schema";
+import { users, type UserIdentity } from "@/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { hashPassword } from "./password";
 import { exchangeOAuthCode } from "./feishu";
@@ -10,6 +10,8 @@ export async function createUser(input: {
   email: string;
   password: string;
   name: string;
+  // 可空：存量调用方（飞书自动建号等）不传即存 NULL，加入团队时按 student 处理
+  identity?: UserIdentity | null;
 }) {
   const email = input.email.toLowerCase();
   const [existing] = await db
@@ -22,7 +24,12 @@ export async function createUser(input: {
   try {
     const [user] = await db
       .insert(users)
-      .values({ email, passwordHash, name: input.name })
+      .values({
+        email,
+        passwordHash,
+        name: input.name,
+        identity: input.identity ?? null,
+      })
       .returning({ id: users.id, email: users.email, name: users.name });
     return user;
   } catch (e) {

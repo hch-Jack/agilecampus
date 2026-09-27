@@ -19,6 +19,17 @@ export async function createTeam(userId: string, name: string) {
   });
 }
 
+// 注册时自填的身份 → 加入团队时的初始角色。
+// 只有「导师」映射为 teacher，其余（未填 / 学生）一律 student；
+// 建团者不受此影响，恒为 admin（见 createTeam）。
+export async function initialTeamRole(userId: string): Promise<TeamRole> {
+  const [user] = await db
+    .select({ identity: users.identity })
+    .from(users)
+    .where(eq(users.id, userId));
+  return user?.identity === "teacher" ? "teacher" : "student";
+}
+
 export async function joinTeam(userId: string, inviteCode: string) {
   const [team] = await db.select().from(teams).where(eq(teams.inviteCode, inviteCode));
   if (!team) throw new AppError("邀请码无效");
@@ -29,10 +40,11 @@ export async function joinTeam(userId: string, inviteCode: string) {
     .where(and(eq(teamMembers.teamId, team.id), eq(teamMembers.userId, userId)));
   if (existing) throw new AppError("已在该团队中");
 
+  const role = await initialTeamRole(userId);
   try {
     const [member] = await db
       .insert(teamMembers)
-      .values({ teamId: team.id, userId, role: "student" })
+      .values({ teamId: team.id, userId, role })
       .returning();
     return member;
   } catch (e) {

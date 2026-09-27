@@ -7,6 +7,8 @@ import { AppError } from "@/lib/errors";
 
 const registerSchema = z.object({
   name: z.string().min(1, "请填写姓名"),
+  // 只提供导师 / 学生：admin 是团队内权限，注册时不可自取
+  identity: z.enum(["teacher", "student"], "请选择身份"),
   email: z.email("邮箱格式不正确"),
   password: z.string().min(8, "密码至少 8 位").max(64, "密码最长 64 位"),
 });
