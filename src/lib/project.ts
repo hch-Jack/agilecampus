@@ -11,6 +11,24 @@ import {
 import { AppError, ForbiddenError } from "./errors";
 import { getTeamMembership, requireTeamRole } from "./team";
 
+// YYYY-MM-DD 且为真实存在之日（2026-02-30 之类 Postgres 会拒并报 500，先在此拦成可读错误）
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+function isValidDate(s: string): boolean {
+  if (!DATE_RE.test(s)) return false;
+  const d = new Date(`${s}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
+// 起止日期校验（lib 收口：Web 表单、Agent API、AI 落库三路皆汇聚于 createProject/updateProject）。
+// 任一端给值先验格式；两端齐备才比先后——ISO 日期字典序即时间序，相等合法（当日项目）。
+export function validateDateRange(startDate?: string | null, endDate?: string | null) {
+  for (const d of [startDate, endDate]) {
+    if (d && !isValidDate(d)) throw new AppError("日期格式不正确，须为 YYYY-MM-DD");
+  }
+  if (startDate && endDate && startDate > endDate)
+    throw new AppError("开始日期不能晚于结束日期");
+}
+
 export async function createProject(
   actorId: string,
   teamId: string,
@@ -22,6 +40,7 @@ export async function createProject(
   },
 ) {
   await requireTeamRole(actorId, teamId, ["admin"]);
+  validateDateRange(input.startDate, input.endDate);
   const [project] = await db
     .insert(projects)
     .values({
@@ -59,6 +78,14 @@ export async function updateProject(
   const access = await getProjectForUser(actorId, projectId);
   if (!access) throw new ForbiddenError();
   if (access.role !== "admin") throw new ForbiddenError();
+
+  // 补丁触及起止日期时，与库中现有值合并后再校验——只改名的请求不受存量数据影响
+  if (patch.startDate !== undefined || patch.endDate !== undefined) {
+    validateDateRange(
+      patch.startDate !== undefined ? patch.startDate : access.project.startDate,
+      patch.endDate !== undefined ? patch.endDate : access.project.endDate,
+    );
+  }
 
   // 显式白名单构造，勿用 ...patch 展开：运行时宽对象可夹带 teamId 等越权字段（同 task.ts 之诫）
   const [updated] = await db
