@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { eq } from "drizzle-orm";
 import { auth, signOut } from "@/lib/auth";
+import { db } from "@/db";
+import { users } from "@/db/schema";
 
 export default async function AppLayout({
   children,
@@ -9,6 +12,13 @@ export default async function AppLayout({
 }) {
   const session = await auth();
   if (!session?.user) redirect("/login");
+
+  // 读取当前用户身份（teacher / student）；老用户与飞书用户为 NULL，不显示标签
+  const [identityRow] = await db
+    .select({ identity: users.identity })
+    .from(users)
+    .where(eq(users.id, session.user.id));
+  const identity = identityRow?.identity ?? null;
 
   return (
     <div className="min-h-screen">
@@ -51,6 +61,15 @@ export default async function AppLayout({
           }}
           className="flex items-center gap-3"
         >
+          {identity && (
+            <span
+              className={`ac-identity-badge hidden sm:inline-flex ${
+                identity === "teacher" ? "ac-identity-teacher" : "ac-identity-student"
+              }`}
+            >
+              {identity === "teacher" ? "导师" : "学生"}
+            </span>
+          )}
           <span className="hidden text-sm text-ink-soft sm:inline">{session.user.name}</span>
           <button className="ac-btn-ghost">退出</button>
         </form>
