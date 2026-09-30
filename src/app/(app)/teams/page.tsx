@@ -1,25 +1,15 @@
 import Link from "next/link";
-import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
-import { db } from "@/db";
-import { teamMembers, teams } from "@/db/schema";
+import { listMyTeams } from "@/lib/team";
+import { DissolveTeamForm } from "./dissolve-team-form";
 import { TeamForms } from "./team-forms";
 
 export default async function TeamsPage() {
   const session = await auth();
   if (!session?.user) redirect("/login");
 
-  const myTeams = await db
-    .select({
-      id: teams.id,
-      name: teams.name,
-      inviteCode: teams.inviteCode,
-      role: teamMembers.role,
-    })
-    .from(teamMembers)
-    .innerJoin(teams, eq(teamMembers.teamId, teams.id))
-    .where(eq(teamMembers.userId, session.user.id));
+  const myTeams = await listMyTeams(session.user.id);
 
   return (
     <main className="mx-auto max-w-2xl space-y-8 py-8">
@@ -58,6 +48,10 @@ export default async function TeamsPage() {
                 <Link href={`/teams/${t.id}/labels`} className="ac-btn-ghost">
                   标签
                 </Link>
+                {/* 解散是不可逆的硬删除，只在管理员面前渲染这个入口 */}
+                {t.role === "admin" && (
+                  <DissolveTeamForm teamId={t.id} teamName={t.name} counts={t.counts} />
+                )}
               </div>
             </li>
           ))}
