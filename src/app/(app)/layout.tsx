@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { auth, signOut } from "@/lib/auth";
 import { db } from "@/db";
 import { users } from "@/db/schema";
+import { IdentityBadge } from "@/components/badges";
 
 export default async function AppLayout({
   children,
@@ -61,15 +62,7 @@ export default async function AppLayout({
           }}
           className="flex items-center gap-3"
         >
-          {identity && (
-            <span
-              className={`ac-identity-badge hidden sm:inline-flex ${
-                identity === "teacher" ? "ac-identity-teacher" : "ac-identity-student"
-              }`}
-            >
-              {identity === "teacher" ? "导师" : "学生"}
-            </span>
-          )}
+          <IdentityBadge identity={identity} className="hidden sm:inline-flex" />
           <span className="hidden text-sm text-ink-soft sm:inline">{session.user.name}</span>
           <button className="ac-btn-ghost">退出</button>
         </form>
