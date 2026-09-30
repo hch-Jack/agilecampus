@@ -2,12 +2,9 @@
 
 import { useActionState, useState } from "react";
 import type { TeamContentCounts } from "@/lib/team";
-import {
-  leaveTeamAction,
-  removeMemberAction,
-  updateRoleAction,
-  type FormState,
-} from "./actions";
+import type { TeamRole, UserIdentity } from "@/db/schema";
+import { IdentityBadge, RoleBadge } from "@/components/badges";
+import { leaveTeamAction, removeMemberAction, type FormState } from "./actions";
 
 export function MemberRow({
   teamId,
@@ -16,49 +13,37 @@ export function MemberRow({
   isSelf,
 }: {
   teamId: string;
-  member: { userId: string; name: string; email: string; role: string };
+  member: {
+    userId: string;
+    name: string;
+    email: string;
+    role: TeamRole;
+    identity: UserIdentity | null;
+  };
   isAdmin: boolean;
   isSelf: boolean;
 }) {
-  const [roleState, roleAction, savingRole] = useActionState<FormState, FormData>(
-    updateRoleAction,
-    null,
-  );
   const [removeState, removeAction, removing] = useActionState<FormState, FormData>(
     removeMemberAction,
     null,
   );
-  const error = roleState?.error ?? removeState?.error;
 
   return (
     <li className="ac-card p-4">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-ink">
-          {member.name} <span className="text-xs text-ink-soft">{member.email}</span>
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-ink">
+          {member.name}
+          {/* 身份取自注册时填的那个；为空的存量用户在 IdentityBadge 里退回按角色显示 */}
+          <IdentityBadge identity={member.identity} role={member.role} />
+          {member.role === "admin" && <RoleBadge role="admin" />}
+          <span className="text-xs text-ink-soft">{member.email}</span>
         </span>
-        {isAdmin && !isSelf ? (
+        {isAdmin && !isSelf && (
           <span className="flex flex-wrap items-center justify-end gap-2">
-            <form action={roleAction} className="flex items-center gap-2">
-              <input type="hidden" name="teamId" value={teamId} />
-              <input type="hidden" name="userId" value={member.userId} />
-              {/* key=role：角色变更后强制重挂载，使 defaultValue 重新采纳（非受控 select 不更新已挂载节点） */}
-              <select
-                key={member.role}
-                name="role"
-                defaultValue={member.role}
-                className="ac-field w-auto py-1 text-sm"
-              >
-                <option value="admin">admin</option>
-                <option value="teacher">teacher</option>
-                <option value="student">student</option>
-              </select>
-              <button disabled={savingRole} className="ac-btn px-2 py-1 text-xs">
-                保存
-              </button>
-            </form>
-            {/* 管理员不可移除（lib 层同此规则）。与其给一个按下去必然报错的按钮，不如说明白怎么走 */}
+            {/* 管理员不可被移除（lib 层同此规则）。改身份的权力已收回，
+                故这里不再有「先降级再移除」那条路 —— 与其指一条走不通的路，不如直说 */}
             {member.role === "admin" ? (
-              <span className="text-xs text-ink-faint">管理员不可移除，请先改其角色</span>
+              <span className="text-xs text-ink-faint">管理员不可被移除，只能自己退出</span>
             ) : (
               <form
                 action={removeAction}
@@ -77,11 +62,9 @@ export function MemberRow({
               </form>
             )}
           </span>
-        ) : (
-          <span className="text-sm text-ink-soft">{member.role}</span>
         )}
       </div>
-      {error && <p className="mt-1 text-sm text-high">{error}</p>}
+      {removeState?.error && <p className="mt-1 text-sm text-high">{removeState.error}</p>}
     </li>
   );
 }

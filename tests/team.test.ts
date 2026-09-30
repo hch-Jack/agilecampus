@@ -461,7 +461,8 @@ describe("removeMember", () => {
     expect(await getTeamMembership(teacher.id, team.id)).toBeNull();
   });
 
-  it("管理员不可被移除，提示先改角色", async () => {
+  it("管理员不可被移除（无「先改角色」这条路了）", async () => {
+    // 第二名 admin 由 updateMemberRole 造 —— 网页上已无此入口，故这里用的是测试搭台工具
     const owner = await makeUser("owner@example.com");
     const team = await createTeam(owner.id, "东吴实验室");
     const second = await makeUser("second@example.com");

@@ -113,7 +113,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 | 路由 | 说明 |
 |---|---|
 | `/teams` | 我的团队（创建/加入/解散，解散仅 admin 且不可撤销） |
-| `/teams/[teamId]/members` | 成员管理（admin 改角色/移除非管理员成员；任何人可退出团队，末位 admin 退出须先指定继任者） |
+| `/teams/[teamId]/members` | 成员管理（admin 移除非管理员成员；任何人可退出团队，末位 admin 退出须先指定继任者。成员身份由注册时选定的身份决定，加入团队即按此定角色，网页上不提供改身份入口） |
 | `/teams/[teamId]/projects` | 项目列表（admin 创建） |
 | `/teams/[teamId]/resources` | 资源占用登记 + 时长统计 |
 | `/teams/[teamId]/labels` | 团队标签管理（admin 增删改，成员只读） |

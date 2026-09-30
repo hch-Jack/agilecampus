@@ -139,6 +139,17 @@ async function assertKeepsAnAdmin(
 
 // --------------------------------------------------------------- 团队生命周期
 
+/**
+ * 改成员角色。
+ *
+ * **这不是产品能力，只是测试搭台的梯子 —— 别当后门删掉，也别从服务端代码里调用。**
+ *
+ * 用户的规矩是「身份只由注册时选定的身份决定」，故网页上的改身份入口已撤掉
+ * （members/actions.ts 不再有 updateRoleAction），产品代码里**零调用方**。
+ * 之所以留着它：tests/ 下十余处要靠它造出一个 teacher 或第二名 admin，
+ * 而「两名 admin 互相降级」那条锁回归防线（tests/team.test.ts）在网页入口撤掉后
+ * 更没有别的写法 —— 删掉这个函数等于删掉那一片覆盖。
+ */
 export async function updateMemberRole(
   actorId: string,
   teamId: string,
@@ -205,7 +216,9 @@ export async function removeMember(actorId: string, teamId: string, targetUserId
   // 一行都没删掉，分开报错才给得出可操作的提示
   const target = await getTeamMembership(targetUserId, teamId);
   if (!target) throw new AppError("该成员不在团队中");
-  throw new AppError("不能移除管理员。请先将其角色改为导师或成员，再移除。");
+  // 不再说「先改其角色再移除」—— 改角色的入口已撤掉（身份只由注册决定），
+  // 那是一句把人往死路上指的话。管理员要离开只有一条路：自己「退出团队」。
+  throw new AppError("不能移除管理员。管理员要离开，只能自己退出团队并指定接任者。");
 }
 
 /**

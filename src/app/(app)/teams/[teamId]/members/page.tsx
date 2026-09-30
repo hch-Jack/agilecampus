@@ -27,7 +27,15 @@ export default async function MembersPage({
   if (!team) notFound();
 
   const members = await db
-    .select({ userId: users.id, name: users.name, email: users.email, role: teamMembers.role })
+    .select({
+      userId: users.id,
+      name: users.name,
+      email: users.email,
+      role: teamMembers.role,
+      // 注册身份。加入团队时的角色本就是按它定的（lib/team.ts 的 initialTeamRole），
+      // 名单上把它显示出来，用户才看得见这条规则
+      identity: users.identity,
+    })
     .from(teamMembers)
     .innerJoin(users, eq(teamMembers.userId, users.id))
     .where(eq(teamMembers.teamId, teamId));

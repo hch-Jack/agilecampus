@@ -4,41 +4,15 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
-import { leaveTeam, removeMember, updateMemberRole } from "@/lib/team";
+import { leaveTeam, removeMember } from "@/lib/team";
 import { AppError, ForbiddenError } from "@/lib/errors";
 
 export type FormState = { error: string } | null;
 
-// 本页三个动作都是破坏性的、都需要「失败原因显示在控件旁边」，
+// 本页的动作都是破坏性的、都需要「失败原因显示在控件旁边」，
 // 故统一走 useActionState 那一套（与 labels/actions.ts 同范式）。
-const ROLE = z.enum(["admin", "teacher", "student"]);
-
-const roleSchema = z.object({
-  teamId: z.uuid(),
-  userId: z.uuid(),
-  role: ROLE,
-});
-
-export async function updateRoleAction(
-  _prev: FormState,
-  formData: FormData,
-): Promise<FormState> {
-  const session = await auth();
-  if (!session?.user) return { error: "请先登录" };
-
-  const parsed = roleSchema.safeParse(Object.fromEntries(formData));
-  if (!parsed.success) return { error: "参数无效" };
-
-  try {
-    await updateMemberRole(session.user.id, parsed.data.teamId, parsed.data.userId, parsed.data.role);
-  } catch (e) {
-    if (e instanceof ForbiddenError) return { error: "仅团队管理员可改角色" };
-    if (e instanceof AppError) return { error: e.message };
-    throw e;
-  }
-  revalidatePath(`/teams/${parsed.data.teamId}/members`);
-  return null;
-}
+// 改角色那个动作已撤掉：身份由注册时选定（lib/team.ts 的 initialTeamRole），
+// 网页上不再提供修改入口，故这里也没有对应的 action。
 
 const memberSchema = z.object({ teamId: z.uuid(), userId: z.uuid() });
 

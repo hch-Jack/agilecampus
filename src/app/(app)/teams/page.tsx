@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { listMyTeams } from "@/lib/team";
+import { RoleBadge } from "@/components/badges";
 import { DissolveTeamForm } from "./dissolve-team-form";
 import { TeamForms } from "./team-forms";
 
@@ -60,16 +61,4 @@ export default async function TeamsPage() {
       <TeamForms />
     </main>
   );
-}
-
-const ROLE_LABEL: Record<string, string> = { admin: "管理员", teacher: "导师", student: "成员" };
-
-function RoleBadge({ role }: { role: string }) {
-  const cls =
-    role === "admin"
-      ? "bg-primary-soft text-primary"
-      : role === "teacher"
-        ? "bg-accent-soft text-accent"
-        : "bg-low-soft text-low";
-  return <span className={`ac-badge ${cls}`}>{ROLE_LABEL[role] ?? role}</span>;
 }
