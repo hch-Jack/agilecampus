@@ -39,6 +39,8 @@ function Column({
   allTasks,
   allLabels,
   dependencies,
+  projectStart,
+  projectEnd,
 }: {
   column: BoardColumn;
   tasks: BoardTask[];
@@ -49,6 +51,8 @@ function Column({
   allTasks: { id: string; title: string }[];
   allLabels: Option[];
   dependencies: { predecessorId: string; successorId: string }[];
+  projectStart?: string | null;
+  projectEnd?: string | null;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.key });
 
@@ -74,6 +78,8 @@ function Column({
           allTasks={allTasks}
           allLabels={allLabels}
           dependencies={dependencies}
+          projectStart={projectStart}
+          projectEnd={projectEnd}
         />
       ))}
     </div>
@@ -90,6 +96,8 @@ export function Board({
   allTasks,
   allLabels,
   dependencies,
+  projectStart,
+  projectEnd,
 }: {
   projectId: string;
   tasks: BoardTask[];
@@ -100,6 +108,8 @@ export function Board({
   allTasks: { id: string; title: string }[];
   allLabels: Option[];
   dependencies: { predecessorId: string; successorId: string }[];
+  projectStart?: string | null;
+  projectEnd?: string | null;
 }) {
   const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -148,6 +158,8 @@ export function Board({
             allTasks={allTasks}
             allLabels={allLabels}
             dependencies={dependencies}
+            projectStart={projectStart}
+            projectEnd={projectEnd}
           />
         ))}
       </div>

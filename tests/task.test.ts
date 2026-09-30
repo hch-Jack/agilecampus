@@ -70,6 +70,123 @@ describe("createTask", () => {
       createTask(student.id, project.id, { title: "任务", milestoneId: m.id }),
     ).rejects.toThrow("里程碑不属于该项目");
   });
+
+  it("开始日期晚于结束日期被拒", async () => {
+    const { student, project } = await scene();
+    await expect(
+      createTask(student.id, project.id, {
+        title: "倒置任务",
+        startDate: "2026-07-10",
+        dueDate: "2026-07-01",
+      }),
+    ).rejects.toThrow("开始日期不能晚于结束日期");
+  });
+
+  it("任务日期超出项目周期被拒，边界日合法", async () => {
+    const { owner, team, student } = await scene();
+    const bounded = await createProject(owner.id, team.id, {
+      name: "限期项目",
+      startDate: "2026-07-01",
+      endDate: "2026-08-31",
+    });
+    await expect(
+      createTask(student.id, bounded.id, {
+        title: "开始过早",
+        startDate: "2026-06-30",
+        dueDate: "2026-07-10",
+      }),
+    ).rejects.toThrow("开始日期不能早于项目开始日期");
+    await expect(
+      createTask(student.id, bounded.id, {
+        title: "结束过晚",
+        startDate: "2026-08-01",
+        dueDate: "2026-09-01",
+      }),
+    ).rejects.toThrow("结束日期不能晚于项目结束日期");
+    // 与项目起止重合的边界日合法
+    const t = await createTask(student.id, bounded.id, {
+      title: "贴边任务",
+      startDate: "2026-07-01",
+      dueDate: "2026-08-31",
+    });
+    expect(t.startDate).toBe("2026-07-01");
+  });
+
+  it("项目未设周期则不设限", async () => {
+    const { student, project } = await scene();
+    const t = await createTask(student.id, project.id, {
+      title: "自由任务",
+      startDate: "2020-01-01",
+      dueDate: "2030-12-31",
+    });
+    expect(t.startDate).toBe("2020-01-01");
+  });
+});
+
+describe("updateTask 日期校验", () => {
+  beforeEach(resetDb);
+
+  it("只改一侧日期时与库中另一侧合并成对校验：先后倒置被拒", async () => {
+    const { student, project } = await scene();
+    const t = await createTask(student.id, project.id, {
+      title: "实验",
+      dueDate: "2026-07-08",
+    });
+    await expect(
+      updateTask(student.id, t.id, { startDate: "2026-07-10" }),
+    ).rejects.toThrow("开始日期不能晚于结束日期");
+  });
+
+  it("编辑后的日期必须落在项目周期内，边界日合法", async () => {
+    const { owner, team, student } = await scene();
+    const bounded = await createProject(owner.id, team.id, {
+      name: "限期项目",
+      startDate: "2026-07-01",
+      endDate: "2026-08-31",
+    });
+    const t = await createTask(student.id, bounded.id, {
+      title: "贴边任务",
+      startDate: "2026-07-01",
+      dueDate: "2026-08-31",
+    });
+    await expect(
+      updateTask(student.id, t.id, { startDate: "2026-06-30" }),
+    ).rejects.toThrow("开始日期不能早于项目开始日期");
+    await expect(
+      updateTask(student.id, t.id, { dueDate: "2026-09-01" }),
+    ).rejects.toThrow("结束日期不能晚于项目结束日期");
+    const u = await updateTask(student.id, t.id, { startDate: "2026-08-31" });
+    expect(u.startDate).toBe("2026-08-31");
+  });
+
+  it("清空一侧日期合法", async () => {
+    const { student, project } = await scene();
+    const t = await createTask(student.id, project.id, {
+      title: "实验",
+      startDate: "2026-07-01",
+      dueDate: "2026-07-08",
+    });
+    const u = await updateTask(student.id, t.id, { startDate: null });
+    expect(u.startDate).toBeNull();
+    expect(u.dueDate).toBe("2026-07-08");
+  });
+
+  it("patch 未触及日期时跳过校验（放行历史越界数据改标题）", async () => {
+    const { student, project } = await scene();
+    // 直插落库模拟校验上线前的历史越界任务
+    const [legacy] = await db
+      .insert(tasks)
+      .values({
+        projectId: project.id,
+        createdById: student.id,
+        title: "历史越界任务",
+        startDate: "2020-01-01",
+        dueDate: "2030-12-31",
+      })
+      .returning();
+    const updated = await updateTask(student.id, legacy.id, { title: "只改标题" });
+    expect(updated.title).toBe("只改标题");
+  });
 });
 
 describe("updateTask", () => {

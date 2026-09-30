@@ -30,6 +30,8 @@ export function TaskCard({
   allTasks,
   allLabels,
   dependencies,
+  projectStart,
+  projectEnd,
 }: {
   task: BoardTask;
   projectId: string;
@@ -39,6 +41,8 @@ export function TaskCard({
   allTasks: TaskOption[];
   allLabels: Option[];
   dependencies: { predecessorId: string; successorId: string }[];
+  projectStart?: string | null;
+  projectEnd?: string | null;
 }) {
   const [editing, setEditing] = useState(false);
   const searchParams = useSearchParams();
@@ -131,6 +135,8 @@ export function TaskCard({
           allTasks={allTasks}
           allLabels={allLabels}
           dependencies={dependencies}
+          projectStart={projectStart}
+          projectEnd={projectEnd}
           onClose={() => setEditing(false)}
         />
       )}
@@ -146,6 +152,8 @@ function EditModal({
   allTasks,
   allLabels,
   dependencies,
+  projectStart,
+  projectEnd,
   onClose,
 }: {
   task: BoardTask;
@@ -155,6 +163,8 @@ function EditModal({
   allTasks: TaskOption[];
   allLabels: Option[];
   dependencies: { predecessorId: string; successorId: string }[];
+  projectStart?: string | null;
+  projectEnd?: string | null;
   onClose: () => void;
 }) {
   const [updateState, updateFormAction, updating] = useActionState<UpdateTaskState, FormData>(
@@ -180,6 +190,12 @@ function EditModal({
 
   const updateError = updateState && "error" in updateState ? updateState.error : null;
   const deleteError = deleteState && "error" in deleteState ? deleteState.error : null;
+
+  // 任务日期须落在项目周期内：原生 min/max 先行拦截，服务端 updateTask 仍兜底
+  const dateBounds = {
+    min: projectStart ?? undefined,
+    max: projectEnd ?? undefined,
+  };
 
   return (
     <div
@@ -262,10 +278,10 @@ function EditModal({
               </select>
             </Field>
             <Field label="起始日">
-              <input type="date" name="startDate" defaultValue={task.startDate ?? ""} className="ac-field text-sm" />
+              <input type="date" name="startDate" defaultValue={task.startDate ?? ""} {...dateBounds} className="ac-field text-sm" />
             </Field>
             <Field label="截止日">
-              <input type="date" name="dueDate" defaultValue={task.dueDate ?? ""} className="ac-field text-sm" />
+              <input type="date" name="dueDate" defaultValue={task.dueDate ?? ""} {...dateBounds} className="ac-field text-sm" />
             </Field>
           </div>
 
