@@ -7,11 +7,20 @@ export function NewTaskForm({
   projectId,
   members,
   milestones,
+  projectStart,
+  projectEnd,
 }: {
   projectId: string;
   members: { id: string; name: string }[];
   milestones: { id: string; title: string }[];
+  projectStart?: string | null;
+  projectEnd?: string | null;
 }) {
+  // 任务日期须落在项目周期内：原生 min/max 先行拦截，服务端 createTask 仍兜底
+  const dateBounds = {
+    min: projectStart ?? undefined,
+    max: projectEnd ?? undefined,
+  };
   const [state, formAction, pending] = useActionState<FormState, FormData>(
     createTaskAction,
     null,
@@ -47,11 +56,11 @@ export function NewTaskForm({
         </select>
         <label className="flex items-center gap-1 text-sm text-ink-faint">
           起
-          <input type="date" name="startDate" className="ac-field w-auto text-sm" />
+          <input type="date" name="startDate" {...dateBounds} className="ac-field w-auto text-sm" />
         </label>
         <label className="flex items-center gap-1 text-sm text-ink-faint">
           止
-          <input type="date" name="dueDate" className="ac-field w-auto text-sm" />
+          <input type="date" name="dueDate" {...dateBounds} className="ac-field w-auto text-sm" />
         </label>
       </div>
       {state?.error && <p className="text-sm text-high">{state.error}</p>}

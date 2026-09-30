@@ -13,7 +13,7 @@ import {
 } from "@/db/schema";
 import { AppError, ForbiddenError } from "./errors";
 import { getTeamMembership } from "./team";
-import { getProjectForUser } from "./project";
+import { getProjectForUser, validateDateRange } from "./project";
 import { notifyTaskAssigned, notifyTaskCompleted } from "./notify";
 
 // 任务写操作角色：admin + student（teacher 只读，设计文档 §5）
@@ -54,6 +54,29 @@ async function validateParentTask(projectId: string, parentTaskId: string) {
   if (!p) throw new AppError("父任务不属于该项目");
 }
 
+// 任务日期校验（lib 收口，口径同 createProject）：先后顺序 + 须落在项目周期内。
+// 项目任一侧未设周期则该侧不设限；ISO 日期字典序即时间序，边界日（等于项目起/止）合法。
+// createTask 传 undefined（未填），updateTask 合并库中既有值后可传 null（清空）。
+function validateTaskDates(
+  project: { startDate: string | null; endDate: string | null },
+  startDate?: string | null,
+  dueDate?: string | null,
+) {
+  validateDateRange(startDate, dueDate);
+  if (startDate) {
+    if (project.startDate && startDate < project.startDate)
+      throw new AppError("开始日期不能早于项目开始日期");
+    if (project.endDate && startDate > project.endDate)
+      throw new AppError("开始日期不能晚于项目结束日期");
+  }
+  if (dueDate) {
+    if (project.startDate && dueDate < project.startDate)
+      throw new AppError("结束日期不能早于项目开始日期");
+    if (project.endDate && dueDate > project.endDate)
+      throw new AppError("结束日期不能晚于项目结束日期");
+  }
+}
+
 export async function createTask(
   actorId: string,
   projectId: string,
@@ -74,6 +97,7 @@ export async function createTask(
   if (input.assigneeId) await validateAssignee(access.project.teamId, input.assigneeId);
   if (input.milestoneId) await validateMilestone(projectId, input.milestoneId);
   if (input.parentTaskId) await validateParentTask(projectId, input.parentTaskId);
+  validateTaskDates(access.project, input.startDate, input.dueDate);
 
   const [task] = await exec
     .insert(tasks)
@@ -120,6 +144,15 @@ export async function updateTask(
   const access = await requireTaskWrite(actorId, task.projectId);
   if (patch.assigneeId) await validateAssignee(access.project.teamId, patch.assigneeId);
   if (patch.milestoneId) await validateMilestone(task.projectId, patch.milestoneId);
+  // 日期校验（口径同 createTask）：patch 只带一侧时与库中另一侧合并成对再验；
+  // 仅在 patch 触及日期时才验，放行历史越界数据对不相关字段的编辑
+  if (patch.startDate !== undefined || patch.dueDate !== undefined) {
+    validateTaskDates(
+      access.project,
+      patch.startDate !== undefined ? patch.startDate : task.startDate,
+      patch.dueDate !== undefined ? patch.dueDate : task.dueDate,
+    );
+  }
 
   // 显式白名单构造，勿用 ...patch 展开：运行时宽对象可夹带 projectId/sortOrder 等越权字段
   const [updated] = await exec
