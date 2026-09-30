@@ -148,29 +148,15 @@
   .orb-4 { width: 30px;  height: 30px;  bottom: 22%; right: 14%; background: rgba(232,238,248,0.16); animation: float 8s ease-in-out infinite 2s; }
 
   .hero > * { position: relative; }
-  .hero .hero-badge {
-    font-size: 13px;
-    letter-spacing: 3px;
-    color: #bcccea;
-    animation: fadeUp 0.7s ease both 0.1s;
-  }
   .hero h1.hero-wordmark {
-    display: flex;
-    align-items: baseline;
-    margin: 18px 0 0;
+    margin: 0;
     font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
     font-size: clamp(40px, 10.5vw, 112px);
     font-weight: 800;
     letter-spacing: -0.03em;
     line-height: 1.05;
     color: #ffffff;
-    animation: fadeUp 0.7s ease both 0.2s;
-  }
-  .hero .logo-a {
-    flex: none;
-    height: 0.72em;
-    width: auto;
-    margin-right: 0.08em;
+    animation: fadeUp 0.7s ease both 0.15s;
   }
   .hero .hero-cn {
     margin: 6px 0 0;
@@ -179,14 +165,14 @@
     font-weight: 700;
     letter-spacing: 0.08em;
     color: #bcccea;
-    animation: fadeUp 0.7s ease both 0.3s;
+    animation: fadeUp 0.7s ease both 0.25s;
   }
   .hero .hero-team {
     margin-top: 26px;
     font-size: 15px;
     letter-spacing: 2px;
     color: #ffffff;
-    animation: fadeUp 0.7s ease both 0.38s;
+    animation: fadeUp 0.7s ease both 0.33s;
   }
   .hero .hero-desc {
     margin-top: 18px;
@@ -194,28 +180,31 @@
     font-size: 16px;
     line-height: 1.9;
     color: #e8eef8;
-    animation: fadeUp 0.7s ease both 0.46s;
-  }
-  .hero .hero-meta {
-    margin-top: 26px;
-    font-size: 13px;
-    letter-spacing: 1px;
-    color: #bcccea;
-    animation: fadeUp 0.7s ease both 0.54s;
+    animation: fadeUp 0.7s ease both 0.42s;
   }
   .hero .hero-btn {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    margin-top: 32px;
+    margin-top: 36px;
+    padding: 11px 26px;
+    border: 1px solid rgba(255,255,255,0.55);
+    border-radius: 999px;
+    background: transparent;
     font-size: 15px;
     color: #ffffff;
     text-decoration: none;
-    transition: opacity 0.3s;
-    animation: fadeUp 0.7s ease both 0.62s;
+    transition: background 0.25s ease, color 0.25s ease, border-color 0.25s ease, transform 0.25s ease, box-shadow 0.25s ease;
+    animation: fadeUp 0.7s ease both 0.5s;
   }
   .hero .hero-btn svg { width: 17px; height: 17px; }
-  .hero .hero-btn:hover { opacity: 0.75; }
+  .hero .hero-btn:hover {
+    background: #ffffff;
+    border-color: #ffffff;
+    color: #1f3758;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(0,0,0,0.18);
+  }
 
   /* ============ 章节标题 ============ */
   .sec-title {
@@ -472,18 +461,10 @@
     <div class="orb orb-2"></div>
     <div class="orb orb-3"></div>
     <div class="orb orb-4"></div>
-    <p class="hero-badge">· 《交互设计》课程项目 · 持续开发中</p>
-    <h1 class="hero-wordmark" aria-label="AgileCampus">
-      <svg class="logo-a" viewBox="0 0 120 140" fill="none" aria-hidden="true">
-        <path d="M61 14 L27 127" stroke="currentColor" stroke-width="26" stroke-linecap="round"/>
-        <path d="M61 14 L93 127" stroke="currentColor" stroke-width="26" stroke-linecap="round"/>
-        <rect x="26" y="82" width="68" height="20" rx="8" fill="currentColor"/>
-      </svg><span aria-hidden="true">gileCampus</span>
-    </h1>
+    <h1 class="hero-wordmark">AgileCampus</h1>
     <p class="hero-cn">敏捷校园</p>
     <p class="hero-team">用户说得都队 · 团队项目主页</p>
     <p class="hero-desc">一款面向高校课程项目、实验室项目和学科竞赛团队的轻量敏捷协作工具，让项目目标更清晰、任务分工更透明、进度更真实可见。</p>
-    <p class="hero-meta">5 名成员 · web 协作工具 · 持续开发中</p>
     <a class="hero-btn" href="https://github.com/hch-Jack/agilecampus" target="_blank" rel="noopener">
       <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
       查看源代码
