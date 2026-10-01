@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
-import { createTask, updateTask, deleteTask, setTaskSuccessors } from "@/lib/task";
+import { createTask, updateTask, setTaskSuccessors } from "@/lib/task";
 import { setTaskLabels } from "@/lib/label";
 import { createMilestone } from "@/lib/project";
 import { AppError, ForbiddenError } from "@/lib/errors";
@@ -184,30 +184,4 @@ export async function updateTaskAction(
   }
   revalidatePath(`/projects/${projectId}`);
   return { ok: true };
-}
-
-const deleteTaskSchema = z.object({
-  taskId: z.uuid(),
-  projectId: z.uuid(),
-});
-
-export async function deleteTaskAction(
-  _prev: FormState,
-  formData: FormData,
-): Promise<FormState> {
-  const session = await auth();
-  if (!session?.user) return { error: "请先登录" };
-
-  const parsed = deleteTaskSchema.safeParse(Object.fromEntries(formData));
-  if (!parsed.success) return { error: "参数无效" };
-
-  try {
-    await deleteTask(session.user.id, parsed.data.taskId);
-  } catch (e) {
-    if (e instanceof ForbiddenError) return { error: "没有权限删除任务" };
-    if (e instanceof AppError) return { error: e.message };
-    throw e;
-  }
-  revalidatePath(`/projects/${parsed.data.projectId}`);
-  return null;
 }

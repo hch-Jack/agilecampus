@@ -1,12 +1,14 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import type { DbTx } from "@/db";
 import {
   labels,
   milestones,
+  projects,
   taskDependencies,
   taskLabels,
   tasks,
+  teamMembers,
   users,
   type TaskPriority,
   type TaskStatus,
@@ -15,9 +17,20 @@ import { AppError, ForbiddenError } from "./errors";
 import { getTeamMembership } from "./team";
 import { getProjectForUser } from "./project";
 import { notifyTaskAssigned, notifyTaskCompleted } from "./notify";
+import { recordTaskActivity } from "./activity";
 
 // 任务写操作角色：admin + student（teacher 只读，设计文档 §5）
 const TASK_WRITE_ROLES = ["admin", "student"];
+
+// 动态展示文本：状态/优先级转中文，值存展示文本而非枚举，读端免映射
+const STATUS_TEXT: Record<TaskStatus, string> = { todo: "待办", doing: "进行中", done: "已完成" };
+const PRIORITY_TEXT: Record<TaskPriority, string> = { low: "低", medium: "中", high: "高" };
+
+// 动态值统一截断，空值归一为「无」
+function activityText(v: string | null | undefined, fallback = "无") {
+  if (!v || !v.trim()) return fallback;
+  return v.length > 200 ? `${v.slice(0, 200)}…` : v;
+}
 
 async function requireProjectAccess(actorId: string, projectId: string) {
   const access = await getProjectForUser(actorId, projectId);
@@ -92,6 +105,9 @@ export async function createTask(
     })
     .returning();
 
+  // 动态：创建记录（传入事务 exec 时同事务写入）
+  await recordTaskActivity(exec, [{ taskId: task.id, actorId, type: "created" }]);
+
   // 非事务路径：即时通知（fire-and-forget，通知内部已吞异常）。事务路径由调用方提交后补发。
   if (!opts?.tx && task.assigneeId) void notifyTaskAssigned(task);
   return task;
@@ -141,6 +157,88 @@ export async function updateTask(
     .returning();
   if (!updated) throw new AppError("任务不存在");
 
+  // 动态：逐字段 diff，值转展示文本（人名/中文），查询走同一 exec 以兼容事务路径
+  const changes: { field: string; oldValue: string; newValue: string }[] = [];
+
+  if (patch.title !== undefined && patch.title !== task.title)
+    changes.push({ field: "标题", oldValue: activityText(task.title), newValue: activityText(patch.title) });
+  if (patch.description !== undefined && (patch.description ?? null) !== (task.description ?? null))
+    changes.push({ field: "描述", oldValue: activityText(task.description), newValue: activityText(patch.description) });
+  if (patch.completionNote !== undefined && (patch.completionNote ?? null) !== (task.completionNote ?? null))
+    changes.push({ field: "完成情况", oldValue: activityText(task.completionNote), newValue: activityText(patch.completionNote) });
+  if (patch.status !== undefined && patch.status !== task.status)
+    changes.push({ field: "状态", oldValue: STATUS_TEXT[task.status], newValue: STATUS_TEXT[patch.status] });
+  if (patch.priority !== undefined && patch.priority !== task.priority)
+    changes.push({ field: "优先级", oldValue: PRIORITY_TEXT[task.priority], newValue: PRIORITY_TEXT[patch.priority] });
+  if (patch.startDate !== undefined && (patch.startDate ?? null) !== (task.startDate ?? null))
+    changes.push({ field: "起始日", oldValue: activityText(task.startDate), newValue: activityText(patch.startDate) });
+  if (patch.dueDate !== undefined && (patch.dueDate ?? null) !== (task.dueDate ?? null))
+    changes.push({ field: "截止日", oldValue: activityText(task.dueDate), newValue: activityText(patch.dueDate) });
+
+  if (patch.assigneeId !== undefined && (patch.assigneeId ?? null) !== (task.assigneeId ?? null)) {
+    const ids = [task.assigneeId, patch.assigneeId].filter(Boolean) as string[];
+    const nameMap = ids.length
+      ? new Map(
+          (
+            await exec
+              .select({ id: users.id, name: users.name })
+              .from(users)
+              .where(inArray(users.id, ids))
+          ).map((r) => [r.id, r.name]),
+        )
+      : new Map<string, string>();
+    changes.push({
+      field: "负责人",
+      oldValue: task.assigneeId ? (nameMap.get(task.assigneeId) ?? "已移除成员") : "未分配",
+      newValue: patch.assigneeId ? (nameMap.get(patch.assigneeId) ?? "未知成员") : "未分配",
+    });
+  }
+
+  if (patch.milestoneId !== undefined && (patch.milestoneId ?? null) !== (task.milestoneId ?? null)) {
+    const ids = [task.milestoneId, patch.milestoneId].filter(Boolean) as string[];
+    const titleMap = ids.length
+      ? new Map(
+          (
+            await exec
+              .select({ id: milestones.id, title: milestones.title })
+              .from(milestones)
+              .where(inArray(milestones.id, ids))
+          ).map((r) => [r.id, r.title]),
+        )
+      : new Map<string, string>();
+    changes.push({
+      field: "里程碑",
+      oldValue: task.milestoneId ? (titleMap.get(task.milestoneId) ?? "已删里程碑") : "无里程碑",
+      newValue: patch.milestoneId ? (titleMap.get(patch.milestoneId) ?? "未知里程碑") : "无里程碑",
+    });
+  }
+
+  if (changes.length > 0)
+    await recordTaskActivity(
+      exec,
+      changes.map((c) => ({
+        taskId,
+        actorId,
+        type: "field",
+        field: c.field,
+        oldValue: c.oldValue,
+        newValue: c.newValue,
+      })),
+    );
+
+  // 子任务状态跨「已完成」边界时给父任务也记一条，父任务时间线可见子任务进展；
+  // 未涉 done 的流转（待办↔进行中）不入父任务动态，避免看板拖拽刷屏
+  if (updated.parentTaskId && patch.status !== undefined && patch.status !== task.status) {
+    if (patch.status === "done")
+      await recordTaskActivity(exec, [
+        { taskId: updated.parentTaskId, actorId, type: "subtask_done", newValue: updated.title },
+      ]);
+    else if (task.status === "done")
+      await recordTaskActivity(exec, [
+        { taskId: updated.parentTaskId, actorId, type: "subtask_reopened", newValue: updated.title },
+      ]);
+  }
+
   if (!opts?.tx) {
     // 改派：通知新负责人
     if (patch.assigneeId && patch.assigneeId !== task.assigneeId) void notifyTaskAssigned(updated);
@@ -154,6 +252,11 @@ export async function deleteTask(actorId: string, taskId: string) {
   const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
   if (!task) throw new AppError("任务不存在");
   await requireTaskWrite(actorId, task.projectId);
+  // 父任务动态：删除子任务（须先记后删，删后本任务行级联消失、无从补记）
+  if (task.parentTaskId)
+    await recordTaskActivity(db, [
+      { taskId: task.parentTaskId, actorId, type: "subtask_deleted", newValue: task.title },
+    ]);
   await db.delete(tasks).where(eq(tasks.id, taskId));
 }
 
@@ -264,7 +367,12 @@ export async function createSubtask(
     .from(tasks)
     .where(eq(tasks.id, parentTaskId));
   if (!parent) throw new AppError("任务不存在");
-  return createTask(actorId, parent.projectId, { ...input, parentTaskId });
+  const subtask = await createTask(actorId, parent.projectId, { ...input, parentTaskId });
+  // 父任务动态：添加子任务（子任务自身已有 created 记录）
+  await recordTaskActivity(db, [
+    { taskId: parentTaskId, actorId, type: "subtask_added", newValue: subtask.title },
+  ]);
+  return subtask;
 }
 
 // 单任务详情（供 Agent API 按 id 直取）。权限口径同 listProjectTasks：项目成员即可读。
@@ -347,4 +455,54 @@ export async function listProjectDependencies(actorId: string, projectId: string
     .from(taskDependencies)
     .innerJoin(tasks, eq(taskDependencies.predecessorId, tasks.id))
     .where(eq(tasks.projectId, projectId));
+}
+
+// 工作台：跨全部项目列「分配给我的父任务」（子任务不上看板，经父卡片的子任务进度体现）。
+// inner join teamMembers 直取访问者在任务所属团队的角色（前端据此判定该卡可否拖拽），
+// 同时充当成员资格过滤：被移出团队后任务即不出现，与 getProjectForUser 读权限口径一致。
+export async function listMyTasks(actorId: string) {
+  return db
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      status: tasks.status,
+      priority: tasks.priority,
+      dueDate: tasks.dueDate,
+      sortOrder: tasks.sortOrder,
+      projectId: projects.id,
+      projectName: projects.name,
+      role: teamMembers.role,
+    })
+    .from(tasks)
+    .innerJoin(projects, eq(tasks.projectId, projects.id))
+    .innerJoin(
+      teamMembers,
+      and(eq(teamMembers.teamId, projects.teamId), eq(teamMembers.userId, actorId)),
+    )
+    .where(
+      and(
+        eq(tasks.assigneeId, actorId),
+        eq(projects.status, "active"),
+        isNull(tasks.parentTaskId),
+      ),
+    )
+    // PG ASC 默认 NULLS LAST：无截止日的任务排最后
+    .orderBy(tasks.dueDate, tasks.sortOrder);
+}
+
+// 工作台子任务进度：给定父任务 id 集合（= listMyTasks 的返回），按父聚合直接子级的总数与完成数。
+// 只算直接子级（与 listSubtasks 口径一致，不递归）；不按子任务负责人过滤——父任务的进度看整体。
+export type SubtaskProgressRow = { parentTaskId: string; total: number; done: number };
+
+export async function listMySubtaskProgress(parentTaskIds: string[]) {
+  if (parentTaskIds.length === 0) return [];
+  return db
+    .select({
+      parentTaskId: tasks.parentTaskId,
+      total: sql<number>`count(*)::int`,
+      done: sql<number>`(count(*) filter (where ${tasks.status} = 'done'))::int`,
+    })
+    .from(tasks)
+    .where(inArray(tasks.parentTaskId, parentTaskIds))
+    .groupBy(tasks.parentTaskId);
 }
