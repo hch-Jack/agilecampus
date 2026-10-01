@@ -9,9 +9,18 @@ import {
   date,
   doublePrecision,
   index,
+  integer,
   jsonb,
+  customType,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
+
+// 二进制大对象：附件文件内容直存 PostgreSQL（团队自建/NAS 部署，随库备份免运维）
+export const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType() {
+    return "bytea";
+  },
+});
 
 export const teamRoleEnum = pgEnum("team_role", ["admin", "teacher", "student"]);
 export type TeamRole = (typeof teamRoleEnum.enumValues)[number];
@@ -275,4 +284,48 @@ export const taskLabels = pgTable(
     primaryKey({ columns: [t.taskId, t.labelId] }),
     index("task_labels_label_idx").on(t.labelId),
   ],
+);
+
+// 任务附件：文件内容（bytea）直存库内，单文件上限由应用层校验（lib/attachment.ts，10MB）。
+// 任务删除时附件级联消失。
+export const taskAttachments = pgTable(
+  "task_attachments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    uploaderId: uuid("uploader_id")
+      .notNull()
+      .references(() => users.id),
+    filename: text("filename").notNull(),
+    mimeType: text("mime_type"),
+    size: integer("size").notNull(),
+    data: bytea("data").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("task_attachments_task_idx").on(t.taskId)],
+);
+
+// 任务动态：谁在何时对任务做了什么（创建/字段变更/子任务增改/附件增删）。
+// 写入由 lib/task.ts 与 lib/attachment.ts 的写操作埋点承担，读端按 taskId 倒序取。
+export const taskActivities = pgTable(
+  "task_activities",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    actorId: uuid("actor_id")
+      .notNull()
+      .references(() => users.id),
+    type: text("type").notNull(),
+    // type=field 时记变更字段名；其余类型为空
+    field: text("field"),
+    // 展示用文本（人名/中文名称/文件名），非裸 id；type=field 时为旧值→新值
+    oldValue: text("old_value"),
+    newValue: text("new_value"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [index("task_activities_task_idx").on(t.taskId)],
 );

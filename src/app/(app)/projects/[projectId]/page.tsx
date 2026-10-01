@@ -6,7 +6,7 @@ import { db } from "@/db";
 import { conversations, messages as messagesTable } from "@/db/schema";
 import { getProjectForUser, listProjectMilestones } from "@/lib/project";
 import { listTeamMembers } from "@/lib/team";
-import { listProjectTasks, listProjectDependencies } from "@/lib/task";
+import { listProjectTasks } from "@/lib/task";
 import { listTeamLabels } from "@/lib/label";
 import { parseFilters, applyFilters } from "@/lib/board-filters";
 import { MilestoneSection } from "./milestone-section";
@@ -32,11 +32,10 @@ export default async function ProjectPage({
   if (!access) notFound();
   const { project, role } = access;
 
-  const [projectMilestones, projectTasks, members, dependencies, teamLabels] = await Promise.all([
+  const [projectMilestones, projectTasks, members, teamLabels] = await Promise.all([
     listProjectMilestones(session.user.id, projectId),
     listProjectTasks(session.user.id, projectId),
     listTeamMembers(project.teamId),
-    listProjectDependencies(session.user.id, projectId),
     listTeamLabels(session.user.id, project.teamId),
   ]);
 
@@ -128,9 +127,6 @@ export default async function ProjectPage({
           canWrite={canWrite}
           members={members}
           milestones={projectMilestones.map((m) => ({ id: m.id, name: m.title }))}
-          allTasks={projectTasks.map((t) => ({ id: t.id, title: t.title }))}
-          allLabels={teamLabels.map((l) => ({ id: l.id, name: l.name }))}
-          dependencies={dependencies}
         />
       </section>
 

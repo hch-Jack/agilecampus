@@ -36,6 +36,12 @@ export default async function AppLayout({
           </Link>
           <nav className="flex items-center gap-1">
             <Link
+              href="/dashboard"
+              className="rounded-field px-2.5 py-1.5 text-sm text-ink-soft transition-colors hover:bg-primary-soft hover:text-primary"
+            >
+              工作台
+            </Link>
+            <Link
               href="/projects"
               className="rounded-field px-2.5 py-1.5 text-sm text-ink-soft transition-colors hover:bg-primary-soft hover:text-primary"
             >
