@@ -15,7 +15,7 @@ describe("buildAssignedCard", () => {
     expect(json).toContain("斥候");
     expect(json).toContain("赤壁");
     expect(json).toContain("主帅");
-    expect(json).toContain("https://ac.test/projects/p1?task=t1");
+    expect(json).toContain("https://ac.test/projects/p1/tasks/t1");
   });
 });
 
@@ -23,7 +23,7 @@ describe("buildCompletedCard", () => {
   it("含完成情况 + 深链", () => {
     const json = JSON.stringify(buildCompletedCard({ ...task, completionNote: "克城" }));
     expect(json).toContain("克城");
-    expect(json).toContain("https://ac.test/projects/p1?task=t1");
+    expect(json).toContain("https://ac.test/projects/p1/tasks/t1");
   });
 });
 
@@ -35,7 +35,7 @@ describe("buildDueReminderCard", () => {
     }));
     expect(json).toContain("逾期活");
     expect(json).toContain("临期活");
-    expect(json).toContain("https://ac.test/projects/p1?task=a");
-    expect(json).toContain("https://ac.test/projects/p2?task=b");
+    expect(json).toContain("https://ac.test/projects/p1/tasks/a");
+    expect(json).toContain("https://ac.test/projects/p2/tasks/b");
   });
 });
