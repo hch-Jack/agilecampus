@@ -12,7 +12,9 @@ import {
 import { deriveColumns, type BoardColumn, type ColumnPatch } from "@/lib/board-columns";
 import type { GroupBy } from "@/lib/board-filters";
 import { moveTaskAction } from "./actions";
-import { TaskCard, type Option } from "./task-card";
+import { TaskCard } from "./task-card";
+
+export type Option = { id: string; name: string };
 
 export type BoardTask = {
   id: string;
@@ -34,25 +36,11 @@ function Column({
   tasks,
   projectId,
   canWrite,
-  members,
-  milestones,
-  allTasks,
-  allLabels,
-  dependencies,
-  projectStart,
-  projectEnd,
 }: {
   column: BoardColumn;
   tasks: BoardTask[];
   projectId: string;
   canWrite: boolean;
-  members: Option[];
-  milestones: Option[];
-  allTasks: { id: string; title: string }[];
-  allLabels: Option[];
-  dependencies: { predecessorId: string; successorId: string }[];
-  projectStart?: string | null;
-  projectEnd?: string | null;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.key });
 
@@ -68,19 +56,7 @@ function Column({
         <span className="ac-badge bg-surface text-ink-soft">{tasks.length}</span>
       </h3>
       {tasks.map((t) => (
-        <TaskCard
-          key={t.id}
-          task={t}
-          projectId={projectId}
-          canWrite={canWrite}
-          members={members}
-          milestones={milestones}
-          allTasks={allTasks}
-          allLabels={allLabels}
-          dependencies={dependencies}
-          projectStart={projectStart}
-          projectEnd={projectEnd}
-        />
+        <TaskCard key={t.id} task={t} projectId={projectId} canWrite={canWrite} />
       ))}
     </div>
   );
@@ -93,11 +69,6 @@ export function Board({
   canWrite,
   members,
   milestones,
-  allTasks,
-  allLabels,
-  dependencies,
-  projectStart,
-  projectEnd,
 }: {
   projectId: string;
   tasks: BoardTask[];
@@ -105,11 +76,6 @@ export function Board({
   canWrite: boolean;
   members: Option[];
   milestones: Option[];
-  allTasks: { id: string; title: string }[];
-  allLabels: Option[];
-  dependencies: { predecessorId: string; successorId: string }[];
-  projectStart?: string | null;
-  projectEnd?: string | null;
 }) {
   const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -153,13 +119,6 @@ export function Board({
             tasks={optimisticTasks.filter((t) => col.matches(t))}
             projectId={projectId}
             canWrite={canWrite}
-            members={members}
-            milestones={milestones}
-            allTasks={allTasks}
-            allLabels={allLabels}
-            dependencies={dependencies}
-            projectStart={projectStart}
-            projectEnd={projectEnd}
           />
         ))}
       </div>
