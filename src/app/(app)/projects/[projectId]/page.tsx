@@ -131,6 +131,8 @@ export default async function ProjectPage({
           allTasks={projectTasks.map((t) => ({ id: t.id, title: t.title }))}
           allLabels={teamLabels.map((l) => ({ id: l.id, name: l.name }))}
           dependencies={dependencies}
+          projectStart={project.startDate}
+          projectEnd={project.endDate}
         />
       </section>
 
@@ -146,6 +148,8 @@ export default async function ProjectPage({
           projectId={projectId}
           members={members}
           milestones={projectMilestones.map((m) => ({ id: m.id, title: m.title }))}
+          projectStart={project.startDate}
+          projectEnd={project.endDate}
         />
       )}
     </main>
