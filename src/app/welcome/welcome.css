@@ -1,0 +1,282 @@
+/* ============================================================
+   欢迎页（进入页）· 空灵静谧暗夜 / 白天地球 · 独立全屏
+   作用域 .welcome，避免影响其余页面的「学术工作台」主题
+   ============================================================ */
+.welcome {
+  --ice: #D8EAFF;
+  --ice-dim: #9cc4f5;
+  --ink: #e9edf6;
+  --ink-soft: #a9b2c4;
+  --ink-faint: #6d7588;
+  --white: #ffffff;
+  --bg: #080b14;
+  --line: rgba(216, 234, 255, 0.12);
+  --line-strong: rgba(216, 234, 255, 0.26);
+
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  color: var(--ink);
+  background: var(--bg);
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.welcome * { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* 深空 / 地球背景 */
+.welcome .bg {
+  position: absolute; inset: 0; z-index: 0;
+  background: url('/bg-cosmic-1.jpg') center/cover no-repeat;
+}
+.welcome .bg::after {
+  content: ""; position: absolute; inset: 0;
+  background:
+    linear-gradient(180deg, rgba(8,11,20,.72) 0%, rgba(8,11,20,.36) 45%, rgba(8,11,20,.80) 100%),
+    radial-gradient(120% 90% at 50% 0%, rgba(156,196,245,.12), transparent 60%);
+}
+.welcome.day .bg { background-image: url('/bg-earth-day.jpg'); }
+.welcome.day .bg::after {
+  background:
+    linear-gradient(180deg, rgba(10,16,30,.38) 0%, rgba(10,16,30,.10) 45%, rgba(10,16,30,.48) 100%),
+    radial-gradient(120% 90% at 50% 0%, rgba(190,220,255,.15), transparent 60%);
+}
+
+/* 光晕 */
+.welcome .blob {
+  position: absolute; z-index: 1; border-radius: 50%;
+  filter: blur(95px); pointer-events: none;
+  animation: welcome-drift 30s ease-in-out infinite alternate;
+}
+.welcome .blob.b1 { width: 46vw; height: 46vw; left: -12vw; top: -14vw;
+  background: radial-gradient(circle, rgba(156,196,245,.22), transparent 70%); }
+.welcome .blob.b2 { width: 40vw; height: 40vw; right: -10vw; top: 30vh;
+  background: radial-gradient(circle, rgba(216,234,255,.14), transparent 72%); animation-delay: -12s; }
+.welcome .blob.b3 { width: 34vw; height: 34vw; left: 24vw; bottom: -16vw;
+  background: radial-gradient(circle, rgba(255,255,255,.10), transparent 70%); animation-delay: -22s; }
+@keyframes welcome-drift {
+  from { transform: translate(0,0) scale(1); }
+  to   { transform: translate(6vw, 5vh) scale(1.15); }
+}
+
+/* 顶部品牌 */
+.welcome .brand {
+  position: absolute; top: 34px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px; z-index: 3;
+}
+.welcome .brand .dot {
+  width: 20px; height: 20px; border-radius: 7px;
+  background: linear-gradient(135deg, #9cc4f5, #d8eaff);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.55), 0 0 16px -2px rgba(156,196,245,.6);
+}
+.welcome .brand .name { font-size: 13px; letter-spacing: .12em; color: var(--ink-soft); }
+.welcome .brand .name b { color: var(--ink); font-weight: 500; }
+
+/* 两侧长进度条 */
+.welcome .rail {
+  position: absolute; top: 50%; transform: translateY(-50%); z-index: 3;
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+}
+.welcome .rail.left { left: 46px; }
+.welcome .rail.right { right: 46px; }
+.welcome .rail .label { font-size: 12px; letter-spacing: .14em; color: var(--ink-faint); }
+.welcome .rail .track {
+  width: 10px; height: 42vh; border-radius: 999px; position: relative; overflow: hidden;
+  background: rgba(14, 19, 34, .42);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: inset 0 0 12px rgba(0,0,0,.4);
+}
+.welcome .rail .fill {
+  position: absolute; bottom: 0; left: 0; width: 100%; height: 0;
+  border-radius: 999px;
+  background: linear-gradient(to top, #6f95cf, #d8eaff);
+  box-shadow: 0 0 18px -2px rgba(156,196,245,.75);
+  animation: welcome-fillup 2s cubic-bezier(.22,.61,.36,1) forwards;
+}
+@keyframes welcome-fillup { from { height: 0; } to { height: var(--h); } }
+.welcome .rail .pct { font-size: 15px; font-family: Georgia, "Songti SC", serif; color: var(--ice-dim); }
+
+/* 中间内容 */
+.welcome .center {
+  position: absolute; inset: 0; z-index: 2;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 0 24px 14vh;
+}
+.welcome .date {
+  font-size: 15px; letter-spacing: .18em; color: var(--ink-soft);
+  font-weight: 300; margin-bottom: 18px;
+}
+.welcome .clock {
+  font-family: Georgia, "Songti SC", serif;
+  font-weight: 300;
+  font-size: clamp(58px, 11vw, 150px);
+  line-height: 1; letter-spacing: .02em;
+  color: var(--white);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 40px rgba(156,196,245,.35);
+}
+.welcome .greet {
+  margin-top: 30px;
+  font-family: "YouYuan", "幼圆", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 22px; font-weight: 600; letter-spacing: .07em; color: var(--white);
+  text-shadow: 0 1px 10px rgba(0, 0, 0, .45);
+}
+.welcome .quote {
+  margin-top: 24px;
+  font-family: "STXingkai", "华文行楷", "KaiTi", "STKaiti", "楷体", serif;
+  font-size: 25px; letter-spacing: .1em; color: var(--ink); font-weight: 400;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, .4);
+}
+.welcome .quote-by {
+  margin-top: 14px;
+  font-family: "STXingkai", "华文行楷", "KaiTi", "STKaiti", "楷体", serif;
+  font-size: 21px; letter-spacing: .06em; color: var(--white);
+}
+
+.welcome .chips {
+  margin-top: 48px;
+  display: flex; flex-direction: column; align-items: center; gap: 20px;
+}
+.welcome .chip {
+  display: inline-flex; align-items: center; gap: 9px;
+  font-size: 13.5px; color: var(--ink-soft); letter-spacing: .04em;
+  padding: 10px 20px; border-radius: 999px;
+  background: rgba(14, 19, 34, .42);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  animation: welcome-floaty 3.6s ease-in-out infinite;
+  will-change: transform;
+}
+.welcome .chip.c1 { margin-left: -100px; animation-duration: 3.2s; }
+.welcome .chip.c2 { margin-left: 0; animation-duration: 3.9s; animation-delay: -1.3s; }
+.welcome .chip.c3 { margin-left: 100px; animation-duration: 3.5s; animation-delay: -2.4s; }
+.welcome .chip b { font-weight: 500; font-size: 15px; color: var(--ice-dim); font-family: Georgia, "Songti SC", serif; }
+.welcome .c-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.welcome .c-dot.doing { background: #9cc4f5; box-shadow: 0 0 8px rgba(156, 196, 245, .8); }
+.welcome .c-dot.todo { background: #6f95cf; }
+.welcome .c-dot.risk { background: #d8a35f; box-shadow: 0 0 8px rgba(216, 163, 95, .6); }
+@keyframes welcome-floaty {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-9px); }
+}
+
+.welcome .enter {
+  margin-top: 52px; text-decoration: none;
+  display: inline-flex; align-items: center; gap: 10px;
+  font-size: 13.5px; letter-spacing: .1em; color: var(--ink);
+  padding: 11px 26px; border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  background: rgba(14,19,34,.4);
+  transition: all .3s;
+}
+.welcome .enter:hover { background: rgba(255,255,255,.10); border-color: rgba(216,234,255,.42); box-shadow: 0 0 24px -6px rgba(156,196,245,.5); }
+
+/* ============ 入场动画：背景缓缓亮起，文字从右往左排队浮现，时间数字弹跳 ============ */
+.welcome .bg {
+  animation: welcome-bg-in 1.6s ease-out both;
+}
+@keyframes welcome-bg-in {
+  from { opacity: 0; transform: scale(1.07); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes welcome-slide-in {
+  from { opacity: 0; transform: translateX(46px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes welcome-pop {
+  0%   { opacity: 0; transform: translateY(46px) scale(.55); }
+  60%  { opacity: 1; transform: translateY(-9px) scale(1.06); }
+  80%  { transform: translateY(3px) scale(.98); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes welcome-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* 文字：从右往左依次排队浮现（delay 逐个错开，形成队列） */
+.welcome .date,
+.welcome .greet,
+.welcome .quote,
+.welcome .quote-by,
+.welcome .chips,
+.welcome .enter {
+  animation: welcome-slide-in .7s cubic-bezier(.22, .7, .28, 1) both;
+}
+.welcome .date     { animation-delay: .06s; }
+.welcome .greet    { animation-delay: .5s; }
+.welcome .quote    { animation-delay: .62s; }
+.welcome .quote-by { animation-delay: .74s; }
+.welcome .chips    { animation-delay: .88s; }
+.welcome .enter    { animation-delay: 1.02s; }
+
+/* 时间数字：拆成 hh / mm / ss 三段，逐个弹跳浮现 */
+.welcome .clock .t {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+  animation: welcome-pop .62s ease-out both;
+}
+.welcome .clock .t1 { animation-delay: .1s; }
+.welcome .clock .t2 { animation-delay: .22s; }
+.welcome .clock .t3 { animation-delay: .34s; }
+.welcome .clock .sep {
+  display: inline-block;
+  animation: welcome-fade-in .5s ease-out both;
+  animation-delay: .2s;
+}
+/* 拆段后阴影需落到每个数字上（text-shadow 不继承） */
+.welcome .clock .t,
+.welcome .clock .sep {
+  text-shadow: 0 0 40px rgba(156, 196, 245, .35);
+}
+.welcome.day .clock .t,
+.welcome.day .clock .sep {
+  text-shadow: 0 0 32px rgba(255, 255, 255, .65);
+}
+
+
+/* ============ 白天模式：亮底 + 深色文字（与暗夜反转） ============ */
+.welcome.day {
+  --ink: #14223a;
+  --ink-soft: #3d4a63;
+  --ink-faint: #6f7d97;
+  --white: #0c1730;
+  --ice-dim: #35629f;
+  --bg: #dce7f7;
+  --line: rgba(20, 34, 60, .14);
+  --line-strong: rgba(20, 34, 60, .30);
+}
+.welcome.day .clock { text-shadow: 0 0 32px rgba(255,255,255,.65); }
+.welcome.day .greet { text-shadow: 0 1px 12px rgba(255,255,255,.75); }
+.welcome.day .quote { text-shadow: 0 1px 8px rgba(255,255,255,.65); }
+.welcome.day .quote-by { text-shadow: 0 1px 10px rgba(255,255,255,.7); }
+.welcome.day .chip { background: rgba(255,255,255,.42); }
+.welcome.day .c-dot.doing { background: #4f7fc4; box-shadow: 0 0 8px rgba(79,127,196,.7); }
+.welcome.day .c-dot.todo { background: #6f8fc4; }
+.welcome.day .c-dot.risk { background: #c98a3f; box-shadow: 0 0 8px rgba(201,138,63,.5); }
+.welcome.day .enter { background: rgba(255,255,255,.42); }
+.welcome.day .enter:hover { background: rgba(255,255,255,.62); border-color: rgba(20,34,60,.42); box-shadow: 0 0 24px -6px rgba(53,98,159,.5); }
+.welcome.day .brand .name { color: #c0c9d8; }
+.welcome.day .brand .name b { color: #eef2f8; }
+.welcome.day .date { color: #c0c9d8; text-shadow: 0 1px 8px rgba(0,0,0,.5); }
+.welcome.day .rail .label { color: #b8c2d6; }
+.welcome.day .rail .pct { color: #9cc4f5; }
+.welcome.day .rail .track { background: rgba(10,15,28,.60); border: 1px solid rgba(216,234,255,.22); box-shadow: inset 0 0 12px rgba(0,0,0,.35); }
+.welcome.day .rail .fill { background: linear-gradient(to top, #6f95cf, #d8eaff); box-shadow: 0 0 18px -2px rgba(156,196,245,.7); }
+.welcome.day .brand .dot {
+  background: linear-gradient(135deg, #4f7fc4, #b7d2f2);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.65), 0 0 16px -2px rgba(53,98,159,.45);
+}
+
+@media (max-width: 760px) {
+  .welcome .rail.left { left: 18px; } .welcome .rail.right { right: 18px; }
+  .welcome .rail .track { height: 32vh; width: 7px; }
+  .welcome .rail .label, .welcome .rail .pct { font-size: 11px; }
+  .welcome .chip.c1 { margin-left: -52px; } .welcome .chip.c3 { margin-left: 52px; }
+}
