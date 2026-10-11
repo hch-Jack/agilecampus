@@ -1,0 +1,362 @@
+/* ============================================================
+   登录 / 注册 · 深空星空玻璃拟态 · 独立全屏 · 左右分栏
+   与欢迎页 / 任务页「空灵静谧」同源，作用域 .auth
+   ============================================================ */
+
+.auth {
+  /* 覆盖全局 --color-*，让 ac-* 与 Tailwind 语义类自动适配深色 */
+  --color-canvas: #080b14;
+  --color-surface: rgba(14, 19, 34, 0.5);
+  --color-sunken: rgba(216, 234, 255, 0.05);
+  --color-ink: #e9edf6;
+  --color-ink-soft: #a9b2c4;
+  --color-ink-faint: #6d7588;
+  --color-line: rgba(216, 234, 255, 0.12);
+  --color-line-strong: rgba(216, 234, 255, 0.26);
+  --color-primary: #9cc4f5;
+  --color-primary-hover: #b8d4f9;
+  --color-primary-soft: rgba(156, 196, 245, 0.14);
+  --color-primary-ring: rgba(156, 196, 245, 0.4);
+  --color-accent: #e0a86a;
+  --color-accent-soft: rgba(224, 168, 106, 0.16);
+  --color-high: #f0a184;
+  --color-done: #8fc0ab;
+
+  --ice: #d8eaff;
+  --ice-dim: #9cc4f5;
+
+  position: fixed;
+  inset: 0;
+  overflow: auto;
+  color: var(--color-ink);
+  background: #080b14;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.auth * { box-sizing: border-box; }
+
+/* —— 背景：深空 + 遮罩 —— */
+.auth .bg {
+  position: fixed; inset: 0; z-index: 0;
+  background: url('/bg-cosmic-2.jpg') center/cover no-repeat;
+  /* 素材偏紫，转色相到蓝色，与冰蓝玻璃主题一致 */
+  filter: hue-rotate(-80deg) saturate(1.08);
+}
+.auth .shade {
+  position: fixed; inset: 0; z-index: 0;
+  background:
+    linear-gradient(180deg, rgba(8, 11, 20, .80) 0%, rgba(8, 11, 20, .38) 45%, rgba(8, 11, 20, .86) 100%),
+    radial-gradient(120% 90% at 50% 0%, rgba(156, 196, 245, .14), transparent 60%);
+}
+
+/* —— 光晕 —— */
+.auth .blob {
+  position: fixed; z-index: 1; border-radius: 50%;
+  filter: blur(95px); pointer-events: none;
+  animation: auth-drift 30s ease-in-out infinite alternate;
+}
+.auth .blob.b1 { width: 46vw; height: 46vw; left: -12vw; top: -14vw;
+  background: radial-gradient(circle, rgba(156, 196, 245, .22), transparent 70%); }
+.auth .blob.b2 { width: 40vw; height: 40vw; right: -10vw; top: 30vh;
+  background: radial-gradient(circle, rgba(216, 234, 255, .14), transparent 72%); animation-delay: -12s; }
+.auth .blob.b3 { width: 34vw; height: 34vw; left: 24vw; bottom: -16vw;
+  background: radial-gradient(circle, rgba(255, 255, 255, .10), transparent 70%); animation-delay: -22s; }
+@keyframes auth-drift {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(6vw, 5vh) scale(1.15); }
+}
+
+/* —— 左上品牌 —— */
+.auth .brand {
+  position: fixed; top: 32px; left: 40px; z-index: 3;
+  display: flex; align-items: center; gap: 10px;
+}
+.auth .brand .mark {
+  width: 22px; height: 22px; border-radius: 7px;
+  display: grid; place-items: center;
+  background: linear-gradient(135deg, #9cc4f5, #d8eaff);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .55), 0 0 16px -2px rgba(156, 196, 245, .6);
+  color: #0c1730; font-weight: 700; font-size: 12px;
+  font-family: Georgia, "Songti SC", serif;
+}
+.auth .brand .name { font-size: 13px; letter-spacing: .12em; color: var(--color-ink-soft); }
+.auth .brand .name b { color: var(--color-ink); font-weight: 500; }
+
+/* —— 主体：左右分栏 —— */
+.auth .wrap {
+  position: relative; z-index: 2;
+  min-height: 100%;
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  align-items: center;
+  gap: 4vw;
+  padding: 96px 8vw 56px;
+}
+
+/* —— 左栏 hero —— */
+.auth .hero { animation: auth-rise .85s cubic-bezier(.22, .72, .28, 1) both; }
+.auth .kicker {
+  font-size: 12px; letter-spacing: .34em; font-weight: 500;
+  color: var(--ice-dim);
+  margin: 0 0 22px;
+}
+.auth .title {
+  margin: 0;
+  font-size: clamp(46px, 6vw, 86px);
+  line-height: 1.08;
+  font-weight: 600;
+  letter-spacing: .04em;
+  color: #fff;
+  text-shadow: 0 0 44px rgba(156, 196, 245, .32);
+}
+.auth .ename {
+  margin: 16px 0 0;
+  font-family: Georgia, "Songti SC", serif;
+  font-style: italic;
+  font-weight: 300;
+  font-size: clamp(22px, 2.6vw, 34px);
+  letter-spacing: .01em;
+  color: var(--ice);
+  opacity: .9;
+}
+.auth .divider {
+  width: 56px; height: 1px;
+  margin: 32px 0;
+  background: linear-gradient(90deg, var(--ice-dim), transparent);
+}
+.auth .slogan {
+  font-family: Georgia, "Songti SC", serif;
+  font-style: italic;
+  font-size: 17px;
+  letter-spacing: .04em;
+  color: var(--color-ink-soft);
+  margin: 0;
+}
+.auth .slogan-cn {
+  margin: 12px 0 0;
+  font-size: 14px;
+  letter-spacing: .12em;
+  color: var(--color-ink-faint);
+}
+
+/* —— 右栏玻璃卡片 —— */
+.auth .card {
+  position: relative;
+  padding: 40px 38px;
+  border-radius: 18px;
+  background: rgba(14, 19, 34, .42);
+  border: 1px solid var(--color-line);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: 0 24px 60px -30px rgba(0, 0, 0, .8), inset 0 1px 0 rgba(216, 234, 255, .08);
+  animation: auth-rise .85s cubic-bezier(.22, .72, .28, 1) .12s both;
+}
+.auth .card::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit;
+  background: radial-gradient(160% 80% at 50% 0%, rgba(156, 196, 245, .10), transparent 55%);
+  pointer-events: none;
+}
+.auth .card h2 {
+  margin: 0 0 6px;
+  font-size: 22px; font-weight: 600; letter-spacing: .02em;
+  color: #fff;
+}
+.auth .card-sub {
+  margin: 0 0 26px;
+  font-size: 13px;
+  color: var(--color-ink-faint);
+}
+
+/* 字段 */
+.auth .field { margin-bottom: 16px; }
+.auth .field label {
+  display: block; margin-bottom: 7px;
+  font-size: 12px; letter-spacing: .08em; color: var(--color-ink-soft);
+}
+.auth .input {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--color-line-strong);
+  background-color: rgba(8, 11, 20, .4);
+  padding: 11px 14px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--color-ink);
+  transition: border-color .2s, box-shadow .2s, background-color .2s;
+}
+.auth .input::placeholder { color: var(--color-ink-faint); }
+.auth .input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  background-color: rgba(8, 11, 20, .55);
+  box-shadow: 0 0 0 3px var(--color-primary-ring);
+}
+/* 下拉框：冰蓝箭头 + 深色选项 */
+.auth select.input {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 40px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%239cc4f5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  background-size: 14px;
+}
+.auth select.input option { background: #0e1322; color: #e9edf6; }
+
+/* 密码框（含眼睛） */
+.auth .pw { position: relative; display: block; }
+.auth .pw .input { padding-right: 44px; }
+.auth .eye {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 32px; height: 32px;
+  display: grid; place-items: center;
+  border: none; background: transparent; border-radius: 8px;
+  color: var(--color-ink-faint);
+  cursor: pointer;
+  transition: color .2s, background .2s;
+}
+.auth .eye:hover { color: var(--color-ink); background: var(--color-primary-soft); }
+.auth .eye svg { width: 18px; height: 18px; }
+
+/* 消息 */
+.auth .msg-ok { font-size: 13px; color: var(--color-done); margin: 0 0 12px; }
+.auth .msg-err { font-size: 13px; color: var(--color-high); margin: 0 0 12px; }
+
+/* 提交按钮 */
+.auth .submit {
+  width: 100%;
+  margin-top: 8px;
+  padding: 12px;
+  border: none; border-radius: 10px;
+  background: linear-gradient(135deg, #9cc4f5, #7fb0e8);
+  color: #08111f; font-size: 15px; font-weight: 600; letter-spacing: .06em;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 8px 24px -10px rgba(156, 196, 245, .6), inset 0 1px 0 rgba(255, 255, 255, .35);
+  transition: transform .15s, box-shadow .25s, filter .25s;
+}
+.auth .submit:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+  box-shadow: 0 12px 30px -10px rgba(156, 196, 245, .75), inset 0 1px 0 rgba(255, 255, 255, .4);
+}
+.auth .submit:active:not(:disabled) { transform: translateY(0); }
+.auth .submit:disabled { opacity: .55; cursor: not-allowed; }
+
+/* 飞书登录区块：深色玻璃按钮 */
+.auth .feishu { margin-top: 20px; }
+.auth .ac-btn-ghost {
+  background-color: rgba(14, 19, 34, .4);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* 底部切换 */
+.auth .switch {
+  margin: 22px 0 0;
+  text-align: center;
+  font-size: 13px; color: var(--color-ink-soft);
+}
+.auth .switch a {
+  color: var(--color-primary); text-decoration: none;
+  border-bottom: 1px solid transparent; transition: border-color .2s;
+}
+.auth .switch a:hover { border-color: var(--color-primary); }
+
+/* 入场 */
+@keyframes auth-rise {
+  from { opacity: 0; transform: translateY(30px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 左栏文字：极慢微幅的上下漂浮 —— 幅度小、周期长、相位错开，
+   靠非整数周期让各元素永不重复同步，呈现自然呼吸感而非机械摆动 */
+.auth .kicker,
+.auth .title,
+.auth .ename,
+.auth .slogan,
+.auth .slogan-cn {
+  animation: auth-float var(--fd, 12s) ease-in-out infinite;
+  animation-delay: var(--fdl, 0s);
+}
+.auth .kicker    { --fa: -2px; --fd: 15.5s; --fdl: -3.2s; }
+.auth .title     { --fa: -5px; --fd: 12.7s; --fdl: -6.8s; }
+.auth .ename     { --fa: -3px; --fd: 10.3s; --fdl: -2.1s; }
+.auth .slogan    { --fa: -3px; --fd: 11.6s; --fdl: -4.7s; }
+.auth .slogan-cn { --fa: -2px; --fd: 14.3s; --fdl: -9.9s; }
+
+@keyframes auth-float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(var(--fa, -3px)); }
+}
+
+/* —— 标题装饰：星环弧线 + 流星 + 四角星 —— */
+.auth .hero { position: relative; }
+
+/* 标题文字：定位容器，让四角星相对其绝对定位 */
+.auth .title-text {
+  position: relative;
+  display: inline-block;
+}
+
+/* 流星：沿星环周期性快速划过（亮起 → 划弧 → 熄灭） */
+.auth .hero-comet {
+  position: absolute;
+  left: 0; top: 88px;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 8px 2px rgba(156, 196, 245, .9), 0 0 20px 6px rgba(156, 196, 245, .5);
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0;
+  animation: auth-comet 7s ease-in-out infinite;
+}
+@keyframes auth-comet {
+  0%        { left: 0%;   top: 110px; opacity: 0; transform: scale(0); }
+  3%        { opacity: 1; transform: scale(1); }
+  9%        { left: 22%;  top: 128px; opacity: 1; }
+  17%       { left: 50%;  top: 145px; opacity: 1; }
+  25%       { left: 78%;  top: 128px; opacity: 0; }
+  30%, 100% { left: 100%; top: 110px; opacity: 0; transform: scale(0); }
+}
+
+/* 四角星：紧贴文字，周期性快速闪亮后消失 */
+.auth .title-inner,
+.auth .ename-inner {
+  position: relative;
+  display: inline-block;
+}
+.auth .spark {
+  position: absolute;
+  width: 20px; height: 20px;
+  color: var(--ice);
+  opacity: 0;
+  pointer-events: none;
+  filter: drop-shadow(0 0 6px rgba(156, 196, 245, .85));
+  animation: auth-sparkle 6s ease-in-out infinite;
+}
+.auth .spark-a { top: -12px; right: -14px; width: 22px; height: 22px; }
+.auth .spark-b { bottom: 4px; left: -16px; width: 13px; height: 13px; animation-delay: -2.6s; animation-duration: 7.5s; }
+.auth .spark-c { top: 2px; right: -24px; width: 15px; height: 15px; animation-delay: -4.1s; animation-duration: 5.5s; }
+
+@keyframes auth-sparkle {
+  0%, 88%, 100% { opacity: 0; transform: scale(0) rotate(0deg); }
+  91%           { opacity: 1; transform: scale(1) rotate(0deg); }
+  96%           { opacity: 1; transform: scale(1.15) rotate(18deg); }
+  99%           { opacity: 0; transform: scale(.3) rotate(36deg); }
+}
+
+/* 响应式：小屏上下堆叠 */
+@media (max-width: 900px) {
+  .auth .wrap {
+    grid-template-columns: 1fr;
+    gap: 40px;
+    align-content: start;
+    padding: 104px 24px 48px;
+  }
+  .auth .title { font-size: 44px; }
+  .auth .card { max-width: 460px; padding: 30px 24px; }
+  .auth .brand { left: 24px; top: 22px; }
+}
