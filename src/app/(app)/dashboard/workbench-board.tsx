@@ -4,12 +4,14 @@ import { useEffect, useRef, useState, useOptimistic, useTransition } from "react
 import Link from "next/link";
 import {
   DndContext,
+  DragOverlay,
   PointerSensor,
   useDraggable,
   useDroppable,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragStartEvent,
 } from "@dnd-kit/core";
 import type { ColumnPatch } from "@/lib/board-columns";
 import { moveTaskAction } from "@/app/(app)/projects/[projectId]/actions";
@@ -46,7 +48,7 @@ const COLUMNS = [
 
 function WorkbenchCard({ task, today }: { task: WorkbenchTask; today: string }) {
   const canWrite = WRITE_ROLES.includes(task.role);
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: task.id,
     disabled: !canWrite,
   });
@@ -69,14 +71,23 @@ function WorkbenchCard({ task, today }: { task: WorkbenchTask; today: string }) 
   return (
     <div
       ref={setNodeRef}
-      style={
-        transform
-          ? { transform: `translate(${transform.x}px, ${transform.y}px)` }
-          : undefined
-      }
-      className={`ac-card p-3 text-sm transition hover:shadow-md ${isDragging ? "opacity-50" : ""}`}
+      onMouseMove={(e) => {
+        const el = e.currentTarget;
+        const r = el.getBoundingClientRect();
+        const x = e.clientX - r.left;
+        const y = e.clientY - r.top;
+        el.style.setProperty("--mx", `${x}px`);
+        el.style.setProperty("--my", `${y}px`);
+        el.style.setProperty("--ry", `${((x / r.width - 0.5) * 6).toFixed(2)}deg`);
+        el.style.setProperty("--rx", `${(-(y / r.height - 0.5) * 6).toFixed(2)}deg`);
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.setProperty("--rx", "0deg");
+        e.currentTarget.style.setProperty("--ry", "0deg");
+      }}
+      className={`ac-card proj-card p-3 text-sm transition ${isDragging ? "dragging" : ""}`}
     >
-      <div {...listeners} {...attributes} className={canWrite ? "cursor-grab" : ""}>
+      <div {...listeners} {...attributes}>
         <Link
           href={`/projects/${task.projectId}/tasks/${task.id}`}
           onClick={(e) => {
@@ -139,8 +150,8 @@ function Column({
   return (
     <div
       ref={setNodeRef}
-      className={`min-h-40 space-y-2 rounded-xl border border-line p-3 transition-colors ${
-        isOver ? "bg-primary-soft" : "bg-sunken"
+      className={`proj-column min-h-40 space-y-2 rounded-xl border border-line p-3 transition-colors ${
+        isOver ? "drop" : ""
       }`}
     >
       <h3 className={`flex items-center gap-2 text-sm font-semibold ${column.tone}`}>
@@ -167,6 +178,7 @@ export function WorkbenchBoard({
 }) {
   const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [activeTask, setActiveTask] = useState<WorkbenchTask | null>(null);
   const [optimisticTasks, moveOptimistic] = useOptimistic(
     tasks,
     (current, move: { taskId: string; patch: ColumnPatch }) =>
@@ -176,7 +188,13 @@ export function WorkbenchBoard({
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
   );
 
+  function handleDragStart(event: DragStartEvent) {
+    const task = optimisticTasks.find((t) => t.id === String(event.active.id));
+    setActiveTask(task ?? null);
+  }
+
   function handleDragEnd(event: DragEndEvent) {
+    setActiveTask(null);
     const taskId = String(event.active.id);
     const over = event.over?.id;
     if (!over) return;
@@ -198,7 +216,12 @@ export function WorkbenchBoard({
   }
 
   return (
-    <DndContext id="workbench-board" sensors={sensors} onDragEnd={handleDragEnd}>
+    <DndContext
+      id="workbench-board"
+      sensors={sensors}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
       {error && <p className="text-sm text-high">{error}</p>}
       <div className="grid gap-4 sm:grid-cols-3">
         {COLUMNS.map((col) => (
@@ -214,6 +237,17 @@ export function WorkbenchBoard({
       {hideDone && (
         <p className="mt-2 text-xs text-ink-faint">已隐藏 {doneCount} 个已完成任务</p>
       )}
+      <DragOverlay dropAnimation={null}>
+        {activeTask ? (
+          <div className="ac-card proj-card proj-ghost w-[262px] p-3 text-sm">
+            <p className="font-medium text-ink">{activeTask.title}</p>
+            <p className="mt-1 text-xs text-ink-soft">
+              {activeTask.projectName}
+              {activeTask.dueDate ? ` · 截止 ${activeTask.dueDate}` : ""}
+            </p>
+          </div>
+        ) : null}
+      </DragOverlay>
     </DndContext>
   );
 }
