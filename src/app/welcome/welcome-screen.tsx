@@ -37,11 +37,10 @@ export function WelcomeScreen({
   risk,
 }: Props) {
   const [now, setNow] = useState<Date | null>(null);
-  const [quote, setQuote] = useState(QUOTES[0]);
+  const [quote] = useState(() => QUOTES[Math.floor(Math.random() * QUOTES.length)]);
   const [day, setDay] = useState(false);
 
   useEffect(() => {
-    setQuote(QUOTES[Math.floor(Math.random() * QUOTES.length)]);
     const tick = () => {
       const d = new Date();
       setNow(d);
