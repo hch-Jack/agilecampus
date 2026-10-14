@@ -3,6 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 
 // 悬停卡片时，从四边不断生出白色星光粒子，缓慢向外飘散后消失，循环不止。
+//
+// **宿主卡片必须自己带定位（`relative` 之类）**：下面那层是 `absolute inset-0`，
+// 没有定位祖先时会一路锚到**视口**上 —— 粒子改成从窗口四边冒出来、往外飘出 40 多像素，
+// 把文档撑大，右侧滚动条随之时隐时现；而卡片悬停时那段抖动（transform）恰好又让它
+// 短暂锚回卡片，看起来像「飘一会儿才漂走」。现在两个调用点（所有项目页、团队项目页）
+// 都带了 `relative`，再加调用方时要一并带上。
 export function CardSparkles() {
   const hostRef = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(false);
@@ -13,6 +19,13 @@ export function CardSparkles() {
   useEffect(() => {
     const host = hostRef.current?.parentElement;
     if (!host) return;
+    // 开发期护栏：宿主没定位时，上面的星光层会锚到视口（粒子从窗口边冒出来、把文档撑大，
+    // 滚动条随之时隐时现），页面上看着只是「粒子飘了」，很难反查；宁可开发时吵一句
+    if (process.env.NODE_ENV !== "production" && getComputedStyle(host).position === "static") {
+      console.warn(
+        "[CardSparkles] 宿主卡片不是定位元素，星光层会锚到视口上：给卡片加 relative。",
+      );
+    }
     const onEnter = () => {
       setActive(true);
       // 悬停瞬间：卡片左右抖动一次（放大与抖动合并进同一段动画）
