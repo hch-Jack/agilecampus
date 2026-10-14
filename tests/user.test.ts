@@ -100,4 +100,49 @@ describe("createUser", () => {
       createUser({ email: "ZHOU@example.com", password: "password123", name: "乙" }),
     ).rejects.toThrow("该邮箱已被注册");
   });
+
+  it("用户名全站唯一：重名抛出可展示错误（私信按用户名找人依赖此约束）", async () => {
+    await createUser({ email: "a@example.com", password: "password123", name: "周瑜" });
+    await expect(
+      createUser({ email: "b@example.com", password: "password123", name: "周瑜" }),
+    ).rejects.toThrow("该用户名已被使用，请换一个");
+  });
+
+  it("用户名查重不区分大小写", async () => {
+    await createUser({ email: "a@example.com", password: "password123", name: "ZhouYu" });
+    await expect(
+      createUser({ email: "b@example.com", password: "password123", name: "zhouyu" }),
+    ).rejects.toThrow("该用户名已被使用，请换一个");
+  });
+
+  it("用户名入库前去首尾空白", async () => {
+    const user = await createUser({ email: "a@example.com", password: "password123", name: "  周瑜  " });
+    expect(user.name).toBe("周瑜");
+  });
+
+  it("绕过查重的用户名唯一键冲突被转译为可展示的 AppError", async () => {
+    const name = "抢占";
+    let releaseTx!: () => void;
+    const hold = new Promise<void>((r) => (releaseTx = r));
+    let markInserted!: () => void;
+    const inserted = new Promise<void>((r) => (markInserted = r));
+
+    // 事务先占住同名但不提交：createUser 的查重（读已提交）看不到该行，
+    // 其 insert 阻塞在唯一索引锁上，提交后必现 23505
+    const tx = db.transaction(async (trx) => {
+      await trx.insert(users).values({ email: "hold@example.com", passwordHash: "x", name });
+      markInserted();
+      await hold;
+    });
+
+    await inserted;
+    const pending = createUser({ email: "race@example.com", password: "password123", name });
+    pending.catch(() => {});
+    await new Promise((r) => setTimeout(r, 300));
+    releaseTx();
+    await tx;
+
+    await expect(pending).rejects.toBeInstanceOf(AppError);
+    await expect(pending).rejects.toThrow("该用户名已被使用，请换一个");
+  });
 });

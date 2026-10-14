@@ -223,6 +223,9 @@
 .auth .msg-ok { font-size: 13px; color: var(--color-done); margin: 0 0 12px; }
 .auth .msg-err { font-size: 13px; color: var(--color-high); margin: 0 0 12px; }
 
+/* 字段下的小提示（如用户名唯一性说明） */
+.auth .field-hint { margin: 6px 0 0; font-size: 12px; color: var(--color-ink-faint); }
+
 /* 提交按钮 */
 .auth .submit {
   width: 100%;

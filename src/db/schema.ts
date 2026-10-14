@@ -31,23 +31,88 @@ export type TeamRole = (typeof teamRoleEnum.enumValues)[number];
 export const userIdentityEnum = pgEnum("user_identity", ["teacher", "student"]);
 export type UserIdentity = (typeof userIdentityEnum.enumValues)[number];
 
-export const users = pgTable("users", {
+export const users = pgTable(
+  "users",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    email: text("email").notNull().unique(),
+    passwordHash: text("password_hash").notNull(),
+    // 用户名（站内昵称）：全局唯一——私信按用户名精准定位到人，注册查重 + 此索引兜底
+    name: text("name").notNull(),
+    identity: userIdentityEnum("identity"),
+    // 飞书绑定（一对一，可空=未绑定）：open_id 为应用内用户唯一标识，发私信用之
+    feishuOpenId: text("feishu_open_id").unique(),
+    feishuName: text("feishu_name"),
+    feishuBoundAt: timestamp("feishu_bound_at"),
+    // 时区偏好：IANA 名（如 Asia/Shanghai），或 "auto" = 跟随浏览器（见 lib/time.ts）。
+    // 默认中国时间 —— 部署容器跑在 UTC，不给默认值的话用户看到的时间会慢 8 小时。
+    // 这里写字面量而非常量：schema 由 drizzle-kit 独立加载，不引应用侧的模块。
+    // 两份值必须一致，有 tests/time.test.ts 盯着。
+    timezone: text("timezone").notNull().default("Asia/Shanghai"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("users_name_unique").on(t.name)],
+);
+
+// 私信附件：与任务附件同构，内容（bytea）直存库内，单文件上限由应用层校验（lib/dm.ts，10MB）。
+// 附件随消息先落库再被消息引用；站内无删除入口，留档即永久。
+export const dmAttachments = pgTable("dm_attachments", {
   id: uuid("id").primaryKey().defaultRandom(),
-  email: text("email").notNull().unique(),
-  passwordHash: text("password_hash").notNull(),
-  name: text("name").notNull(),
-  identity: userIdentityEnum("identity"),
-  // 飞书绑定（一对一，可空=未绑定）：open_id 为应用内用户唯一标识，发私信用之
-  feishuOpenId: text("feishu_open_id").unique(),
-  feishuName: text("feishu_name"),
-  feishuBoundAt: timestamp("feishu_bound_at"),
-  // 时区偏好：IANA 名（如 Asia/Shanghai），或 "auto" = 跟随浏览器（见 lib/time.ts）。
-  // 默认中国时间 —— 部署容器跑在 UTC，不给默认值的话用户看到的时间会慢 8 小时。
-  // 这里写字面量而非常量：schema 由 drizzle-kit 独立加载，不引应用侧的模块。
-  // 两份值必须一致，有 tests/time.test.ts 盯着。
-  timezone: text("timezone").notNull().default("Asia/Shanghai"),
+  uploaderId: uuid("uploader_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  filename: text("filename").notNull(),
+  mimeType: text("mime_type"),
+  size: integer("size").notNull(),
+  data: bytea("data").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+// 用户间私信（点对点，无群聊）：content 与 attachmentId 至少其一非空（应用层校验）。
+// readAt 由收件方打开会话时批量置为 now()——未读数与已读标记共用这一个字段。
+export const dmMessages = pgTable(
+  "dm_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    senderId: uuid("sender_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    recipientId: uuid("recipient_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    content: text("content").notNull().default(""),
+    attachmentId: uuid("attachment_id").references(() => dmAttachments.id, {
+      onDelete: "set null",
+    }),
+    readAt: timestamp("read_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("dm_messages_recipient_idx").on(t.recipientId),
+    index("dm_messages_sender_idx").on(t.senderId),
+    index("dm_messages_attachment_idx").on(t.attachmentId),
+  ],
+);
+
+// 会话列表（消息栏）：搜索添加或收发过消息即建立一行，双方各自持有。
+// 仅作列表成员与排序之用，已读状态记在消息上。
+export const dmContacts = pgTable(
+  "dm_contacts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    peerId: uuid("peer_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("dm_contacts_owner_peer_unique").on(t.ownerId, t.peerId),
+    index("dm_contacts_owner_idx").on(t.ownerId),
+  ],
+);
 
 export const teams = pgTable("teams", {
   id: uuid("id").primaryKey().defaultRandom(),
