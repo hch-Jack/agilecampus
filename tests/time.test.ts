@@ -5,10 +5,12 @@ import {
   addDays,
   clockParts,
   dateIn,
+  dbWallClockToInstant,
   formatDateShort,
   formatDateTime,
   formatInputValue,
   formatShortDateTime,
+  instantToDbWallClock,
   isValidTimeZone,
   listTimeZones,
   offsetLabel,
@@ -19,7 +21,8 @@ import {
 
 // 本文件是纯函数测试：不连库、不碰网络。
 // 它是「所有时间改成中国时间」这一役的主要防线 —— 线上那个 bug 的成因
-// （容器跑在 UTC）在本地开发机上复现不出来，只能靠这里把边界钉死。
+// （无时区 timestamp 列的读写口径不一致，见 dbWallClockToInstant）在本地开发机上复现不出来，
+// 只能靠这里把边界钉死。
 
 describe("dateIn / todayIn", () => {
   it("同一刻在上海与 UTC 可以分属两天 —— 线上错位的根因", () => {
@@ -216,6 +219,61 @@ describe("isValidTimeZone / resolveTimeZone", () => {
   it("显式时区原样返回", () => {
     expect(resolveTimeZone("UTC")).toBe("UTC");
     expect(resolveTimeZone("America/New_York")).toBe("America/New_York");
+  });
+});
+
+describe("dbWallClockToInstant / instantToDbWallClock（无时区 timestamp 列的读写）", () => {
+  it("库里的 18:19 在上海会话下是 10:19Z，在 UTC 会话下是 18:19Z —— 差一个偏移", () => {
+    const wall = "2026-10-14 18:19:13.850195";
+    expect(dbWallClockToInstant("Asia/Shanghai", wall).toISOString()).toBe(
+      "2026-10-14T10:19:13.850Z",
+    );
+    expect(dbWallClockToInstant("UTC", wall).toISOString()).toBe("2026-10-14T18:19:13.850Z");
+  });
+
+  it("微秒截到毫秒（JS 的 Date 只到毫秒），不四舍五入", () => {
+    expect(dbWallClockToInstant("UTC", "2026-10-14 18:19:13.999999").getMilliseconds()).toBe(999);
+    expect(dbWallClockToInstant("UTC", "2026-10-14 18:19:13.85").getMilliseconds()).toBe(850);
+    expect(dbWallClockToInstant("UTC", "2026-10-14 18:19:13").getMilliseconds()).toBe(0);
+  });
+
+  it("写方向：按目标时区算好钟面，且不带偏移（带上 PG 会丢）", () => {
+    const at = new Date("2026-10-14T10:19:13.850Z");
+    expect(instantToDbWallClock("Asia/Shanghai", at)).toBe("2026-10-14 18:19:13.850");
+    expect(instantToDbWallClock("UTC", at)).toBe("2026-10-14 10:19:13.850");
+    expect(instantToDbWallClock("Asia/Shanghai", at)).not.toContain("+");
+    expect(instantToDbWallClock("Asia/Shanghai", at)).not.toContain("Z");
+  });
+
+  it("七个时区往返一致（含夏令时切换日与最东/最西时区）", () => {
+    const zones = [
+      "Asia/Shanghai",
+      "UTC",
+      "America/New_York",
+      "Europe/Paris",
+      "Pacific/Kiritimati",
+      "Pacific/Midway",
+      "Asia/Kathmandu", // UTC+5:45，半小时偏移之外还带 15 分钟
+    ];
+    // 纽约 2026-11-01 01:30 那天重复出现两次，取切换后的那一侧仍是同一套算法
+    for (const tz of zones) {
+      for (const iso of [
+        "2026-03-08T06:59:59.000Z",
+        "2026-11-01T05:30:00.000Z",
+        "2026-01-01T00:00:00.000Z",
+        "2026-12-31T23:59:59.999Z",
+      ]) {
+        const at = new Date(iso);
+        const back = dbWallClockToInstant(tz, instantToDbWallClock(tz, at));
+        expect(back.getTime(), `${tz} / ${iso}`).toBe(at.getTime());
+      }
+    }
+  });
+
+  it("值不合法时抛错，不做静默兜底", () => {
+    expect(() => dbWallClockToInstant("UTC", "2026-10-14")).toThrow();
+    expect(() => dbWallClockToInstant("UTC", "")).toThrow();
+    expect(() => dbWallClockToInstant("UTC", "2026/10/14 18:19:13")).toThrow();
   });
 });
 

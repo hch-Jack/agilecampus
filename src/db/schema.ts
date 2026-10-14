@@ -3,7 +3,6 @@ import {
   pgEnum,
   uuid,
   text,
-  timestamp,
   uniqueIndex,
   primaryKey,
   date,
@@ -14,6 +13,9 @@ import {
   customType,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+// 相对路径而非 `@/lib/time`：schema 由 drizzle-kit 独立加载，那边没有配路径别名
+import { dbWallClockToInstant, instantToDbWallClock, isValidTimeZone } from "../lib/time";
 
 // 二进制大对象：附件文件内容直存 PostgreSQL（团队自建/NAS 部署，随库备份免运维）
 export const bytea = customType<{ data: Buffer; driverData: Buffer }>({
@@ -21,6 +23,55 @@ export const bytea = customType<{ data: Buffer; driverData: Buffer }>({
     return "bytea";
   },
 });
+
+// ------------------------------------------------------------------ 时间列
+
+/**
+ * 本连接的 PG 会话时区（`SHOW timezone`）。由 `src/db/index.ts` 连上库后探明注入。
+ *
+ * 初值 `UTC` 是兜底：一来那是 drizzle 内置的假设，二来探不到时区时（库还没起来）
+ * 至少与改动前的行为一致，且后续任何查询本来都会失败。
+ */
+let dbTimeZone = "UTC";
+
+/** 探明会话时区后调用；非法值一律忽略，保留原值 */
+export function setDbTimeZone(tz: unknown): void {
+  if (isValidTimeZone(tz)) dbTimeZone = tz;
+}
+
+export function getDbTimeZone(): string {
+  return dbTimeZone;
+}
+
+/**
+ * **无时区 `timestamp` 列**（站内所有时间列都是它，即钟面读数，本身不带偏移）。
+ *
+ * 为什么不用 drizzle 自带的 `timestamp()`：它对这类列一律 `new Date(值 + "+0000")`，
+ * 也就是**假定钟面是 UTC**；而 PG 自己写时间时（`now()` / `defaultNow()`）落的是
+ * **会话时区**的钟面。两边口径不一致，凡是数据库写的时间就整整差一个偏移 ——
+ * 库会话在 +08 时，页面上每个「创建于/更新于/活动日志」都慢 8 小时，
+ * 而库会话在 UTC 时又恰好对的（`docker-compose.prod.yml` 那套就是）。
+ *
+ * 这里两个方向都按会话时区显式换算：写的时候自己先把钟面算好（不带偏移，PG 便不会再动它），
+ * 读的时候再按同一个时区还原。于是**库会话时区配成什么都不会错**，
+ * 「PG 时区必须等于 Node 时区」这个暗礁也就不存在了。
+ *
+ * 类型仍是 `timestamp`，物理 schema 不变，`db:push` 不会产生任何 ALTER。
+ */
+const dbWallClock = customType<{ data: Date; driverData: string }>({
+  dataType: () => "timestamp",
+  toDriver: (value) => instantToDbWallClock(dbTimeZone, value as Date),
+  fromDriver: (value) =>
+    (value as unknown) instanceof Date
+      ? (value as unknown as Date)
+      : dbWallClockToInstant(dbTimeZone, String(value)),
+});
+
+/** 无默认值的时间列（如 `start_time`、`feishu_bound_at`） */
+export const dbTimestamp = (name: string) => dbWallClock(name);
+
+/** 默认取 DB 时钟的时间列；`default(sql`now()`)` 与原来的 `.defaultNow()` 生成同一条 DDL */
+export const dbTimestampNow = (name: string) => dbWallClock(name).default(sql`now()`);
 
 export const teamRoleEnum = pgEnum("team_role", ["admin", "teacher", "student"]);
 export type TeamRole = (typeof teamRoleEnum.enumValues)[number];
@@ -40,20 +91,20 @@ export const users = pgTable("users", {
   // 飞书绑定（一对一，可空=未绑定）：open_id 为应用内用户唯一标识，发私信用之
   feishuOpenId: text("feishu_open_id").unique(),
   feishuName: text("feishu_name"),
-  feishuBoundAt: timestamp("feishu_bound_at"),
+  feishuBoundAt: dbTimestamp("feishu_bound_at"),
   // 时区偏好：IANA 名（如 Asia/Shanghai），或 "auto" = 跟随浏览器（见 lib/time.ts）。
   // 默认中国时间 —— 部署容器跑在 UTC，不给默认值的话用户看到的时间会慢 8 小时。
   // 这里写字面量而非常量：schema 由 drizzle-kit 独立加载，不引应用侧的模块。
   // 两份值必须一致，有 tests/time.test.ts 盯着。
   timezone: text("timezone").notNull().default("Asia/Shanghai"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
+  createdAt: dbTimestampNow("created_at").notNull(),
 });
 
 export const teams = pgTable("teams", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   inviteCode: text("invite_code").notNull().unique(),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
+  createdAt: dbTimestampNow("created_at").notNull(),
 });
 
 export const teamMembers = pgTable(
@@ -67,7 +118,7 @@ export const teamMembers = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     role: teamRoleEnum("role").notNull().default("student"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
+    createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [uniqueIndex("team_members_team_user_unique").on(t.teamId, t.userId)],
 );
@@ -92,7 +143,7 @@ export const projects = pgTable(
     status: projectStatusEnum("status").notNull().default("active"),
     startDate: date("start_date"),
     endDate: date("end_date"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
+    createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [index("projects_team_idx").on(t.teamId)],
 );
@@ -107,7 +158,7 @@ export const milestones = pgTable(
     title: text("title").notNull(),
     targetDate: date("target_date"),
     status: milestoneStatusEnum("status").notNull().default("open"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
+    createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [index("milestones_project_idx").on(t.projectId)],
 );
@@ -141,8 +192,8 @@ export const tasks = pgTable(
     status: taskStatusEnum("status").notNull().default("todo"),
     priority: taskPriorityEnum("priority").notNull().default("medium"),
     sortOrder: doublePrecision("sort_order").notNull().default(0),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    createdAt: dbTimestampNow("created_at").notNull(),
+    updatedAt: dbTimestampNow("updated_at").notNull(),
   },
   (t) => [
     index("tasks_project_idx").on(t.projectId),
@@ -165,7 +216,7 @@ export const conversations = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     title: text("title"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
+    createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [index("conversations_project_idx").on(t.projectId)],
 );
@@ -180,7 +231,7 @@ export const messages = pgTable(
     role: messageRoleEnum("role").notNull(),
     content: text("content").notNull(),
     toolCalls: jsonb("tool_calls"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
+    createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [index("messages_conversation_idx").on(t.conversationId)],
 );
@@ -195,7 +246,7 @@ export const taskDependencies = pgTable(
     successorId: uuid("successor_id")
       .notNull()
       .references(() => tasks.id, { onDelete: "cascade" }),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
+    createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [
     uniqueIndex("task_dep_pair_unique").on(t.predecessorId, t.successorId),
@@ -214,9 +265,9 @@ export const apiTokens = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     tokenHash: text("token_hash").notNull().unique(),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    lastUsedAt: timestamp("last_used_at"),
-    revokedAt: timestamp("revoked_at"),
+    createdAt: dbTimestampNow("created_at").notNull(),
+    lastUsedAt: dbTimestamp("last_used_at"),
+    revokedAt: dbTimestamp("revoked_at"),
   },
   (t) => [index("api_tokens_user_idx").on(t.userId)],
 );
@@ -235,9 +286,9 @@ export const resourceUsages = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     resourceName: text("resource_name").notNull(),
     purpose: text("purpose"),
-    startTime: timestamp("start_time").notNull(),
-    endTime: timestamp("end_time"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
+    startTime: dbTimestamp("start_time").notNull(),
+    endTime: dbTimestamp("end_time"),
+    createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [
     index("resource_usages_team_idx").on(t.teamId),
@@ -267,7 +318,7 @@ export const labels = pgTable(
       .references(() => teams.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     color: labelColorEnum("color").notNull().default("slate"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
+    createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [
     uniqueIndex("labels_team_name_unique").on(t.teamId, t.name),
@@ -307,7 +358,7 @@ export const taskAttachments = pgTable(
     mimeType: text("mime_type"),
     size: integer("size").notNull(),
     data: bytea("data").notNull(),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
+    createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [index("task_attachments_task_idx").on(t.taskId)],
 );
@@ -330,7 +381,7 @@ export const taskActivities = pgTable(
     // 展示用文本（人名/中文名称/文件名），非裸 id；type=field 时为旧值→新值
     oldValue: text("old_value"),
     newValue: text("new_value"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
+    createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [index("task_activities_task_idx").on(t.taskId)],
 );
