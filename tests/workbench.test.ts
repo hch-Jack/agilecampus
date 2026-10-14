@@ -4,7 +4,8 @@ import { createUser } from "@/lib/user";
 import { createTeam, joinTeam, updateMemberRole } from "@/lib/team";
 import { createProject, updateProject } from "@/lib/project";
 import { createTask, createSubtask, listMySubtaskProgress, listMyTasks, updateTask } from "@/lib/task";
-import { listMyTaskActivities } from "@/lib/activity";
+import { listMyTaskActivities, listProjectActivities } from "@/lib/activity";
+import { ForbiddenError } from "@/lib/errors";
 import {
   dashboardHref,
   pickProjectFilter,
@@ -267,6 +268,54 @@ describe("listMyTaskActivities", () => {
       await createTask(owner.id, project.id, { title: `任务${i}`, assigneeId: student.id });
     }
     expect(await listMyTaskActivities(student.id)).toHaveLength(20);
+  });
+});
+
+describe("listProjectActivities", () => {
+  it("只含本项目任务的动态且最新在前", async () => {
+    const { owner, student, project, team } = await scene();
+    const other = await createProject(owner.id, team.id, { name: "官渡之战" });
+    const task = await createTask(owner.id, project.id, { title: "本项目", assigneeId: student.id });
+    await updateTask(student.id, task.id, { status: "doing" });
+    await createTask(owner.id, other.id, { title: "他项目", assigneeId: student.id });
+
+    const feed = await listProjectActivities(student.id, project.id);
+    expect(feed.every((a) => a.projectId === project.id)).toBe(true);
+    expect(feed).toHaveLength(2);
+    expect(feed[0].type).toBe("field");
+    expect(feed[1].type).toBe("created");
+    expect(feed[0].projectName).toBe("赤壁演习");
+    expect(feed[0].taskTitle).toBe("本项目");
+  });
+
+  it("不限「分配给我」：他人任务的动态也在内", async () => {
+    const { owner, student, project } = await scene();
+    await createTask(owner.id, project.id, { title: "别人的", assigneeId: owner.id });
+
+    const feed = await listProjectActivities(student.id, project.id);
+    expect(feed).toHaveLength(1);
+    expect(feed[0].taskTitle).toBe("别人的");
+  });
+
+  it("非成员抛 ForbiddenError", async () => {
+    const { owner, student, outsider, project } = await scene();
+    await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    await expect(listProjectActivities(outsider.id, project.id)).rejects.toThrow(ForbiddenError);
+  });
+
+  it("归档项目仍可读历史动态", async () => {
+    const { owner, student, project } = await scene();
+    await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    await updateProject(owner.id, project.id, { status: "archived" });
+    expect(await listProjectActivities(student.id, project.id)).toHaveLength(1);
+  });
+
+  it("默认 limit 20", async () => {
+    const { owner, student, project } = await scene();
+    for (let i = 0; i < 25; i++) {
+      await createTask(owner.id, project.id, { title: `任务${i}`, assigneeId: student.id });
+    }
+    expect(await listProjectActivities(student.id, project.id)).toHaveLength(20);
   });
 });
 

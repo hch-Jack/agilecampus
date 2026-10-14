@@ -7,10 +7,12 @@ import { conversations, messages as messagesTable } from "@/db/schema";
 import { getProjectForUser, listProjectMilestones } from "@/lib/project";
 import { listTeamMembers } from "@/lib/team";
 import { listProjectTasks } from "@/lib/task";
+import { listProjectActivities } from "@/lib/activity";
 import { listTeamLabels } from "@/lib/label";
 import { parseFilters, applyFilters } from "@/lib/board-filters";
 import { todayIn } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
+import { ActivityFeed } from "@/components/activity-feed";
 import { MilestoneSection } from "./milestone-section";
 import { NewTaskForm } from "./new-task-form";
 import { Board } from "./board";
@@ -34,12 +36,14 @@ export default async function ProjectPage({
   if (!access) notFound();
   const { project, role } = access;
 
-  const [projectMilestones, projectTasks, members, teamLabels] = await Promise.all([
-    listProjectMilestones(session.user.id, projectId),
-    listProjectTasks(session.user.id, projectId),
-    listTeamMembers(project.teamId),
-    listTeamLabels(session.user.id, project.teamId),
-  ]);
+  const [projectMilestones, projectTasks, projectActivities, members, teamLabels] =
+    await Promise.all([
+      listProjectMilestones(session.user.id, projectId),
+      listProjectTasks(session.user.id, projectId),
+      listProjectActivities(session.user.id, projectId),
+      listTeamMembers(project.teamId),
+      listTeamLabels(session.user.id, project.teamId),
+    ]);
 
   const filters = parseFilters(
     new URLSearchParams(
@@ -51,7 +55,8 @@ export default async function ProjectPage({
   // 「今日」按**用户自己的时区**取 YYYY-MM-DD，随后仅作字符串比较。
   // 别用 toLocaleDateString("sv-SE")：那是宿主进程的今天，容器里就是 UTC。
   const tz = await resolveUserTimeZone(session.user.id);
-  const today = todayIn(tz);
+  const now = new Date();
+  const today = todayIn(tz, now);
   const visibleTasks = applyFilters(projectTasks, filters, today);
 
   const canWrite = role === "admin" || role === "student";
@@ -150,6 +155,9 @@ export default async function ProjectPage({
           projectEnd={project.endDate}
         />
       )}
+
+      {/* 本项目专属口径：只统计该项目的记录（不限「分配给我」） */}
+      <ActivityFeed activities={projectActivities} tz={tz} now={now} />
     </main>
   );
 }
