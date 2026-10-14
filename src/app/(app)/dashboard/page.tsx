@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { listMySubtaskProgress, listMyTasks } from "@/lib/task";
-import { listMyTaskActivities } from "@/lib/activity";
+import { getFeedUnreadCount, listMyTaskActivities, WORKBENCH_SCOPE } from "@/lib/activity";
 import { addDays, todayIn, weekdayOfDate } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
 import { ActivityFeed } from "@/components/activity-feed";
@@ -41,9 +41,10 @@ export default async function DashboardPage({
   const session = await auth();
   if (!session?.user) redirect("/login");
 
-  const [myTasks, feed] = await Promise.all([
+  const [myTasks, feed, feedUnread] = await Promise.all([
     listMyTasks(session.user.id),
     listMyTaskActivities(session.user.id), // 全量口径，不受任何筛选影响
+    getFeedUnreadCount(session.user.id, WORKBENCH_SCOPE),
   ]);
 
   // 「今天 / 本周截止」一律按**用户自己的时区**在服务端算成 YYYY-MM-DD，
@@ -146,7 +147,14 @@ export default async function DashboardPage({
         <WorkbenchBoard tasks={visible} today={today} doneCount={doneCount} hideDone={hideDone} />
       )}
 
-      <ActivityFeed activities={feed} tz={tz} now={now} showProject />
+      <ActivityFeed
+        activities={feed}
+        tz={tz}
+        now={now}
+        showProject
+        unreadScope={WORKBENCH_SCOPE}
+        unreadCount={feedUnread}
+      />
     </main>
   );
 }
