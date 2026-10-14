@@ -9,8 +9,10 @@ import {
   getFeedUnreadCount,
   listMyTaskActivities,
   listProjectActivities,
+  listTaskActivities,
   markFeedRead,
   projectFeedScope,
+  taskFeedScope,
   WORKBENCH_SCOPE,
 } from "@/lib/activity";
 import { ForbiddenError } from "@/lib/errors";
@@ -388,12 +390,26 @@ describe("动态流未读", () => {
     expect(await getFeedUnreadCount(student.id, projectFeedScope(project.id))).toBe(1);
   });
 
+  it("task scope 只计该任务动态", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    const other = await createTask(owner.id, project.id, { title: "O", assigneeId: student.id });
+    await markFeedRead(student.id, taskFeedScope(task.id));
+
+    await updateTask(student.id, task.id, { status: "doing" });
+    await updateTask(student.id, other.id, { status: "doing" });
+    expect(await getFeedUnreadCount(student.id, taskFeedScope(task.id))).toBe(1);
+    // 项目 scope 尚无标记，不因任务 scope 已读而受影响
+    expect(await getFeedUnreadCount(student.id, projectFeedScope(project.id))).toBe(0);
+  });
+
   it("markFeedReadAction 校验 scope 白名单", async () => {
     const { owner, student, project } = await scene();
     await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
     authMock.userId = student.id;
 
     await markFeedReadAction("project:not-a-uuid");
+    await markFeedReadAction("task:not-a-uuid");
     await markFeedReadAction(`${WORKBENCH_SCOPE}; drop`);
     // 非法 scope 不落库
     expect(await db.select().from(feedReads)).toHaveLength(0);
@@ -445,6 +461,22 @@ describe("clearFeed（清除记录只清自己视角）", () => {
     expect(await getFeedUnreadCount(student.id, projectFeedScope(project.id))).toBe(1);
   });
 
+  it("task 与 project 两条流各自清除、互不影响", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    await updateTask(student.id, task.id, { status: "doing" });
+
+    await clearFeed(student.id, taskFeedScope(task.id));
+    // 任务时间线清空；项目流（同项目的全部动态）原样
+    expect(await listTaskActivities(student.id, task.id)).toHaveLength(0);
+    expect(await listProjectActivities(student.id, project.id)).toHaveLength(2);
+
+    await clearFeed(student.id, projectFeedScope(project.id));
+    expect(await listProjectActivities(student.id, project.id)).toHaveLength(0);
+    // 任务时间线不受项目流清除影响（仍是清空后的状态）
+    expect(await listTaskActivities(student.id, task.id)).toHaveLength(0);
+  });
+
   it("workbench 与 project 两条流各自清除、互不影响", async () => {
     const { owner, student, project } = await scene();
     const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
@@ -463,7 +495,7 @@ describe("clearFeed（清除记录只清自己视角）", () => {
 
   it("clearFeedAction 校验登录与 scope 白名单，清除落库 clearedAt", async () => {
     const { owner, student, project } = await scene();
-    await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
     const scope = projectFeedScope(project.id);
 
     authMock.userId = null;
@@ -471,6 +503,7 @@ describe("clearFeed（清除记录只清自己视角）", () => {
 
     authMock.userId = student.id;
     expect(await clearFeedAction("project:not-a-uuid")).toEqual({ error: "参数无效" });
+    expect(await clearFeedAction("task:not-a-uuid")).toEqual({ error: "参数无效" });
     expect(await clearFeedAction(`${WORKBENCH_SCOPE}; drop`)).toEqual({ error: "参数无效" });
     // 非法 scope 不落库
     expect(await db.select().from(feedReads)).toHaveLength(0);
@@ -482,6 +515,12 @@ describe("clearFeed（清除记录只清自己视角）", () => {
       .where(and(eq(feedReads.userId, student.id), eq(feedReads.scope, scope)));
     expect(marker?.clearedAt).toBeInstanceOf(Date);
     expect(await listProjectActivities(student.id, project.id)).toHaveLength(0);
+
+    // task scope 走同一白名单与清除逻辑，并按 taskId 反查项目路径 revalidate
+    revalidateMock.fn = vi.fn();
+    expect(await clearFeedAction(taskFeedScope(task.id))).toBeNull();
+    expect(await listTaskActivities(student.id, task.id)).toHaveLength(0);
+    expect(revalidateMock.fn).toHaveBeenCalledWith(`/projects/${project.id}/tasks/${task.id}`);
   });
 });
 

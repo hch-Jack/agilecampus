@@ -1,8 +1,11 @@
 "use server";
 
+import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { clearFeed, isFeedScopeValid, markFeedRead } from "@/lib/activity";
+import { db } from "@/db";
+import { tasks } from "@/db/schema";
 
 // 「最新记录」模块点「标记已读」时由客户端调用的动作。
 // scope 白名单校验防脏数据行；未登录静默忽略——客户端乐观清角标，失败无感。
@@ -23,9 +26,18 @@ export async function clearFeedAction(scope: string): Promise<ClearRecordsState>
 
   await clearFeed(session.user.id, scope);
 
-  revalidatePath("/dashboard");
-  if (scope.startsWith("project:")) {
+  if (scope === "workbench") {
+    revalidatePath("/dashboard");
+  } else if (scope.startsWith("project:")) {
     revalidatePath(`/projects/${scope.slice("project:".length)}`);
+  } else {
+    // task: 任务页路径带 projectId，按 taskId 反查；任务已删则该页本就不存在，跳过
+    const taskId = scope.slice("task:".length);
+    const [task] = await db
+      .select({ projectId: tasks.projectId })
+      .from(tasks)
+      .where(eq(tasks.id, taskId));
+    if (task) revalidatePath(`/projects/${task.projectId}/tasks/${taskId}`);
   }
   return null;
 }

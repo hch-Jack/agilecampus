@@ -4,44 +4,78 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { dateIn } from "@/lib/time";
-import type { TaskActivityRow } from "@/lib/activity";
 import { clearFeedAction, markFeedReadAction } from "@/app/(app)/actions";
 
 // 看板拖拽成功后的广播事件：detail 携带动态流 scope（"workbench" 或 "project:<id>"），
 // 最新记录模块据此立即未读 +1。scope 字面量与 lib/activity 的 WORKBENCH_SCOPE/projectFeedScope 一致。
 export const ACTIVITY_NEW_EVENT = "activity-feed:new";
 
+// 动态行最小结构：工作台/项目流带 taskId/taskTitle（句中内嵌任务链接）；
+// 任务页时间线不带这些字段，按「无标题」口径渲染（文案同详情页 activityLine）。
+export type ActivityFeedRow = {
+  id: string;
+  actorName: string;
+  type: string;
+  field: string | null;
+  oldValue: string | null;
+  newValue: string | null;
+  createdAt: Date;
+  taskId?: string;
+  taskTitle?: string;
+  projectId?: string;
+  projectName?: string;
+};
+
 // 动态行拆成「任务标题前 / 后」两段，标题内嵌为链接：
 // 「把「2」的负责人从 未分配 改为 1」「完成了「父任务」的子任务「子A」」。
-// 文案口径与详情页 activityLine 一致（重启子任务等），此处按链接拆段本地实现
+// 无标题（任务页时间线）时文案与详情页 activityLine 口径一致（重启子任务等）
 function feedParts(a: {
   type: string;
   field: string | null;
   oldValue: string | null;
   newValue: string | null;
+  taskTitle?: string;
 }): { before: string; after: string } {
+  const titled = a.taskTitle != null;
   switch (a.type) {
     case "created":
-      return { before: "创建了任务「", after: "」" };
+      return titled ? { before: "创建了任务「", after: "」" } : { before: "创建了任务", after: "" };
     case "field":
-      return {
-        before: "把「",
-        after: `」的${a.field ?? "字段"}从 ${a.oldValue ?? "无"} 改为 ${a.newValue ?? "无"}`,
-      };
+      return titled
+        ? {
+            before: "把「",
+            after: `」的${a.field ?? "字段"}从 ${a.oldValue ?? "无"} 改为 ${a.newValue ?? "无"}`,
+          }
+        : {
+            before: "",
+            after: `把${a.field ?? "字段"}从 ${a.oldValue ?? "无"} 改为 ${a.newValue ?? "无"}`,
+          };
     case "subtask_added":
-      return { before: "给「", after: `」添加了子任务「${a.newValue ?? ""}」` };
+      return titled
+        ? { before: "给「", after: `」添加了子任务「${a.newValue ?? ""}」` }
+        : { before: `添加了子任务「${a.newValue ?? ""}`, after: "」" };
     case "subtask_done":
-      return { before: "完成了「", after: `」的子任务「${a.newValue ?? ""}」` };
+      return titled
+        ? { before: "完成了「", after: `」的子任务「${a.newValue ?? ""}」` }
+        : { before: `完成了子任务「${a.newValue ?? ""}`, after: "」" };
     case "subtask_reopened":
-      return { before: "重启了「", after: `」的子任务「${a.newValue ?? ""}」` };
+      return titled
+        ? { before: "重启了「", after: `」的子任务「${a.newValue ?? ""}」` }
+        : { before: `重启了子任务「${a.newValue ?? ""}`, after: "」" };
     case "subtask_deleted":
-      return { before: "删除了「", after: `」的子任务「${a.newValue ?? ""}」` };
+      return titled
+        ? { before: "删除了「", after: `」的子任务「${a.newValue ?? ""}」` }
+        : { before: `删除了子任务「${a.newValue ?? ""}`, after: "」" };
     case "attachment_added":
-      return { before: "给「", after: `」上传了附件「${a.newValue ?? ""}」` };
+      return titled
+        ? { before: "给「", after: `」上传了附件「${a.newValue ?? ""}」` }
+        : { before: `上传了附件「${a.newValue ?? ""}`, after: "」" };
     case "attachment_deleted":
-      return { before: "删除了「", after: `」的附件「${a.newValue ?? ""}」` };
+      return titled
+        ? { before: "删除了「", after: `」的附件「${a.newValue ?? ""}」` }
+        : { before: `删除了附件「${a.newValue ?? ""}`, after: "」" };
     default:
-      return { before: "", after: `：${a.type}` };
+      return titled ? { before: "", after: `：${a.type}` } : { before: "", after: a.type };
   }
 }
 
@@ -59,7 +93,8 @@ function fmtRelative(d: Date, now: Date, tz: string): string {
   return dateIn(tz, d);
 }
 
-// 工作台与项目页共用的「最新记录」模块：操作人 + 动作 + 任务链接 + 相对时间。
+// 工作台、项目页与任务页共用的「最新记录 / 动态」模块：操作人 + 动作 + 任务链接 + 相对时间。
+// 工作台/项目流行带 taskId/taskTitle，句中内嵌任务链接；任务页时间线不带，按无标题口径渲染。
 // showProject 控制「项目名:」前缀：工作台跨项目展示需要；项目页全是本项目动态，前缀冗余。
 // unreadScope 传入即启用未读角标：不随滚动自动消除，点「标记已读」才清零并上报服务端；
 // 未读条目自身也带小红点。列表超高时内部滚动（最长 35vh）。
@@ -73,14 +108,16 @@ export function ActivityFeed({
   unreadScope,
   unreadCount = 0,
   clearScope,
+  title = "最新记录",
 }: {
-  activities: TaskActivityRow[];
+  activities: ActivityFeedRow[];
   tz: string;
   now: Date;
   showProject?: boolean;
   unreadScope?: string;
   unreadCount?: number;
   clearScope?: string;
+  title?: string;
 }) {
   const [unread, setUnread] = useState(unreadCount);
   const [clearPending, setClearPending] = useState(false);
@@ -140,7 +177,7 @@ export function ActivityFeed({
     <section className="ac-card p-5">
       <div className="flex items-center justify-between gap-3">
         <h2 className="flex items-center gap-1.5 font-display text-lg font-semibold text-ink">
-          最新记录
+          {title}
           {unread > 0 && (
             <>
               <span
@@ -175,18 +212,21 @@ export function ActivityFeed({
         <ul className="mt-2 max-h-[35vh] space-y-1.5 overflow-y-auto pr-1">
           {activities.map((a, i) => {
             const parts = feedParts(a);
+            const titled = a.taskTitle != null;
             return (
               <li key={a.id} className="text-sm">
                 {showProject && <span className="text-ink-faint">{a.projectName}:</span>}{" "}
                 <span className="font-medium text-ink">{a.actorName}</span>{" "}
                 <span className="text-ink-soft">
                   {parts.before}
-                  <Link
-                    href={`/projects/${a.projectId}/tasks/${a.taskId}`}
-                    className="text-primary underline"
-                  >
-                    {a.taskTitle}
-                  </Link>
+                  {titled && (
+                    <Link
+                      href={`/projects/${a.projectId}/tasks/${a.taskId}`}
+                      className="text-primary underline"
+                    >
+                      {a.taskTitle}
+                    </Link>
+                  )}
                   {parts.after}
                 </span>{" "}
                 <span className="text-xs text-ink-faint">{fmtRelative(a.createdAt, now, tz)}</span>

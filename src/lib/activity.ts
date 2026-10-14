@@ -42,6 +42,7 @@ export async function listTaskActivities(actorId: string, taskId: string, limit 
   if (!task) throw new AppError("任务不存在");
   const access = await getProjectForUser(actorId, task.projectId);
   if (!access) throw new ForbiddenError();
+  const clearedAt = await feedClearedAt(actorId, taskFeedScope(taskId));
 
   return db
     .select({
@@ -55,7 +56,13 @@ export async function listTaskActivities(actorId: string, taskId: string, limit 
     })
     .from(taskActivities)
     .innerJoin(users, eq(taskActivities.actorId, users.id))
-    .where(eq(taskActivities.taskId, taskId))
+    .where(
+      and(
+        eq(taskActivities.taskId, taskId),
+        // 「清除记录」后的旧动态对本人隐藏（见 clearFeed），他人查询不受影响
+        ...(clearedAt ? [gt(taskActivities.createdAt, clearedAt)] : []),
+      ),
+    )
     .orderBy(desc(taskActivities.createdAt))
     .limit(limit);
 }
@@ -160,21 +167,24 @@ async function feedClearedAt(actorId: string, scope: string): Promise<Date | nul
 
 // -------------------------------------------------------------------- 未读
 
-// 动态流 scope：工作台与项目页各记各的已读标记，互不影响
+// 动态流 scope：工作台、项目页、任务页各记各的已读标记，互不影响
 export const WORKBENCH_SCOPE = "workbench";
 export function projectFeedScope(projectId: string) {
   return `project:${projectId}`;
 }
-// server action 入口的白名单校验：scope 只能由这两者拼出，防脏数据行
+export function taskFeedScope(taskId: string) {
+  return `task:${taskId}`;
+}
+// server action 入口的白名单校验：scope 只能由这三者拼出，防脏数据行
 export function isFeedScopeValid(scope: string) {
   return (
     scope === WORKBENCH_SCOPE ||
-    /^project:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(scope)
+    /^(project|task):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(scope)
   );
 }
 
 // 未读数 = 该 scope 动态流中 createdAt 晚于已读标记的条数。
-// 口径与对应 feed 查询一致（workbench 限「分配给我」的 active 项目；project 限该项目）。
+// 口径与对应 feed 查询一致（workbench 限「分配给我」的 active 项目；project 限该项目；task 限该任务）。
 // 没有标记 = 视为全部已读：功能上线时不给存量用户灌一屏未读。
 export async function getFeedUnreadCount(actorId: string, scope: string): Promise<number> {
   const [marker] = await db
@@ -185,24 +195,32 @@ export async function getFeedUnreadCount(actorId: string, scope: string): Promis
 
   const afterMarker = gt(taskActivities.createdAt, marker.lastReadAt);
 
-  const [row] =
-    scope === WORKBENCH_SCOPE
-      ? await db
-          .select({ n: sql<number>`count(*)::int` })
-          .from(taskActivities)
-          .innerJoin(tasks, eq(taskActivities.taskId, tasks.id))
-          .innerJoin(projects, eq(tasks.projectId, projects.id))
-          .innerJoin(
-            teamMembers,
-            and(eq(teamMembers.teamId, projects.teamId), eq(teamMembers.userId, actorId)),
-          )
-          .where(and(afterMarker, eq(tasks.assigneeId, actorId), eq(projects.status, "active")))
-      : await db
-          .select({ n: sql<number>`count(*)::int` })
-          .from(taskActivities)
-          .innerJoin(tasks, eq(taskActivities.taskId, tasks.id))
-          .innerJoin(projects, eq(tasks.projectId, projects.id))
-          .where(and(afterMarker, eq(tasks.projectId, scope.slice("project:".length))));
+  let row: { n: number };
+  if (scope === WORKBENCH_SCOPE) {
+    [row] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(taskActivities)
+      .innerJoin(tasks, eq(taskActivities.taskId, tasks.id))
+      .innerJoin(projects, eq(tasks.projectId, projects.id))
+      .innerJoin(
+        teamMembers,
+        and(eq(teamMembers.teamId, projects.teamId), eq(teamMembers.userId, actorId)),
+      )
+      .where(and(afterMarker, eq(tasks.assigneeId, actorId), eq(projects.status, "active")));
+  } else if (scope.startsWith("project:")) {
+    [row] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(taskActivities)
+      .innerJoin(tasks, eq(taskActivities.taskId, tasks.id))
+      .innerJoin(projects, eq(tasks.projectId, projects.id))
+      .where(and(afterMarker, eq(tasks.projectId, scope.slice("project:".length))));
+  } else {
+    // task: 只数该任务自己的动态，无需 join
+    [row] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(taskActivities)
+      .where(and(afterMarker, eq(taskActivities.taskId, scope.slice("task:".length))));
+  }
 
   return row.n;
 }
