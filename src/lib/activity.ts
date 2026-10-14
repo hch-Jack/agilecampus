@@ -60,10 +60,8 @@ export async function listTaskActivities(actorId: string, taskId: string, limit 
     .limit(limit);
 }
 
-// 工作台「最近动静」：当前分配给我的任务（active 项目、我仍是成员）的全部动态，最新在前。
-// 口径说明：改派后任务的历史动态会离开我的 feed（按「当前分配」过滤）；任务删除时动态级联自净；
-// 标题/项目名取当前值。相对时间文案的前提是 PG 与 Node 时区一致（部署时两侧须对齐）。
-export type MyTaskActivityRow = {
+// 工作台与项目页共用的「动态流」行结构，两条查询共享同一投影，保证行结构一致。
+export type TaskActivityRow = {
   id: string;
   taskId: string;
   taskTitle: string;
@@ -77,24 +75,29 @@ export type MyTaskActivityRow = {
   createdAt: Date;
 };
 
+const feedColumns = {
+  id: taskActivities.id,
+  taskId: tasks.id,
+  taskTitle: tasks.title,
+  projectId: projects.id,
+  projectName: projects.name,
+  actorName: users.name,
+  type: taskActivities.type,
+  field: taskActivities.field,
+  oldValue: taskActivities.oldValue,
+  newValue: taskActivities.newValue,
+  createdAt: taskActivities.createdAt,
+};
+
+// 工作台「最近动静」：当前分配给我的任务（active 项目、我仍是成员）的全部动态，最新在前。
+// 口径说明：改派后任务的历史动态会离开我的 feed（按「当前分配」过滤）；任务删除时动态级联自净；
+// 标题/项目名取当前值。相对时间文案的前提是 PG 与 Node 时区一致（部署时两侧须对齐）。
 export async function listMyTaskActivities(
   actorId: string,
   limit = 20,
-): Promise<MyTaskActivityRow[]> {
+): Promise<TaskActivityRow[]> {
   return db
-    .select({
-      id: taskActivities.id,
-      taskId: tasks.id,
-      taskTitle: tasks.title,
-      projectId: projects.id,
-      projectName: projects.name,
-      actorName: users.name,
-      type: taskActivities.type,
-      field: taskActivities.field,
-      oldValue: taskActivities.oldValue,
-      newValue: taskActivities.newValue,
-      createdAt: taskActivities.createdAt,
-    })
+    .select(feedColumns)
     .from(taskActivities)
     .innerJoin(tasks, eq(taskActivities.taskId, tasks.id))
     .innerJoin(projects, eq(tasks.projectId, projects.id))
@@ -105,6 +108,28 @@ export async function listMyTaskActivities(
     )
     .where(and(eq(tasks.assigneeId, actorId), eq(projects.status, "active")))
     // 同一事务写入的多条动态时间戳相同，二级键保证顺序确定
+    .orderBy(desc(taskActivities.createdAt), desc(taskActivities.id))
+    .limit(limit);
+}
+
+// 项目页「最新记录」：该项目的全部任务动态（不限「分配给我」），最新在前。
+// 与工作台口径不同：不筛 assignee 也不筛 active——能打开项目页即已通过访问校验，
+// 归档项目照常可读历史动态，与任务详情时间线口径一致。
+export async function listProjectActivities(
+  actorId: string,
+  projectId: string,
+  limit = 20,
+): Promise<TaskActivityRow[]> {
+  const access = await getProjectForUser(actorId, projectId);
+  if (!access) throw new ForbiddenError();
+
+  return db
+    .select(feedColumns)
+    .from(taskActivities)
+    .innerJoin(tasks, eq(taskActivities.taskId, tasks.id))
+    .innerJoin(projects, eq(tasks.projectId, projects.id))
+    .innerJoin(users, eq(taskActivities.actorId, users.id))
+    .where(eq(tasks.projectId, projectId))
     .orderBy(desc(taskActivities.createdAt), desc(taskActivities.id))
     .limit(limit);
 }
