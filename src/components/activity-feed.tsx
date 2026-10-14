@@ -62,7 +62,7 @@ function fmtRelative(d: Date, now: Date, tz: string): string {
 // 工作台与项目页共用的「最新记录」模块：操作人 + 动作 + 任务链接 + 相对时间。
 // showProject 控制「项目名:」前缀：工作台跨项目展示需要；项目页全是本项目动态，前缀冗余。
 // unreadScope 传入即启用未读角标：不随滚动自动消除，点「标记已读」才清零并上报服务端；
-// 未读条目自身也带小红点。列表超高时内部滚动（最长半屏）。
+// 未读条目自身也带小红点。列表超高时内部滚动（最长 35vh）。
 // clearScope 传入即显示「清除记录」：只清空当前用户自己看到的这条动态流，
 // 库内数据与他人视图不动，此后新产生的记录照常显示。
 export function ActivityFeed({
@@ -172,7 +172,7 @@ export function ActivityFeed({
       {activities.length === 0 ? (
         <p className="mt-2 text-sm text-ink-faint">暂无动态</p>
       ) : (
-        <ul className="mt-2 max-h-[50vh] space-y-1.5 overflow-y-auto pr-1">
+        <ul className="mt-2 max-h-[35vh] space-y-1.5 overflow-y-auto pr-1">
           {activities.map((a, i) => {
             const parts = feedParts(a);
             return (
