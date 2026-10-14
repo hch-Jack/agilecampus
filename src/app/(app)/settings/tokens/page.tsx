@@ -1,55 +1,7 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
-import { listApiTokens } from "@/lib/api-token";
-import { formatDateTime } from "@/lib/time";
-import { resolveUserTimeZone } from "@/lib/time-pref";
-import { TokenManager, type TokenRow } from "./token-manager";
 
-export default async function TokensPage() {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-
-  const tz = await resolveUserTimeZone(session.user.id);
-  const rows = await listApiTokens(session.user.id);
-  const tokens: TokenRow[] = rows.map((t) => ({
-    id: t.id,
-    name: t.name,
-    createdAtLabel: formatDateTime(tz, t.createdAt),
-    lastUsedLabel: t.lastUsedAt ? formatDateTime(tz, t.lastUsedAt) : null,
-    revoked: t.revokedAt !== null,
-  }));
-
-  return (
-    <main className="mx-auto max-w-2xl space-y-8 py-8">
-      <header className="space-y-1">
-        {/* 导航栏那个「AI 设置」指向的是本页，故这里必须有路回到真正的设置页 */}
-        <Link href="/settings" className="text-xs text-ink-faint hover:text-primary">
-          ← AI 设置
-        </Link>
-        <h1 className="font-display text-2xl font-semibold text-ink">个人访问令牌</h1>
-        <p className="text-sm text-ink-soft">
-          令牌让 Claude Code 等外部程序以你的身份写入——添加任务、填写完成情况、登记资源占用。
-          权限等同于你本人，越权操作会被拒绝。泄露即撤销。
-        </p>
-      </header>
-
-      <TokenManager tokens={tokens} />
-
-      <section className="ac-card space-y-3 p-5">
-        <h2 className="font-display text-base font-semibold text-ink">如何在 Claude Code 中使用</h2>
-        <ol className="list-decimal space-y-1.5 pl-5 text-sm text-ink-soft">
-          <li>在上方生成令牌，复制明文（只显一次）。</li>
-          <li>
-            把令牌与本站地址配置给 Claude Code（作为 <code className="rounded bg-sunken px-1 py-0.5 font-mono text-xs">AGILECAMPUS_TOKEN</code> 与
-            <code className="ml-1 rounded bg-sunken px-1 py-0.5 font-mono text-xs">AGILECAMPUS_URL</code>）。
-          </li>
-          <li>
-            即可让 Claude Code 携令牌调用 <code className="rounded bg-sunken px-1 py-0.5 font-mono text-xs">/api/agent/*</code> 端点，替你写入。详见项目文档
-            <code className="ml-1 rounded bg-sunken px-1 py-0.5 font-mono text-xs">docs/agent-api.md</code>。
-          </li>
-        </ol>
-      </section>
-    </main>
-  );
+// 令牌页已并入 /settings（AI 设置）。旧路由留着跳过去，
+// 免得书签、外部文档里的链接、以及绑定飞书回跳拼出来的地址落到 404。
+export default function TokensPage() {
+  redirect("/settings");
 }
