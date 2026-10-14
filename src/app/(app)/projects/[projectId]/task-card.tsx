@@ -43,7 +43,12 @@ export function TaskCard({
       ref={setNodeRef}
       style={
         transform
-          ? { transform: `translate(${transform.x}px, ${transform.y}px)` }
+          ? {
+              transform: `translate(${transform.x}px, ${transform.y}px)`,
+              // 拖拽中禁掉 className 里的 transition(all)：否则 transform 被 CSS 过渡
+              // 动画化（150ms 滞后），卡片追不上鼠标、发飘。松手后恢复，回位动画照常。
+              transition: "none",
+            }
           : undefined
       }
       className={`ac-card p-3 text-sm transition hover:shadow-md ${isDragging ? "opacity-50" : ""}`}
