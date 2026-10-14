@@ -2,13 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { getUnreadCountAction } from "./messages/actions";
 
 // key 是分区前缀（用于判定当前页），href 是点击跳转目标
 const ITEMS = [
   { key: "/dashboard", href: "/dashboard", label: "工作台" },
   { key: "/projects", href: "/projects", label: "所有项目" },
   { key: "/teams", href: "/teams", label: "我的团队" },
+  { key: "/messages", href: "/messages", label: "消息" },
   { key: "/settings", href: "/settings/tokens", label: "AI 设置" },
 ] as const;
 
@@ -25,6 +27,23 @@ export function NavLinks() {
   const active = activeKey(pathname);
   const itemRefs = useRef<Record<string, HTMLAnchorElement | null>>({});
   const [pill, setPill] = useState<{ left: number; width: number } | null>(null);
+  const [unread, setUnread] = useState(0);
+
+  // 未读角标：进站与每次路由切换时拉一次，消息页打开会话清零后由这里反映出来；
+  // 另有 15s 轮询兜在线收信
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      const r = await getUnreadCountAction();
+      if (!cancelled && r.ok) setUnread(r.data);
+    };
+    tick();
+    const timer = setInterval(tick, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [pathname]);
 
   // 测量当前激活项的 left/width，驱动胶囊定位；切换时平滑滑过去
   useLayoutEffect(() => {
@@ -57,6 +76,11 @@ export function NavLinks() {
             }`}
           >
             {item.label}
+            {item.key === "/messages" && unread > 0 && (
+              <span className="absolute -right-1 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-high px-1 text-[10px] font-bold leading-none text-white">
+                {unread > 99 ? "99+" : unread}
+              </span>
+            )}
           </Link>
         );
       })}

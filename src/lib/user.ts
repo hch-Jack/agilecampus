@@ -21,6 +21,14 @@ export async function createUser(input: {
     .where(eq(users.email, email));
   if (existing) throw new AppError("该邮箱已被注册");
 
+  // 用户名全局唯一：私信按用户名精准定位到人。查重不区分大小写，DB 唯一索引兜底精确匹配。
+  const name = input.name.trim();
+  const [nameTaken] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(sql`lower(${users.name}) = lower(${name})`);
+  if (nameTaken) throw new AppError("该用户名已被使用，请换一个");
+
   const passwordHash = await hashPassword(input.password);
   try {
     const [user] = await db
@@ -28,16 +36,26 @@ export async function createUser(input: {
       .values({
         email,
         passwordHash,
-        name: input.name,
+        name,
         identity: input.identity ?? null,
       })
       .returning({ id: users.id, email: users.email, name: users.name });
     return user;
   } catch (e) {
     // 查重与插入之间的并发窗口：另一请求已抢先注册，由 DB 唯一约束兜底
-    if (isUniqueViolation(e)) throw new AppError("该邮箱已被注册");
+    if (isUniqueViolation(e)) throw new AppError(uniqueViolationMessage(e));
     throw e;
   }
+}
+
+// 唯一键冲突转译：按冲突的约束区分是邮箱还是用户名撞车。
+// postgres.js 的 PostgresError 不暴露 constraint 字段，约束名只在 message 文本里；
+// drizzle 又在外面包一层 DrizzleQueryError（顶层 message 是查询语句，原始错误在 cause 上），故两层 message 都要看。
+function uniqueViolationMessage(e: unknown): string {
+  const w = e as { message?: string; cause?: { message?: string } };
+  const msg = `${w.message ?? ""} ${w.cause?.message ?? ""}`;
+  if (msg.includes("users_name_unique")) return "该用户名已被使用，请换一个";
+  return "该邮箱已被注册";
 }
 
 // 绑定当前用户的飞书身份。open_id 唯一——已被他人绑定则转译友好错误。
@@ -94,13 +112,26 @@ export async function findOrCreateByFeishu(input: { openId: string; name: string
       .returning({ id: users.id, email: users.email, name: users.name });
     return user;
   } catch (e) {
-    // 并发：另一请求已为同一 openId 抢先建号 → 回查复用
     if (isUniqueViolation(e)) {
+      // 并发：另一请求已为同一 openId 抢先建号 → 回查复用
       const [u] = await db
         .select({ id: users.id, email: users.email, name: users.name })
         .from(users)
         .where(eq(users.feishuOpenId, input.openId));
       if (u) return u;
+      // 撞了别人的用户名（全站唯一）：追加 openId 尾号区分，站内仍可被搜到
+      const [user] = await db
+        .insert(users)
+        .values({
+          email,
+          passwordHash,
+          name: `${input.name}-${input.openId.slice(-4)}`,
+          feishuOpenId: input.openId,
+          feishuName: input.name,
+          feishuBoundAt: sql`now()`,
+        })
+        .returning({ id: users.id, email: users.email, name: users.name });
+      return user;
     }
     throw e;
   }

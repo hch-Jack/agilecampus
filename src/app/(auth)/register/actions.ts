@@ -6,7 +6,8 @@ import { createUser } from "@/lib/user";
 import { AppError } from "@/lib/errors";
 
 const registerSchema = z.object({
-  name: z.string().min(1, "请填写姓名"),
+  // 用户名全局唯一（私信按用户名找人），trim 后交由 createUser 查重
+  name: z.string().trim().min(1, "请填写用户名").max(24, "用户名最长 24 位"),
   // 只提供导师 / 学生：admin 是团队内权限，注册时不可自取
   identity: z.enum(["teacher", "student"], "请选择身份"),
   email: z.email("邮箱格式不正确"),

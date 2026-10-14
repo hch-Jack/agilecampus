@@ -33,14 +33,15 @@ export default function RegisterPage() {
 
           <form action={formAction}>
             <div className="field">
-              <label htmlFor="name">姓名</label>
+              <label htmlFor="name">用户名</label>
               <input
                 id="name"
                 name="name"
-                placeholder="你的姓名"
+                placeholder="你的用户名（全站唯一）"
                 className="input"
-                autoComplete="name"
+                autoComplete="username"
               />
+              <p className="field-hint">注册后全站唯一，别人搜这个名字就能给你发消息。</p>
             </div>
 
             {/* 身份决定加入团队时的初始角色：导师→只读观察，学生→可写任务 */}
