@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { clearFeed, isFeedScopeValid, markFeedRead } from "@/lib/activity";
 
-// 「最新记录」模块翻到最新一条时由客户端（IntersectionObserver）调用的标记已读动作。
+// 「最新记录」模块点「标记已读」时由客户端调用的动作。
 // scope 白名单校验防脏数据行；未登录静默忽略——客户端乐观清角标，失败无感。
 export async function markFeedReadAction(scope: string) {
   const session = await auth();
