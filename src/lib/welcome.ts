@@ -1,6 +1,7 @@
 import { and, count, eq, isNotNull, lte, or } from "drizzle-orm";
 import { db } from "@/db";
 import { projects, tasks } from "@/db/schema";
+import { addDays, todayIn } from "./time";
 
 export type WelcomeStats = {
   doing: number;
@@ -19,8 +20,9 @@ function sumByStatus(rows: { status: string; n: number }[]) {
   return { todo, doing, done, total: todo + doing + done };
 }
 
-// 欢迎页数据（只读）：进行中 / 待办 / 临近逾期 + 两条进度
-export async function getWelcomeStats(userId: string): Promise<WelcomeStats> {
+// 欢迎页数据（只读）：进行中 / 待办 / 临近逾期 + 两条进度。
+// tz 由调用方解析后传入 —— 本模块不读 cookie，保持「给什么时区就按什么算」。
+export async function getWelcomeStats(userId: string, tz: string): Promise<WelcomeStats> {
   // 我的全部任务，按状态聚合
   const mineRows = await db
     .select({ status: tasks.status, n: count() })
@@ -38,10 +40,11 @@ export async function getWelcomeStats(userId: string): Promise<WelcomeStats> {
     .groupBy(tasks.status);
   const phase = sumByStatus(phaseRows);
 
-  // 临近逾期：未完成且截止日期在 3 天内（含已逾期）
-  const warn = new Date();
-  warn.setDate(warn.getDate() + 3);
-  const warnStr = warn.toISOString().slice(0, 10);
+  // 临近逾期：未完成且截止日期在 3 天内（含已逾期）。
+  // 边界走「用户的今天是哪一天 + 3」的纯日历运算 —— 原先是
+  // `setDate` 加三天再 toISOString()，那等于拿 UTC 的今天往后推，
+  // 北京时间晚上 8 点后整体偏一天。
+  const warnStr = addDays(todayIn(tz), 3);
   const [riskRow] = await db
     .select({ n: count() })
     .from(tasks)

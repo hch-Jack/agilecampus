@@ -9,6 +9,8 @@ import { listTeamMembers } from "@/lib/team";
 import { listProjectTasks } from "@/lib/task";
 import { listTeamLabels } from "@/lib/label";
 import { parseFilters, applyFilters } from "@/lib/board-filters";
+import { todayIn } from "@/lib/time";
+import { resolveUserTimeZone } from "@/lib/time-pref";
 import { MilestoneSection } from "./milestone-section";
 import { NewTaskForm } from "./new-task-form";
 import { Board } from "./board";
@@ -46,8 +48,10 @@ export default async function ProjectPage({
       ),
     ),
   );
-  // 「今日」在服务端按本地时区取 YYYY-MM-DD，随后仅作字符串比较
-  const today = new Date().toLocaleDateString("sv-SE");
+  // 「今日」按**用户自己的时区**取 YYYY-MM-DD，随后仅作字符串比较。
+  // 别用 toLocaleDateString("sv-SE")：那是宿主进程的今天，容器里就是 UTC。
+  const tz = await resolveUserTimeZone(session.user.id);
+  const today = todayIn(tz);
   const visibleTasks = applyFilters(projectTasks, filters, today);
 
   const canWrite = role === "admin" || role === "student";

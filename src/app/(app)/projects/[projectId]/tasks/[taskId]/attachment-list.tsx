@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import { formatShortDateTime } from "@/lib/time";
 import {
   uploadAttachmentAction,
   deleteAttachmentAction,
@@ -22,21 +23,19 @@ function fmtSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function fmtTime(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getMonth() + 1}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-
 export function AttachmentList({
   projectId,
   taskId,
   attachments,
   canWrite,
+  timeZone,
 }: {
   projectId: string;
   taskId: string;
   attachments: AttachmentRowData[];
   canWrite: boolean;
+  // 服务端算好的用户时区：客户端组件拿不到偏好，也不该自己去猜
+  timeZone: string;
 }) {
   return (
     <div>
@@ -57,6 +56,7 @@ export function AttachmentList({
               taskId={taskId}
               attachment={a}
               canWrite={canWrite}
+              timeZone={timeZone}
             />
           ))}
         </ul>
@@ -72,11 +72,13 @@ function AttachmentRow({
   taskId,
   attachment,
   canWrite,
+  timeZone,
 }: {
   projectId: string;
   taskId: string;
   attachment: AttachmentRowData;
   canWrite: boolean;
+  timeZone: string;
 }) {
   const [deleteState, deleteAction, deleting] = useActionState<FormState, FormData>(
     deleteAttachmentAction,
@@ -89,7 +91,7 @@ function AttachmentRow({
         <span className="block truncate text-sm text-ink">{attachment.filename}</span>
         <span className="block truncate text-xs text-ink-faint">
           {fmtSize(attachment.size)} · {attachment.uploaderName ?? "未知用户"} ·{" "}
-          {fmtTime(attachment.createdAt)}
+          {formatShortDateTime(timeZone, attachment.createdAt)}
         </span>
       </div>
 

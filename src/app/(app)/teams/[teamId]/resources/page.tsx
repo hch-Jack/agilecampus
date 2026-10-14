@@ -7,13 +7,10 @@ import { db } from "@/db";
 import { teams } from "@/db/schema";
 import { getTeamMembership } from "@/lib/team";
 import { listTeamResourceUsages } from "@/lib/resource";
+import { formatShortDateTime } from "@/lib/time";
+import { resolveUserTimeZone } from "@/lib/time-pref";
 import { ResourceForm } from "./resource-form";
 import { endResourceAction } from "./actions";
-
-function fmtTime(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getMonth() + 1}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
 
 function fmtDuration(min: number): string {
   if (min < 60) return `${min} 分钟`;
@@ -38,6 +35,7 @@ export default async function ResourcesPage({
   const [team] = await db.select().from(teams).where(eq(teams.id, teamId));
   if (!team) notFound();
 
+  const tz = await resolveUserTimeZone(session.user.id);
   const { usages, byUser, byResource } = await listTeamResourceUsages(session.user.id, teamId);
   const active = usages.filter((u) => u.active);
   const canEnd = (userId: string) => userId === session.user.id || me.role === "admin";
@@ -55,7 +53,7 @@ export default async function ResourcesPage({
         </p>
       </header>
 
-      <ResourceForm teamId={teamId} />
+      <ResourceForm teamId={teamId} timeZone={tz} />
 
       {/* 时长汇总 */}
       <div className="grid gap-4 sm:grid-cols-2">
@@ -90,8 +88,8 @@ export default async function ResourcesPage({
                     {u.purpose && <span className="text-xs text-ink-faint">· {u.purpose}</span>}
                   </div>
                   <p className="mt-0.5 text-xs text-ink-soft">
-                    {u.userName} · {fmtTime(u.startTime)}
-                    {u.endTime ? ` → ${fmtTime(u.endTime)}` : " 起"}
+                    {u.userName} · {formatShortDateTime(tz, u.startTime)}
+                    {u.endTime ? ` → ${formatShortDateTime(tz, u.endTime)}` : " 起"}
                   </p>
                 </div>
                 {u.active && canEnd(u.userId) && (

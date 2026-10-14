@@ -9,7 +9,7 @@ const ITEMS = [
   { key: "/dashboard", href: "/dashboard", label: "工作台" },
   { key: "/projects", href: "/projects", label: "所有项目" },
   { key: "/teams", href: "/teams", label: "我的团队" },
-  { key: "/settings", href: "/settings/tokens", label: "设置" },
+  { key: "/settings", href: "/settings/tokens", label: "AI 设置" },
 ] as const;
 
 // 当前路径落在哪个导航分区（含子页）

@@ -1,6 +1,7 @@
-import { and, eq, isNotNull, ne, sql } from "drizzle-orm";
+import { and, eq, isNotNull, lte, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { tasks, users, projects } from "@/db/schema";
+import { FARTHEST_EAST_TIMEZONE, addDays, resolveTimeZone, todayIn } from "./time";
 import { sendCardMessage } from "./feishu";
 import {
   buildAssignedCard,
@@ -74,9 +75,27 @@ export async function notifyTaskCompleted(task: TaskRow, actorId: string): Promi
   await safeSend(openId, buildCompletedCard(await enrich(task)));
 }
 
-// 扫全库临期(明日到期)+逾期(已过期未 done)，按负责人聚合为一封卡片日报。返回发送人数与扫描任务数。
-export async function scanAndNotifyDue(): Promise<{ notified: number; tasksScanned: number }> {
-  // 临期/逾期：status≠done 且 dueDate ≤ 明日（含逾期），且负责人已绑飞书
+/**
+ * 扫全库临期(明日到期)+逾期(已过期未 done)，按负责人聚合为一封卡片日报。
+ * 返回发送人数与扫描任务数（后者是**过筛后**真正进入日报条数，不是这条 SQL 取回的行数）。
+ *
+ * 「今天」按**负责人各自的时区**算 —— 提醒本来就该按收件人的日历日算：
+ * 一个在 UTC 的人不该在北京时间的凌晨收到「今天到期」。
+ *
+ * cron 里没有浏览器，故偏好为 `auto` 的负责人按默认的中国时间算（`resolveTimeZone` 的兜底）。
+ *
+ * `at` 只为测试留出「现在」这个变量：分桶取决于各时区当天是几号，
+ * 不把时刻钉住的话，用例只在一天里的某些钟点成立。
+ */
+export async function scanAndNotifyDue(
+  at: Date = new Date(),
+): Promise<{ notified: number; tasksScanned: number }> {
+  // SQL 里的预过滤只能是**宽松上界**：各时区的「明天」不是同一天，取全球最东的那个，
+  // 多取回一些行没关系，随后在 JS 里按各人时区精确过筛。
+  // 这里以前是 `dueDate <= CURRENT_DATE + INTERVAL '1 day'`（DB 时区）紧配上
+  // JS 里的 `toISOString()`（UTC）——两套日历口径打架，边界那天必然有人漏收或误收。
+  const latestTomorrow = addDays(todayIn(FARTHEST_EAST_TIMEZONE, at), 1);
+
   const rows = await db
     .select({
       id: tasks.id,
@@ -85,6 +104,7 @@ export async function scanAndNotifyDue(): Promise<{ notified: number; tasksScann
       assigneeId: tasks.assigneeId,
       projectId: tasks.projectId,
       openId: users.feishuOpenId,
+      assigneeTz: users.timezone,
     })
     .from(tasks)
     .innerJoin(users, eq(tasks.assigneeId, users.id))
@@ -93,21 +113,31 @@ export async function scanAndNotifyDue(): Promise<{ notified: number; tasksScann
         ne(tasks.status, "done"),
         isNotNull(tasks.dueDate),
         isNotNull(users.feishuOpenId),
-        // dueDate <= 明日（date 列与 CURRENT_DATE 比较）
-        sql`${tasks.dueDate} <= CURRENT_DATE + INTERVAL '1 day'`,
+        lte(tasks.dueDate, latestTomorrow),
       ),
     );
 
-  // 按负责人聚合
+  // 按负责人聚合。同一负责人的「今天」只算一次
   const byUser = new Map<string, { openId: string; overdue: ReminderItem[]; dueSoon: ReminderItem[] }>();
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayOf = new Map<string, string>();
+  let scanned = 0;
   for (const r of rows) {
-    if (!r.assigneeId || !r.openId) continue;
+    if (!r.assigneeId || !r.openId || !r.dueDate) continue;
+
+    let today = todayOf.get(r.assigneeId);
+    if (today === undefined) {
+      today = todayIn(resolveTimeZone(r.assigneeTz), at);
+      todayOf.set(r.assigneeId, today);
+    }
+    // 对这个人而言还太远 —— SQL 那层只保证「对某个时区的人可能临期」
+    if (r.dueDate > addDays(today, 1)) continue;
+
     const bucket = byUser.get(r.assigneeId) ?? { openId: r.openId, overdue: [], dueSoon: [] };
     const item: ReminderItem = { id: r.id, title: r.title, projectId: r.projectId };
-    if (r.dueDate && r.dueDate < todayStr) bucket.overdue.push(item);
+    if (r.dueDate < today) bucket.overdue.push(item);
     else bucket.dueSoon.push(item);
     byUser.set(r.assigneeId, bucket);
+    scanned++;
   }
 
   let notified = 0;
@@ -115,5 +145,5 @@ export async function scanAndNotifyDue(): Promise<{ notified: number; tasksScann
     const ok = await safeSend(openId, buildDueReminderCard({ overdue, dueSoon }));
     if (ok) notified++;
   }
-  return { notified, tasksScanned: rows.length };
+  return { notified, tasksScanned: scanned };
 }

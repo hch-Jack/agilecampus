@@ -2,6 +2,8 @@ import { getProjectForUser, listProjectMilestones } from "@/lib/project";
 import { listProjectTasks } from "@/lib/task";
 import { listTeamMembers } from "@/lib/team";
 import { ForbiddenError } from "@/lib/errors";
+import { todayIn } from "@/lib/time";
+import { resolveUserTimeZone } from "@/lib/time-pref";
 import type { TaskStatus } from "@/db/schema";
 
 // 上限放宽至 4000：快照须随行携带 uuid（成员/里程碑/任务各 36 字符）供写工具填参，
@@ -25,8 +27,10 @@ export async function buildProjectSnapshot(actorId: string, projectId: string): 
   for (const t of tasks) byStatus[t.status]++;
 
   // 当日日期：模型不知今夕何夕，缺此则「下周五截止」一类相对日期必错。
-  // 取法同 notify.ts:103（toISOString 前十位），全军一律。
-  const today = new Date().toISOString().slice(0, 10);
+  // 按**发话人自己的时区**算 —— 原来取的 toISOString() 前 10 位是 UTC 的今天，
+  // 北京时间晚上 8 点后会让模型把日期算少一天，写回库里的截止日就跟着错一天。
+  const timeZone = await resolveUserTimeZone(actorId);
+  const today = todayIn(timeZone);
 
   const head = [
     `今天是 ${today}（相对日期以此为准推算）`,
