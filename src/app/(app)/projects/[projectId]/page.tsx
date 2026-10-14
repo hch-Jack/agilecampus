@@ -7,7 +7,7 @@ import { conversations, messages as messagesTable } from "@/db/schema";
 import { getProjectForUser, listProjectMilestones } from "@/lib/project";
 import { listTeamMembers } from "@/lib/team";
 import { listProjectTasks } from "@/lib/task";
-import { listProjectActivities } from "@/lib/activity";
+import { getFeedUnreadCount, listProjectActivities, projectFeedScope } from "@/lib/activity";
 import { listTeamLabels } from "@/lib/label";
 import { parseFilters, applyFilters } from "@/lib/board-filters";
 import { todayIn } from "@/lib/time";
@@ -36,11 +36,12 @@ export default async function ProjectPage({
   if (!access) notFound();
   const { project, role } = access;
 
-  const [projectMilestones, projectTasks, projectActivities, members, teamLabels] =
+  const [projectMilestones, projectTasks, projectActivities, projectFeedUnread, members, teamLabels] =
     await Promise.all([
       listProjectMilestones(session.user.id, projectId),
       listProjectTasks(session.user.id, projectId),
       listProjectActivities(session.user.id, projectId),
+      getFeedUnreadCount(session.user.id, projectFeedScope(projectId)),
       listTeamMembers(project.teamId),
       listTeamLabels(session.user.id, project.teamId),
     ]);
@@ -156,8 +157,15 @@ export default async function ProjectPage({
         />
       )}
 
-      {/* 本项目专属口径：只统计该项目的记录（不限「分配给我」） */}
-      <ActivityFeed activities={projectActivities} tz={tz} now={now} />
+      {/* 本项目专属口径：只统计该项目的记录（不限「分配给我」）；管理员可清除记录 */}
+      <ActivityFeed
+        activities={projectActivities}
+        tz={tz}
+        now={now}
+        unreadScope={projectFeedScope(projectId)}
+        unreadCount={projectFeedUnread}
+        clearProjectId={isAdmin ? projectId : undefined}
+      />
     </main>
   );
 }

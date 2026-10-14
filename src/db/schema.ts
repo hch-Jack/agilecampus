@@ -399,3 +399,18 @@ export const taskActivities = pgTable(
   },
   (t) => [index("task_activities_task_idx").on(t.taskId)],
 );
+
+// 动态流「已读」标记：某用户在某条动态流里读到的最新时刻，未读 = 该时刻之后的动态条数。
+// scope 取值："workbench"（工作台）或 "project:<项目id>"（项目页），两条流各记各的、互不影响。
+// 没有标记 = 视为全部已读（功能上线时不给存量用户灌一屏未读）。
+export const feedReads = pgTable(
+  "feed_reads",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull(),
+    lastReadAt: timestamp("last_read_at").notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.scope] })],
+);

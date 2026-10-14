@@ -1,6 +1,6 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { db, type DbTx } from "@/db";
-import { projects, taskActivities, tasks, teamMembers, users } from "@/db/schema";
+import { feedReads, projects, taskActivities, tasks, teamMembers, users } from "@/db/schema";
 import { AppError, ForbiddenError } from "./errors";
 import { getProjectForUser } from "./project";
 
@@ -132,4 +132,83 @@ export async function listProjectActivities(
     .where(eq(tasks.projectId, projectId))
     .orderBy(desc(taskActivities.createdAt), desc(taskActivities.id))
     .limit(limit);
+}
+
+// -------------------------------------------------------------------- 未读
+
+// 动态流 scope：工作台与项目页各记各的已读标记，互不影响
+export const WORKBENCH_SCOPE = "workbench";
+export function projectFeedScope(projectId: string) {
+  return `project:${projectId}`;
+}
+// server action 入口的白名单校验：scope 只能由这两者拼出，防脏数据行
+export function isFeedScopeValid(scope: string) {
+  return (
+    scope === WORKBENCH_SCOPE ||
+    /^project:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(scope)
+  );
+}
+
+// 未读数 = 该 scope 动态流中 createdAt 晚于已读标记的条数。
+// 口径与对应 feed 查询一致（workbench 限「分配给我」的 active 项目；project 限该项目）。
+// 没有标记 = 视为全部已读：功能上线时不给存量用户灌一屏未读。
+export async function getFeedUnreadCount(actorId: string, scope: string): Promise<number> {
+  const [marker] = await db
+    .select({ lastReadAt: feedReads.lastReadAt })
+    .from(feedReads)
+    .where(and(eq(feedReads.userId, actorId), eq(feedReads.scope, scope)));
+  if (!marker) return 0;
+
+  const afterMarker = gt(taskActivities.createdAt, marker.lastReadAt);
+
+  const [row] =
+    scope === WORKBENCH_SCOPE
+      ? await db
+          .select({ n: sql<number>`count(*)::int` })
+          .from(taskActivities)
+          .innerJoin(tasks, eq(taskActivities.taskId, tasks.id))
+          .innerJoin(projects, eq(tasks.projectId, projects.id))
+          .innerJoin(
+            teamMembers,
+            and(eq(teamMembers.teamId, projects.teamId), eq(teamMembers.userId, actorId)),
+          )
+          .where(and(afterMarker, eq(tasks.assigneeId, actorId), eq(projects.status, "active")))
+      : await db
+          .select({ n: sql<number>`count(*)::int` })
+          .from(taskActivities)
+          .innerJoin(tasks, eq(taskActivities.taskId, tasks.id))
+          .innerJoin(projects, eq(tasks.projectId, projects.id))
+          .where(and(afterMarker, eq(tasks.projectId, scope.slice("project:".length))));
+
+  return row.n;
+}
+
+// 把已读标记推进到「现在」：此后新产生的动态重新计未读。
+// lastReadAt 必须取数据库时钟（now()）：未读数要与动态的 createdAt（也是库内
+// defaultNow）同源比较，取 Node 时钟的话宿主机与 PG 容器一漂移，未读数就会错。
+export async function markFeedRead(actorId: string, scope: string): Promise<void> {
+  await db
+    .insert(feedReads)
+    .values({ userId: actorId, scope, lastReadAt: sql`now()` })
+    .onConflictDoUpdate({
+      target: [feedReads.userId, feedReads.scope],
+      set: { lastReadAt: sql`now()` },
+    });
+}
+
+// 项目页「清除记录」：删掉该项目全部任务的动态（含任务详情时间线的历史），
+// 只删动态、不动任务本身。破坏性操作，仅项目管理员可用。
+export async function clearProjectActivities(actorId: string, projectId: string): Promise<void> {
+  const access = await getProjectForUser(actorId, projectId);
+  if (!access) throw new ForbiddenError();
+  if (access.role !== "admin") throw new ForbiddenError();
+
+  await db
+    .delete(taskActivities)
+    .where(
+      inArray(
+        taskActivities.taskId,
+        db.select({ taskId: tasks.id }).from(tasks).where(eq(tasks.projectId, projectId)),
+      ),
+    );
 }
