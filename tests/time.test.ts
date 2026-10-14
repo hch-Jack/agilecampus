@@ -6,6 +6,7 @@ import {
   clockParts,
   dateIn,
   dbWallClockToInstant,
+  formatClockTime,
   formatDateShort,
   formatDateTime,
   formatInputValue,
@@ -61,6 +62,14 @@ describe("formatDateTime / formatShortDateTime / formatDateShort", () => {
 
   it("午夜给出 00:xx 而不是 24:xx", () => {
     expect(formatDateTime("Asia/Shanghai", new Date("2026-10-14T16:00:00Z"))).toBe("2026-10-15 00:00");
+  });
+
+  it("纯钟点：只给 HH:mm，且按目标时区（私信列表当天用）", () => {
+    const at = new Date("2026-10-14T12:34:00Z");
+    expect(formatClockTime("Asia/Shanghai", at)).toBe("20:34");
+    expect(formatClockTime("UTC", at)).toBe("12:34");
+    // 跨日边界：UTC 还是 14 日，上海已经是 15 日凌晨
+    expect(formatClockTime("Asia/Shanghai", new Date("2026-10-14T16:05:00Z"))).toBe("00:05");
   });
 
   it("短格式：月不去零、日去零", () => {

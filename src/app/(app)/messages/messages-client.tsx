@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { IdentityBadge } from "@/components/badges";
 // 类型从 lib 走 `import type`（编译期擦除），不经 "use server" 的 actions 文件中转
 import type { DmConversation, DmMessageView, DmPeer } from "@/lib/dm";
+import { dateIn, formatClockTime, formatShortDateTime, todayIn } from "@/lib/time";
 import {
   getConversationsAction,
   openConversationAction,
@@ -15,11 +16,12 @@ import {
 const FILE_MAX_SIZE = 10 * 1024 * 1024;
 const POLL_MS = 4000;
 
-function fmtTime(iso: string): string {
+// 时间按**用户设置的时区**显示，不看浏览器本地时区 —— 选了中国时间的人身在国外时，
+// 浏览器本地的「今天」与站内其他页面的「今天」会对不上（全站口径见 lib/time.ts）。
+function fmtTime(tz: string, iso: string): string {
   const d = new Date(iso);
-  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  if (d.toDateString() === new Date().toDateString()) return hm;
-  return `${d.getMonth() + 1}-${d.getDate()} ${hm}`;
+  if (dateIn(tz, d) === todayIn(tz)) return formatClockTime(tz, d);
+  return formatShortDateTime(tz, d);
 }
 
 function fmtSize(bytes: number): string {
@@ -39,7 +41,7 @@ function Avatar({ name, className = "" }: { name: string; className?: string }) 
   );
 }
 
-export function MessagesClient() {
+export function MessagesClient({ timeZone }: { timeZone: string }) {
   const [convs, setConvs] = useState<DmConversation[]>([]);
   const [peer, setPeer] = useState<DmPeer | null>(null);
   const [msgs, setMsgs] = useState<DmMessageView[]>([]);
@@ -222,7 +224,7 @@ export function MessagesClient() {
                       </span>
                     </span>
                     <span className="flex shrink-0 flex-col items-end gap-1">
-                      {c.lastAt && <span className="text-[11px] text-ink-faint">{fmtTime(c.lastAt)}</span>}
+                      {c.lastAt && <span className="text-[11px] text-ink-faint">{fmtTime(timeZone, c.lastAt)}</span>}
                       {c.unread > 0 && (
                         <span className="grid h-5 min-w-5 place-items-center rounded-full bg-high px-1.5 text-[11px] font-bold text-white">
                           {c.unread > 99 ? "99+" : c.unread}
@@ -294,7 +296,7 @@ export function MessagesClient() {
                       )}
                     </div>
                     <span className="px-1 text-[11px] text-ink-faint">
-                      {fmtTime(m.createdAt)}
+                      {fmtTime(timeZone, m.createdAt)}
                       {m.mine && (m.readAt ? " · 已读" : " · 未读")}
                     </span>
                   </div>

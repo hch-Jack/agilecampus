@@ -158,6 +158,12 @@ export function formatShortDateTime(tz: string, at: Date): string {
   return `${+w.month}/${w.day} ${w.hour}:${w.minute}`;
 }
 
+/** `HH:mm` —— 与 `dateIn` 配合给「当天的消息只报钟点」用（私信列表） */
+export function formatClockTime(tz: string, at: Date): string {
+  const w = wallClockIn(tz, at);
+  return `${w.hour}:${w.minute}`;
+}
+
 /** `M/DD`（甘特图的横轴刻度） */
 export function formatDateShort(tz: string, at: Date): string {
   const w = wallClockIn(tz, at);
