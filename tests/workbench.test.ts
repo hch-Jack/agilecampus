@@ -5,6 +5,7 @@ import { createTeam, joinTeam, updateMemberRole } from "@/lib/team";
 import { createProject, updateProject } from "@/lib/project";
 import { createTask, createSubtask, listMySubtaskProgress, listMyTasks, updateTask } from "@/lib/task";
 import {
+  clearProjectActivities,
   getFeedUnreadCount,
   listMyTaskActivities,
   listProjectActivities,
@@ -21,7 +22,7 @@ import {
 import { db } from "@/db";
 import { feedReads, tasks as tasksTable } from "@/db/schema";
 import { moveTaskAction } from "@/app/(app)/projects/[projectId]/actions";
-import { markFeedReadAction } from "@/app/(app)/actions";
+import { clearProjectActivitiesAction, markFeedReadAction } from "@/app/(app)/actions";
 import { resetDb } from "./helpers";
 
 // moveTaskAction 走 auth() 与 revalidatePath，须 mock（照 task-detail-features.test.ts 头部惯例）
@@ -404,6 +405,60 @@ describe("动态流未读", () => {
       .where(and(eq(feedReads.userId, student.id), eq(feedReads.scope, WORKBENCH_SCOPE)));
     expect(marker).toBeDefined();
     expect(await getFeedUnreadCount(student.id, WORKBENCH_SCOPE)).toBe(0);
+  });
+});
+
+describe("clearProjectActivities", () => {
+  it("管理员清空本项目全部动态，他项目不受影响", async () => {
+    const { owner, student, project, team } = await scene();
+    const other = await createProject(owner.id, team.id, { name: "官渡之战" });
+    const task = await createTask(owner.id, project.id, { title: "本项目", assigneeId: student.id });
+    await updateTask(student.id, task.id, { status: "doing" });
+    await createTask(owner.id, other.id, { title: "他项目", assigneeId: student.id });
+
+    await clearProjectActivities(owner.id, project.id);
+    expect(await listProjectActivities(student.id, project.id)).toHaveLength(0);
+    expect(await listProjectActivities(student.id, other.id)).toHaveLength(1);
+    // 只删动态，任务本身不动
+    const [kept] = await db
+      .select({ title: tasksTable.title })
+      .from(tasksTable)
+      .where(eq(tasksTable.id, task.id));
+    expect(kept.title).toBe("本项目");
+  });
+
+  it("非管理员（学生/教师）抛 ForbiddenError", async () => {
+    const { owner, student, teacher, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    await updateTask(student.id, task.id, { status: "doing" });
+
+    await expect(clearProjectActivities(student.id, project.id)).rejects.toThrow(ForbiddenError);
+    await expect(clearProjectActivities(teacher.id, project.id)).rejects.toThrow(ForbiddenError);
+    expect(await listProjectActivities(student.id, project.id)).toHaveLength(2);
+  });
+
+  it("非成员抛 ForbiddenError", async () => {
+    const { owner, student, outsider, project } = await scene();
+    await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    await expect(clearProjectActivities(outsider.id, project.id)).rejects.toThrow(ForbiddenError);
+  });
+
+  it("clearProjectActivitiesAction 走权限与参数校验", async () => {
+    const { owner, student, project } = await scene();
+    await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+
+    authMock.userId = null;
+    expect(await clearProjectActivitiesAction(project.id)).toEqual({ error: "请先登录" });
+
+    authMock.userId = student.id;
+    expect(await clearProjectActivitiesAction("not-a-uuid")).toEqual({ error: "参数无效" });
+    expect(await clearProjectActivitiesAction(project.id)).toEqual({
+      error: "仅项目管理员可清除记录",
+    });
+
+    authMock.userId = owner.id;
+    expect(await clearProjectActivitiesAction(project.id)).toBeNull();
+    expect(await listProjectActivities(student.id, project.id)).toHaveLength(0);
   });
 });
 

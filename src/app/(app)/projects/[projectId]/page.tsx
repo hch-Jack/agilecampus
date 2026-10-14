@@ -157,13 +157,14 @@ export default async function ProjectPage({
         />
       )}
 
-      {/* 本项目专属口径：只统计该项目的记录（不限「分配给我」） */}
+      {/* 本项目专属口径：只统计该项目的记录（不限「分配给我」）；管理员可清除记录 */}
       <ActivityFeed
         activities={projectActivities}
         tz={tz}
         now={now}
         unreadScope={projectFeedScope(projectId)}
         unreadCount={projectFeedUnread}
+        clearProjectId={isAdmin ? projectId : undefined}
       />
     </main>
   );

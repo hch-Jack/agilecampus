@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { db, type DbTx } from "@/db";
 import { feedReads, projects, taskActivities, tasks, teamMembers, users } from "@/db/schema";
 import { AppError, ForbiddenError } from "./errors";
@@ -183,13 +183,32 @@ export async function getFeedUnreadCount(actorId: string, scope: string): Promis
   return row.n;
 }
 
-// 把已读标记推进到「现在」：此后新产生的动态重新计未读
+// 把已读标记推进到「现在」：此后新产生的动态重新计未读。
+// lastReadAt 必须取数据库时钟（now()）：未读数要与动态的 createdAt（也是库内
+// defaultNow）同源比较，取 Node 时钟的话宿主机与 PG 容器一漂移，未读数就会错。
 export async function markFeedRead(actorId: string, scope: string): Promise<void> {
   await db
     .insert(feedReads)
-    .values({ userId: actorId, scope, lastReadAt: new Date() })
+    .values({ userId: actorId, scope, lastReadAt: sql`now()` })
     .onConflictDoUpdate({
       target: [feedReads.userId, feedReads.scope],
-      set: { lastReadAt: new Date() },
+      set: { lastReadAt: sql`now()` },
     });
+}
+
+// 项目页「清除记录」：删掉该项目全部任务的动态（含任务详情时间线的历史），
+// 只删动态、不动任务本身。破坏性操作，仅项目管理员可用。
+export async function clearProjectActivities(actorId: string, projectId: string): Promise<void> {
+  const access = await getProjectForUser(actorId, projectId);
+  if (!access) throw new ForbiddenError();
+  if (access.role !== "admin") throw new ForbiddenError();
+
+  await db
+    .delete(taskActivities)
+    .where(
+      inArray(
+        taskActivities.taskId,
+        db.select({ taskId: tasks.id }).from(tasks).where(eq(tasks.projectId, projectId)),
+      ),
+    );
 }
