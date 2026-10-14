@@ -18,13 +18,13 @@ export function CardSparkles() {
       // 悬停瞬间：卡片左右抖动一次（放大与抖动合并进同一段动画）
       host.animate(
         [
-          { transform: "translateY(-3px) scale(1.03) translateX(0px)" },
-          { transform: "translateY(-3px) scale(1.03) translateX(-8px)", offset: 0.14 },
-          { transform: "translateY(-3px) scale(1.03) translateX(7px)", offset: 0.3 },
-          { transform: "translateY(-3px) scale(1.03) translateX(-5px)", offset: 0.46 },
-          { transform: "translateY(-3px) scale(1.03) translateX(4px)", offset: 0.62 },
-          { transform: "translateY(-3px) scale(1.03) translateX(-2px)", offset: 0.78 },
-          { transform: "translateY(-3px) scale(1.03) translateX(0px)", offset: 1 },
+          { transform: "translateY(-3px) translateX(0px)" },
+          { transform: "translateY(-3px) translateX(-8px)", offset: 0.14 },
+          { transform: "translateY(-3px) translateX(7px)", offset: 0.3 },
+          { transform: "translateY(-3px) translateX(-5px)", offset: 0.46 },
+          { transform: "translateY(-3px) translateX(4px)", offset: 0.62 },
+          { transform: "translateY(-3px) translateX(-2px)", offset: 0.78 },
+          { transform: "translateY(-3px) translateX(0px)", offset: 1 },
         ],
         { duration: 600, easing: "ease" },
       );
