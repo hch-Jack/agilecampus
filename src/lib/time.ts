@@ -238,6 +238,46 @@ export function zonedWallClockToInstant(tz: string, wallClock: string): Date {
   return new Date(ms);
 }
 
+// ------------------------------------------------- 无时区 timestamp 列的读写
+
+/**
+ * PG `timestamp without time zone` 列的文本形态：`YYYY-MM-DD HH:mm:ss[.ffffff]`。
+ * 小数位是微秒（PG 默认精度），而 JS 的 Date 只到毫秒 —— 只取前 3 位。
+ */
+const DB_WALL_CLOCK = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?$/;
+
+/**
+ * 把库里那串墙面时间按**库会话所在的时区**还原成时刻（`dbTimestamp` 的读方向）。
+ *
+ * 为什么非要显式给时区：无时区 timestamp 列存的是**钟面读数**，本身不带偏移，
+ * 光看数据无从知道它属于哪个时区 —— 同一个 `18:19` 既可能是北京时间也可能是 UTC。
+ * 而 PG 的 `now()` 落盘时用的是**会话时区**的钟面，所以只有按会话时区读回来才自洽。
+ * 与 `zonedWallClockToInstant` 同一套两步迭代，跨夏令时切换日也落在正确的一侧。
+ */
+export function dbWallClockToInstant(tz: string, wallClock: string): Date {
+  const m = DB_WALL_CLOCK.exec(wallClock.trim());
+  if (!m) throw new Error(`无法解析的数据库时间：${wallClock}`);
+  const [, y, mo, d, h, mi, s, frac] = m;
+  const ms = Number((frac ?? "").slice(0, 3).padEnd(3, "0"));
+  const guess = Date.UTC(+y, +mo - 1, +d, +h, +mi, +s, ms);
+  let t = guess - offsetMsAt(tz, new Date(guess));
+  t = guess - offsetMsAt(tz, new Date(t));
+  return new Date(t);
+}
+
+/**
+ * 反向（`dbTimestamp` 的写方向）：把一个时刻写成 tz 时区里的钟面读数。
+ *
+ * 刻意**不带**偏移量：PG 往无时区 timestamp 列里塞带 `Z` 的串时会**静默丢掉**偏移、
+ * 直接取字面量，于是落盘的就成了 UTC 的钟面 —— 那正是「库里一套口径、读回来另一套」的根源。
+ * 自己先换算好钟面再交给 PG，写与读就只有一个口径。
+ */
+export function instantToDbWallClock(tz: string, at: Date): string {
+  const w = wallClockIn(tz, at);
+  const ms = String(at.getMilliseconds()).padStart(3, "0");
+  return `${w.year}-${w.month}-${w.day} ${w.hour}:${w.minute}:${w.second}.${ms}`;
+}
+
 // ------------------------------------------------------------------ 选项表
 
 export type TimeZoneOption = { value: string; label: string };
