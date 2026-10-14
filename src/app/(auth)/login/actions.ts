@@ -13,11 +13,11 @@ export async function loginAction(
     await signIn("credentials", {
       email: formData.get("email"),
       password: formData.get("password"),
-      redirectTo: "/teams",
+      redirectTo: "/welcome",
     });
     return null;
   } catch (e) {
     if (e instanceof AuthError) return { error: "邮箱或密码不正确" };
-    throw e; // signIn 成功时抛出的 redirect 必须继续上抛
+    throw e;
   }
 }
