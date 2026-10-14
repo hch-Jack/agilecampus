@@ -451,9 +451,11 @@ export const taskActivities = pgTable(
   (t) => [index("task_activities_task_idx").on(t.taskId)],
 );
 
-// 动态流「已读」标记：某用户在某条动态流里读到的最新时刻，未读 = 该时刻之后的动态条数。
+// 动态流「已读/清除」标记：某用户在某条动态流（scope）里读到的最新时刻，未读 = 该时刻之后的动态条数。
 // scope 取值："workbench"（工作台）或 "project:<项目id>"（项目页），两条流各记各的、互不影响。
 // 没有标记 = 视为全部已读（功能上线时不给存量用户灌一屏未读）。
+// cleared_at = 「清除记录」时刻：只影响该用户自己看到的动态流（隐藏该时刻前的记录），
+// 库内数据与他人视图不动；此后新产生的记录照常显示。
 export const feedReads = pgTable(
   "feed_reads",
   {
@@ -462,6 +464,7 @@ export const feedReads = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     scope: text("scope").notNull(),
     lastReadAt: dbTimestampNow("last_read_at").notNull(),
+    clearedAt: dbTimestamp("cleared_at"),
   },
   (t) => [primaryKey({ columns: [t.userId, t.scope] })],
 );

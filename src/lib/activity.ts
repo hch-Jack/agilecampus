@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gt, sql } from "drizzle-orm";
 import { db, type DbTx } from "@/db";
 import { feedReads, projects, taskActivities, tasks, teamMembers, users } from "@/db/schema";
 import { AppError, ForbiddenError } from "./errors";
@@ -96,6 +96,7 @@ export async function listMyTaskActivities(
   actorId: string,
   limit = 20,
 ): Promise<TaskActivityRow[]> {
+  const clearedAt = await feedClearedAt(actorId, WORKBENCH_SCOPE);
   return db
     .select(feedColumns)
     .from(taskActivities)
@@ -106,7 +107,14 @@ export async function listMyTaskActivities(
       teamMembers,
       and(eq(teamMembers.teamId, projects.teamId), eq(teamMembers.userId, actorId)),
     )
-    .where(and(eq(tasks.assigneeId, actorId), eq(projects.status, "active")))
+    .where(
+      and(
+        eq(tasks.assigneeId, actorId),
+        eq(projects.status, "active"),
+        // 「清除记录」后的旧动态对本人隐藏（见 clearFeed），他人查询不受影响
+        ...(clearedAt ? [gt(taskActivities.createdAt, clearedAt)] : []),
+      ),
+    )
     // 同一事务写入的多条动态时间戳相同，二级键保证顺序确定
     .orderBy(desc(taskActivities.createdAt), desc(taskActivities.id))
     .limit(limit);
@@ -122,6 +130,7 @@ export async function listProjectActivities(
 ): Promise<TaskActivityRow[]> {
   const access = await getProjectForUser(actorId, projectId);
   if (!access) throw new ForbiddenError();
+  const clearedAt = await feedClearedAt(actorId, projectFeedScope(projectId));
 
   return db
     .select(feedColumns)
@@ -129,9 +138,24 @@ export async function listProjectActivities(
     .innerJoin(tasks, eq(taskActivities.taskId, tasks.id))
     .innerJoin(projects, eq(tasks.projectId, projects.id))
     .innerJoin(users, eq(taskActivities.actorId, users.id))
-    .where(eq(tasks.projectId, projectId))
+    .where(
+      and(
+        eq(tasks.projectId, projectId),
+        // 「清除记录」后的旧动态对本人隐藏（见 clearFeed），他人查询不受影响
+        ...(clearedAt ? [gt(taskActivities.createdAt, clearedAt)] : []),
+      ),
+    )
     .orderBy(desc(taskActivities.createdAt), desc(taskActivities.id))
     .limit(limit);
+}
+
+// 某用户在某 scope 的「清除」时刻（无 = 未清除过）
+async function feedClearedAt(actorId: string, scope: string): Promise<Date | null> {
+  const [row] = await db
+    .select({ clearedAt: feedReads.clearedAt })
+    .from(feedReads)
+    .where(and(eq(feedReads.userId, actorId), eq(feedReads.scope, scope)));
+  return row?.clearedAt ?? null;
 }
 
 // -------------------------------------------------------------------- 未读
@@ -196,19 +220,15 @@ export async function markFeedRead(actorId: string, scope: string): Promise<void
     });
 }
 
-// 项目页「清除记录」：删掉该项目全部任务的动态（含任务详情时间线的历史），
-// 只删动态、不动任务本身。破坏性操作，仅项目管理员可用。
-export async function clearProjectActivities(actorId: string, projectId: string): Promise<void> {
-  const access = await getProjectForUser(actorId, projectId);
-  if (!access) throw new ForbiddenError();
-  if (access.role !== "admin") throw new ForbiddenError();
-
+// 「清除记录」：只清空该用户**自己看到的**动态流——把清除时刻记成 cleared_at，
+// 该 scope 的 feed 查询据此隐藏这一刻之前的记录，并顺手把未读归零。
+// 库内数据与他人视图一律不动（人人可清、谁也不影响别人）；此后新产生的记录照常显示、照常计未读。
+export async function clearFeed(actorId: string, scope: string): Promise<void> {
   await db
-    .delete(taskActivities)
-    .where(
-      inArray(
-        taskActivities.taskId,
-        db.select({ taskId: tasks.id }).from(tasks).where(eq(tasks.projectId, projectId)),
-      ),
-    );
+    .insert(feedReads)
+    .values({ userId: actorId, scope, lastReadAt: sql`now()`, clearedAt: sql`now()` })
+    .onConflictDoUpdate({
+      target: [feedReads.userId, feedReads.scope],
+      set: { lastReadAt: sql`now()`, clearedAt: sql`now()` },
+    });
 }

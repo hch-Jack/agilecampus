@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { dateIn } from "@/lib/time";
 import type { TaskActivityRow } from "@/lib/activity";
-import { clearProjectActivitiesAction, markFeedReadAction } from "@/app/(app)/actions";
+import { clearFeedAction, markFeedReadAction } from "@/app/(app)/actions";
 
 // 动态行拆成「任务标题前 / 后」两段，标题内嵌为链接：
 // 「把「2」的负责人从 未分配 改为 1」「完成了「父任务」的子任务「子A」」。
@@ -58,7 +58,8 @@ function fmtRelative(d: Date, now: Date, tz: string): string {
 // 工作台与项目页共用的「最新记录」模块：操作人 + 动作 + 任务链接 + 相对时间。
 // showProject 控制「项目名:」前缀：工作台跨项目展示需要；项目页全是本项目动态，前缀冗余。
 // unreadScope 传入即启用未读角标：最新一条进入视口视为已读，乐观清角标并上报服务端。
-// clearProjectId 传入（仅项目管理员）即显示「清除记录」：清空该项目全部动态。
+// clearScope 传入即显示「清除记录」：只清空当前用户自己看到的这条动态流，
+// 库内数据与他人视图不动，此后新产生的记录照常显示。
 export function ActivityFeed({
   activities,
   tz,
@@ -66,7 +67,7 @@ export function ActivityFeed({
   showProject = false,
   unreadScope,
   unreadCount = 0,
-  clearProjectId,
+  clearScope,
 }: {
   activities: TaskActivityRow[];
   tz: string;
@@ -74,7 +75,7 @@ export function ActivityFeed({
   showProject?: boolean;
   unreadScope?: string;
   unreadCount?: number;
-  clearProjectId?: string;
+  clearScope?: string;
 }) {
   const [unread, setUnread] = useState(unreadCount);
   const [clearPending, setClearPending] = useState(false);
@@ -101,17 +102,17 @@ export function ActivityFeed({
   }, [unreadScope, unread]);
 
   async function handleClear() {
-    if (!clearProjectId || clearPending) return;
+    if (!clearScope || clearPending) return;
     if (
       !window.confirm(
-        "确定清除该项目的全部最新记录吗？任务详情里的时间线也会一并清空，此操作不可恢复。",
+        "确定清除你看到的全部最新记录吗？只影响你自己的显示，其他成员照常可见；之后新产生的记录会继续显示。",
       )
     ) {
       return;
     }
     setClearPending(true);
     setClearError(null);
-    const res = await clearProjectActivitiesAction(clearProjectId);
+    const res = await clearFeedAction(clearScope);
     setClearPending(false);
     if (res?.error) {
       setClearError(res.error);
@@ -135,7 +136,7 @@ export function ActivityFeed({
             </span>
           )}
         </h2>
-        {clearProjectId && (
+        {clearScope && (
           <button
             onClick={handleClear}
             disabled={clearPending}

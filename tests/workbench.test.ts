@@ -5,7 +5,7 @@ import { createTeam, joinTeam, updateMemberRole } from "@/lib/team";
 import { createProject, updateProject } from "@/lib/project";
 import { createTask, createSubtask, listMySubtaskProgress, listMyTasks, updateTask } from "@/lib/task";
 import {
-  clearProjectActivities,
+  clearFeed,
   getFeedUnreadCount,
   listMyTaskActivities,
   listProjectActivities,
@@ -20,9 +20,9 @@ import {
   projectChips,
 } from "@/lib/workbench-filters";
 import { db } from "@/db";
-import { feedReads, tasks as tasksTable } from "@/db/schema";
+import { feedReads, taskActivities, tasks as tasksTable } from "@/db/schema";
 import { moveTaskAction } from "@/app/(app)/projects/[projectId]/actions";
-import { clearProjectActivitiesAction, markFeedReadAction } from "@/app/(app)/actions";
+import { clearFeedAction, markFeedReadAction } from "@/app/(app)/actions";
 import { resetDb } from "./helpers";
 
 // moveTaskAction 走 auth() 与 revalidatePath，须 mock（照 task-detail-features.test.ts 头部惯例）
@@ -408,56 +408,79 @@ describe("动态流未读", () => {
   });
 });
 
-describe("clearProjectActivities", () => {
-  it("管理员清空本项目全部动态，他项目不受影响", async () => {
-    const { owner, student, project, team } = await scene();
-    const other = await createProject(owner.id, team.id, { name: "官渡之战" });
-    const task = await createTask(owner.id, project.id, { title: "本项目", assigneeId: student.id });
+describe("clearFeed（清除记录只清自己视角）", () => {
+  it("清除后自己看到的动态流为空，库内数据与他人视图不动", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
     await updateTask(student.id, task.id, { status: "doing" });
-    await createTask(owner.id, other.id, { title: "他项目", assigneeId: student.id });
+    await updateTask(owner.id, task.id, { status: "done" });
+    await markFeedRead(student.id, projectFeedScope(project.id));
+    await updateTask(student.id, task.id, { status: "todo" });
+    expect(await getFeedUnreadCount(student.id, projectFeedScope(project.id))).toBe(1);
 
-    await clearProjectActivities(owner.id, project.id);
+    await clearFeed(student.id, projectFeedScope(project.id));
+
+    // 学生自己的视角被清空，未读同时归零
     expect(await listProjectActivities(student.id, project.id)).toHaveLength(0);
-    expect(await listProjectActivities(student.id, other.id)).toHaveLength(1);
-    // 只删动态，任务本身不动
-    const [kept] = await db
-      .select({ title: tasksTable.title })
-      .from(tasksTable)
-      .where(eq(tasksTable.id, task.id));
-    expect(kept.title).toBe("本项目");
+    expect(await getFeedUnreadCount(student.id, projectFeedScope(project.id))).toBe(0);
+    // 其他人的视角不受影响：owner 仍能看到全部 4 条
+    expect(await listProjectActivities(owner.id, project.id)).toHaveLength(4);
+    // 库内数据一条没删
+    expect(await db.select().from(taskActivities)).toHaveLength(4);
   });
 
-  it("非管理员（学生/教师）抛 ForbiddenError", async () => {
-    const { owner, student, teacher, project } = await scene();
+  it("清除后新产生的记录照常显示、重新计未读", async () => {
+    const { owner, student, project } = await scene();
     const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
     await updateTask(student.id, task.id, { status: "doing" });
 
-    await expect(clearProjectActivities(student.id, project.id)).rejects.toThrow(ForbiddenError);
-    await expect(clearProjectActivities(teacher.id, project.id)).rejects.toThrow(ForbiddenError);
-    expect(await listProjectActivities(student.id, project.id)).toHaveLength(2);
+    await clearFeed(student.id, projectFeedScope(project.id));
+    expect(await listProjectActivities(student.id, project.id)).toHaveLength(0);
+
+    await updateTask(student.id, task.id, { status: "done" });
+    const feed = await listProjectActivities(student.id, project.id);
+    expect(feed).toHaveLength(1);
+    expect(feed[0].type).toBe("field");
+    expect(feed[0].field).toBe("状态");
+    expect(await getFeedUnreadCount(student.id, projectFeedScope(project.id))).toBe(1);
   });
 
-  it("非成员抛 ForbiddenError", async () => {
-    const { owner, student, outsider, project } = await scene();
-    await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
-    await expect(clearProjectActivities(outsider.id, project.id)).rejects.toThrow(ForbiddenError);
+  it("workbench 与 project 两条流各自清除、互不影响", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    await updateTask(student.id, task.id, { status: "doing" });
+
+    await clearFeed(student.id, projectFeedScope(project.id));
+    // 项目流清空；工作台流（分配给我的全部动态）原样
+    expect(await listProjectActivities(student.id, project.id)).toHaveLength(0);
+    expect(await listMyTaskActivities(student.id)).toHaveLength(2);
+
+    await clearFeed(student.id, WORKBENCH_SCOPE);
+    expect(await listMyTaskActivities(student.id)).toHaveLength(0);
+    // 项目流不受工作台清除影响（仍是清空后的状态）
+    expect(await listProjectActivities(student.id, project.id)).toHaveLength(0);
   });
 
-  it("clearProjectActivitiesAction 走权限与参数校验", async () => {
+  it("clearFeedAction 校验登录与 scope 白名单，清除落库 clearedAt", async () => {
     const { owner, student, project } = await scene();
     await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    const scope = projectFeedScope(project.id);
 
     authMock.userId = null;
-    expect(await clearProjectActivitiesAction(project.id)).toEqual({ error: "请先登录" });
+    expect(await clearFeedAction(scope)).toEqual({ error: "请先登录" });
 
     authMock.userId = student.id;
-    expect(await clearProjectActivitiesAction("not-a-uuid")).toEqual({ error: "参数无效" });
-    expect(await clearProjectActivitiesAction(project.id)).toEqual({
-      error: "仅项目管理员可清除记录",
-    });
+    expect(await clearFeedAction("project:not-a-uuid")).toEqual({ error: "参数无效" });
+    expect(await clearFeedAction(`${WORKBENCH_SCOPE}; drop`)).toEqual({ error: "参数无效" });
+    // 非法 scope 不落库
+    expect(await db.select().from(feedReads)).toHaveLength(0);
 
-    authMock.userId = owner.id;
-    expect(await clearProjectActivitiesAction(project.id)).toBeNull();
+    expect(await clearFeedAction(scope)).toBeNull();
+    const [marker] = await db
+      .select()
+      .from(feedReads)
+      .where(and(eq(feedReads.userId, student.id), eq(feedReads.scope, scope)));
+    expect(marker?.clearedAt).toBeInstanceOf(Date);
     expect(await listProjectActivities(student.id, project.id)).toHaveLength(0);
   });
 });
