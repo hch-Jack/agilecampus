@@ -100,6 +100,8 @@ function fmtRelative(d: Date, now: Date, tz: string): string {
 // 未读条目自身也带小红点。列表超高时内部滚动（最长 35vh）。
 // clearScope 传入即显示「清除记录」：只清空当前用户自己看到的这条动态流，
 // 库内数据与他人视图不动，此后新产生的记录照常显示。
+// bumpOnNewRows：任务页没有「拖拽成功」事件源（只有看板才广播 ACTIVITY_NEW_EVENT），
+// 开启后改为列表头出现新行即视为新动态、未读 +1——任务页每次改完都会随 action 回流。
 export function ActivityFeed({
   activities,
   tz,
@@ -109,6 +111,7 @@ export function ActivityFeed({
   unreadCount = 0,
   clearScope,
   title = "最新记录",
+  bumpOnNewRows = false,
 }: {
   activities: ActivityFeedRow[];
   tz: string;
@@ -118,6 +121,7 @@ export function ActivityFeed({
   unreadCount?: number;
   clearScope?: string;
   title?: string;
+  bumpOnNewRows?: boolean;
 }) {
   const [unread, setUnread] = useState(unreadCount);
   const [clearPending, setClearPending] = useState(false);
@@ -131,6 +135,18 @@ export function ActivityFeed({
   if (lastUnreadCount !== unreadCount) {
     setLastUnreadCount(unreadCount);
     setUnread(unreadCount);
+  }
+
+  // bumpOnNewRows（任务页）：列表头出现新 id 即视为本页操作产生了新动态，未读 +1。
+  // 仅在服务端未读数没变时补偿——变了的话上面的渲染期同步已按服务端口径覆盖，
+  // 避免同一批新行加两次（加两次的分支互斥：prop 变了就不同步头行）。
+  const [lastFirstId, setLastFirstId] = useState(activities[0]?.id ?? null);
+  if (lastFirstId !== (activities[0]?.id ?? null)) {
+    const headId = activities[0]?.id ?? null;
+    setLastFirstId(headId);
+    if (bumpOnNewRows && headId != null && lastUnreadCount === unreadCount) {
+      setUnread((n) => n + 1);
+    }
   }
 
   // 看板拖拽成功会广播 ACTIVITY_NEW_EVENT（detail = scope）：
