@@ -120,7 +120,7 @@ export function WelcomeScreen({
           </div>
         </div>
 
-        <Link className="enter" href="/projects">
+        <Link className="enter" href="/dashboard">
           进入工作台 →
         </Link>
       </main>
