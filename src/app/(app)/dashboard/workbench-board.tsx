@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useOptimistic, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   DndContext,
   DragOverlay,
@@ -15,6 +16,7 @@ import {
 } from "@dnd-kit/core";
 import type { ColumnPatch } from "@/lib/board-columns";
 import { moveTaskAction } from "@/app/(app)/projects/[projectId]/actions";
+import { ACTIVITY_NEW_EVENT } from "@/components/activity-feed";
 
 export type WorkbenchTask = {
   id: string;
@@ -178,6 +180,7 @@ export function WorkbenchBoard({
 }) {
   const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
   const [activeTask, setActiveTask] = useState<WorkbenchTask | null>(null);
   const [optimisticTasks, moveOptimistic] = useOptimistic(
     tasks,
@@ -209,9 +212,16 @@ export function WorkbenchBoard({
       setError(null);
       moveOptimistic({ taskId, patch });
       // 复用项目看板的 action：权限校验在 updateTask 内逐任务判角色（teacher 拒），
-      // 完成后 REFRESH 刷新当前 /dashboard 路由，顺带失效项目页缓存
+      // 完成后刷新当前 /dashboard 路由，顺带失效项目页缓存
       const res = await moveTaskAction({ taskId, projectId: task.projectId, patch });
-      if (res?.error) setError(res.error);
+      if (res?.error) {
+        setError(res.error);
+        return;
+      }
+      // 数据回流：新动态进最新记录列表、未读红点立即 +1，不等整页刷新
+      // scope 用字面量，与 lib/activity 的 WORKBENCH_SCOPE 一致
+      window.dispatchEvent(new CustomEvent<string>(ACTIVITY_NEW_EVENT, { detail: "workbench" }));
+      router.refresh();
     });
   }
 

@@ -1,11 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { dateIn } from "@/lib/time";
 import type { TaskActivityRow } from "@/lib/activity";
 import { clearFeedAction, markFeedReadAction } from "@/app/(app)/actions";
+
+// 看板拖拽成功后的广播事件：detail 携带动态流 scope（"workbench" 或 "project:<id>"），
+// 最新记录模块据此立即未读 +1。scope 字面量与 lib/activity 的 WORKBENCH_SCOPE/projectFeedScope 一致。
+export const ACTIVITY_NEW_EVENT = "activity-feed:new";
 
 // 动态行拆成「任务标题前 / 后」两段，标题内嵌为链接：
 // 「把「2」的负责人从 未分配 改为 1」「完成了「父任务」的子任务「子A」」。
@@ -81,6 +85,27 @@ export function ActivityFeed({
   const [clearPending, setClearPending] = useState(false);
   const [clearError, setClearError] = useState<string | null>(null);
   const router = useRouter();
+
+  // 服务端渲染的未读数变化时（如拖拽后 router.refresh 回流），在渲染期同步本地状态。
+  // 官方「props 变化时重置 state」模式，避免 effect 内 setState 的级联渲染。
+  // 值不变时不重跑——本地点「标记已读」的乐观清零不受回流干扰。
+  const [lastUnreadCount, setLastUnreadCount] = useState(unreadCount);
+  if (lastUnreadCount !== unreadCount) {
+    setLastUnreadCount(unreadCount);
+    setUnread(unreadCount);
+  }
+
+  // 看板拖拽成功会广播 ACTIVITY_NEW_EVENT（detail = scope）：
+  // 本流的红点立即 +1，不用等 router.refresh 回流（覆盖「标记已读后
+  // 立刻拖拽」的 1→1 场景——prop 值没变，单靠上面的渲染期同步不够）
+  useEffect(() => {
+    if (!unreadScope) return;
+    const onNew = (e: Event) => {
+      if ((e as CustomEvent<string>).detail === unreadScope) setUnread((n) => n + 1);
+    };
+    window.addEventListener(ACTIVITY_NEW_EVENT, onNew);
+    return () => window.removeEventListener(ACTIVITY_NEW_EVENT, onNew);
+  }, [unreadScope]);
 
   // 手动标记已读：乐观清角标并上报服务端（未登录/非法 scope 服务端静默忽略）
   function handleMarkRead() {

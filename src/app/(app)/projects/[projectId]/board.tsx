@@ -1,6 +1,7 @@
 "use client";
 
 import { useOptimistic, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import {
   DndContext,
   PointerSensor,
@@ -13,6 +14,7 @@ import { deriveColumns, type BoardColumn, type ColumnPatch } from "@/lib/board-c
 import type { GroupBy } from "@/lib/board-filters";
 import { moveTaskAction } from "./actions";
 import { TaskCard } from "./task-card";
+import { ACTIVITY_NEW_EVENT } from "@/components/activity-feed";
 
 export type Option = { id: string; name: string };
 
@@ -79,6 +81,7 @@ export function Board({
 }) {
   const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
   const [optimisticTasks, moveOptimistic] = useOptimistic(
     tasks,
     (current, move: { taskId: string; patch: ColumnPatch }) =>
@@ -103,7 +106,15 @@ export function Board({
       setError(null);
       moveOptimistic({ taskId, patch: column.patch });
       const res = await moveTaskAction({ taskId, projectId, patch: column.patch });
-      if (res?.error) setError(res.error);
+      if (res?.error) {
+        setError(res.error);
+        return;
+      }
+      // 数据回流：新动态进最新记录列表、未读红点立即 +1，不等整页刷新
+      window.dispatchEvent(
+        new CustomEvent<string>(ACTIVITY_NEW_EVENT, { detail: `project:${projectId}` }),
+      );
+      router.refresh();
     });
   }
 
