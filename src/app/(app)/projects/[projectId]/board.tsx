@@ -4,11 +4,13 @@ import { useOptimistic, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   DndContext,
+  DragOverlay,
   PointerSensor,
   useDroppable,
   useSensor,
   useSensors,
   type DragEndEvent,
+  type DragStartEvent,
 } from "@dnd-kit/core";
 import { deriveColumns, type BoardColumn, type ColumnPatch } from "@/lib/board-columns";
 import type { GroupBy } from "@/lib/board-filters";
@@ -49,8 +51,8 @@ function Column({
   return (
     <div
       ref={setNodeRef}
-      className={`min-h-40 w-72 shrink-0 space-y-2 rounded-xl border border-line p-3 transition-colors ${
-        isOver ? "bg-primary-soft" : "bg-sunken"
+      className={`proj-column min-h-40 w-72 shrink-0 space-y-2 rounded-xl border border-line p-3 transition-colors ${
+        isOver ? "drop" : ""
       }`}
     >
       <h3 className={`flex items-center gap-2 text-sm font-semibold ${column.tone}`}>
@@ -87,13 +89,20 @@ export function Board({
     (current, move: { taskId: string; patch: ColumnPatch }) =>
       current.map((t) => (t.id === move.taskId ? { ...t, ...move.patch } : t)),
   );
+  const [activeTask, setActiveTask] = useState<BoardTask | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
   );
 
   const columns = deriveColumns(groupBy, { members, milestones });
 
+  function handleDragStart(event: DragStartEvent) {
+    const task = optimisticTasks.find((t) => t.id === String(event.active.id));
+    setActiveTask(task ?? null);
+  }
+
   function handleDragEnd(event: DragEndEvent) {
+    setActiveTask(null);
     const taskId = String(event.active.id);
     const over = event.over?.id;
     if (!over) return;
@@ -119,7 +128,12 @@ export function Board({
   }
 
   return (
-    <DndContext id={`board-${projectId}`} sensors={sensors} onDragEnd={handleDragEnd}>
+    <DndContext
+      id={`board-${projectId}`}
+      sensors={sensors}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+    >
       {error && <p className="text-sm text-high">{error}</p>}
       {/* 列数随分组维度而变，故横向滚动而非固定三栏 */}
       <div className="flex gap-4 overflow-x-auto pb-2">
@@ -133,6 +147,19 @@ export function Board({
           />
         ))}
       </div>
+      {/* 拖拽浮层：卡片跟手，原位留低透明幽灵（样式见 project.css 的 proj-ghost） */}
+      <DragOverlay dropAnimation={null}>
+        {activeTask ? (
+          <div className="ac-card proj-card proj-ghost w-72 p-3 text-sm">
+            <p className="font-medium text-ink">{activeTask.title}</p>
+            <p className="mt-1 text-xs text-ink-soft">
+              {activeTask.assigneeName ?? "未分配"}
+              {(activeTask.startDate || activeTask.dueDate) &&
+                ` · ${activeTask.startDate ?? "…"}→${activeTask.dueDate ?? "…"}`}
+            </p>
+          </div>
+        ) : null}
+      </DragOverlay>
     </DndContext>
   );
 }
