@@ -110,18 +110,24 @@ docker compose -f docker-compose.prod.yml up -d --build
 > NAS 部署：本机 `rsync -az --delete --exclude node_modules --exclude .next --exclude .git ./ root@<nas>:/volume1/docker/agilecampus/`，再 ssh 上去于该目录执行上述 `up` 命令。
 > 飞书应用后台须将 `FEISHU_REDIRECT_URI` 加入重定向白名单，绑定方能成。
 
-### ⚠️ 时区不变量的前提：PG 时区必须等于 Node 时区
+### 时区列的读写口径（无时区 `timestamp`）
 
-时区列（`timestamp without time zone`）由数据库时钟写入、由 **Node 进程的本地时区**解析回来，
-所以「库里存的时间」与「读出来的时间」是否一致，**完全取决于 `db` 与 `app` 两个容器的时区是否相同**。
+站内所有时间列都是 `timestamp without time zone` —— 存的是**钟面读数**，本身不带偏移，
+光看数据无从知道那串 `18:19` 属于哪个时区。PG 自己写时间（`now()` / `defaultNow()`）时落的是
+**库会话时区**的钟面，所以应用的读写也都按会话时区换算：`src/db/schema.ts` 的
+`dbTimestamp` / `dbTimestampNow`（连上库时用 `SHOW timezone` 探明一次，见 `src/db/index.ts`）。
 
-`docker-compose.prod.yml` 与 `Dockerfile` **都没有设 `TZ`**，两者因此同为 UTC —— 配对成立，换算正常。
-**但只给一边加 `TZ` 就会全线错位**（页面上每个时间都偏，且「今天/逾期」会错一天）。
-真要改，必须两个服务一起改，且不能对已运行过的库就地改时区：那会让新行按新时区落盘、
-老行保持旧时区，同一列里混进两种含义 —— 那是改坏数据，不是修 bug。
+这样**库会话时区配成什么都不错**：`docker-compose.prod.yml` 与 `Dockerfile` 都不设 `TZ`，
+两个容器同为 UTC，照旧；运维把库配在 +08 也一样对。
 
-配套防线：`src/lib/time.ts`（纯函数，`tests/time.test.ts` 覆盖跨时区/夏令时/日界）。
-注意 `node:22-alpine` 官方镜像是 full-ICU；若产物退化成 small-ICU，时区换算会**静默**退化为 UTC。
+- **千万别对已运行过的库就地改时区**：老行按旧时区落盘、新行按新时区落盘，
+  同一列里混进两种含义 —— 那是改坏数据，不是修 bug。
+- 新增时间列**必须走 `dbTimestamp` / `dbTimestampNow`**，别直接用 drizzle 自带的 `timestamp()`：
+  后者把无时区值一律当 UTC 读（`new Date(值 + "+0000")`），库会话不是 UTC 时整站差一个偏移。
+  物理类型两者完全相同（都是 `timestamp`），故 `db:push` 不会产生 ALTER；
+  `tests/db-timestamp.test.ts` 把这两条都围住了。
+- `src/lib/time.ts` 是纯函数层（`tests/time.test.ts` 覆盖跨时区/夏令时/日界）。
+  注意 `node:22-alpine` 官方镜像是 full-ICU；若产物退化成 small-ICU，时区换算会**静默**退化为 UTC。
 
 ## 主要路由
 
@@ -137,8 +143,8 @@ docker compose -f docker-compose.prod.yml up -d --build
 | `/projects/[projectId]/timeline` | 项目时间线甘特 |
 | `/messages` | 消息中心（QQ 式消息栏：搜用户名加会话，点对点收发消息与文件） |
 | `/welcome` | 欢迎页（整屏时钟，登录后的落地页；左上角徽标点击即回此处） |
-| `/settings` | AI 设置（时区选择 + 飞书绑定状态）。顶栏无直达入口，从「个人访问令牌」页顶部的「← AI 设置」进 |
-| `/settings/tokens` | 个人访问令牌（生成/撤销）。顶栏那项「AI 设置」指向本页 |
+| `/settings` | AI 设置：时区选择 + 飞书绑定 + 个人访问令牌（生成/撤销），顶栏「AI 设置」直达 |
+| `/settings/tokens` | 旧地址，一跳 `/settings`（令牌页已并入 AI 设置） |
 
 ---
 
@@ -154,7 +160,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 Authorization: Bearer <token>
 ```
 
-在网页顶栏「AI 设置」（即「个人访问令牌」页）生成，明文只显示一次；库中仅存 sha256 hash。令牌权限等同本人：只能操作有权限的团队/项目，越权返回 `403`。约定两个环境变量：
+在网页顶栏「AI 设置」页生成，明文只显示一次；库中仅存 sha256 hash。令牌权限等同本人：只能操作有权限的团队/项目，越权返回 `403`。约定两个环境变量：
 
 - `AGILECAMPUS_URL` — 站点地址，如 `http://localhost:3000`
 - `AGILECAMPUS_TOKEN` — 令牌明文
