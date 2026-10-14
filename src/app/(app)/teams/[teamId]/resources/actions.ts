@@ -5,6 +5,8 @@ import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { createResourceUsage, endResourceUsage } from "@/lib/resource";
 import { AppError } from "@/lib/errors";
+import { zonedWallClockToInstant } from "@/lib/time";
+import { resolveUserTimeZone } from "@/lib/time-pref";
 
 export type FormState = { error: string } | null;
 
@@ -26,12 +28,16 @@ export async function createResourceAction(
   const parsed = createSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  const start = new Date(parsed.data.startTime);
-  if (Number.isNaN(start.getTime())) return { error: "开始时间无效" };
+  // datetime-local 提交的是**没有时区**的墙面时间，`new Date(字符串)` 会按服务端进程的
+  // 时区去解析 —— 那是容器时区，不是用户的。必须明确这是用户所选时区里的那个读数。
+  const tz = await resolveUserTimeZone(session.user.id);
+  let start: Date;
   let end: Date | undefined;
-  if (parsed.data.endTime) {
-    end = new Date(parsed.data.endTime);
-    if (Number.isNaN(end.getTime())) return { error: "结束时间无效" };
+  try {
+    start = zonedWallClockToInstant(tz, parsed.data.startTime);
+    end = parsed.data.endTime ? zonedWallClockToInstant(tz, parsed.data.endTime) : undefined;
+  } catch {
+    return { error: "时间无效" };
   }
 
   try {

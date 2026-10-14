@@ -4,19 +4,26 @@ import { notFound, redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { getProjectForUser, listProjectMilestones } from "@/lib/project";
 import { listProjectTasks } from "@/lib/task";
+import { todayIn } from "@/lib/time";
+import { resolveUserTimeZone } from "@/lib/time-pref";
 
 const DAY = 86_400_000;
 
-// "YYYY-MM-DD" → 本地零点毫秒；无值返回 null
+// "YYYY-MM-DD" → **UTC** 零点毫秒；无值返回 null。
+//
+// 这里刻意锚在 UTC：date 列是日历日、没有时区含义，而这张图只需要「第几天到第几天」
+// 的差值。以前锚在宿主本地零点，整张图的坐标系就跟着容器的时区跑，
+// 今日竖线也就落在了宿主时区的今天上 —— 与看板按用户时区算的「今天」对不上。
+// 锚在 UTC 后，坐标系是纯粹的日历算术，今日竖线由传入的 todayMs 决定。
 function parseDay(s: string | null): number | null {
   if (!s) return null;
-  const t = new Date(`${s}T00:00:00`).getTime();
+  const t = Date.parse(`${s}T00:00:00Z`);
   return Number.isNaN(t) ? null : t;
 }
 
 function fmtMD(ms: number): string {
   const d = new Date(ms);
-  return `${d.getMonth() + 1}/${String(d.getDate()).padStart(2, "0")}`;
+  return `${d.getUTCMonth() + 1}/${String(d.getUTCDate()).padStart(2, "0")}`;
 }
 
 type TaskRow = Awaited<ReturnType<typeof listProjectTasks>>[number];
@@ -65,9 +72,9 @@ export default async function TimelinePage({
     scheduled.push({ task: t, start, end });
   }
 
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const todayMs = todayStart.getTime();
+  // 今日竖线：按**用户自己的时区**定「今天是哪一天」，再落到同一套日历坐标系上
+  const tz = await resolveUserTimeZone(session.user.id);
+  const todayMs = parseDay(todayIn(tz))!;
 
   return (
     <main className="mx-auto max-w-5xl space-y-6 py-8">

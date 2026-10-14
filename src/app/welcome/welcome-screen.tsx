@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { clockParts } from "@/lib/time";
 
 const WEEK = ["日", "一", "二", "三", "四", "五", "六"];
 
@@ -25,6 +26,8 @@ const QUOTES = [
 
 type Props = {
   username: string;
+  /** 用户所选时区：钟面、日期、昼夜与问候语一律按它算，不按浏览器本地时间 */
+  timeZone: string;
   doing: number;
   todo: number;
   risk: number;
@@ -32,6 +35,7 @@ type Props = {
 
 export function WelcomeScreen({
   username,
+  timeZone,
   doing,
   todo,
   risk,
@@ -49,20 +53,22 @@ export function WelcomeScreen({
         : /[?&]night/.test(window.location.search)
           ? false
           : null;
-      setDay(force !== null ? force : d.getHours() >= 5 && d.getHours() < 18);
+      // 昼夜配色与问候语跟着用户选的时区走：选了北京时间而人身在国外时，
+      // 「早上好」该按北京时间的早上说
+      const h = clockParts(timeZone, d).hour;
+      setDay(force !== null ? force : h >= 5 && h < 18);
     };
     tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [timeZone]);
 
-  const h = now?.getHours();
-  const hh = now ? String(now.getHours()).padStart(2, "0") : "--";
-  const mm = now ? String(now.getMinutes()).padStart(2, "0") : "--";
-  const ss = now ? String(now.getSeconds()).padStart(2, "0") : "--";
-  const dateStr = now
-    ? `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 · 星期${WEEK[now.getDay()]}`
-    : "— —";
+  const clock = now ? clockParts(timeZone, now) : null;
+  const h = clock?.hour;
+  const hh = clock?.hh ?? "--";
+  const mm = clock?.mm ?? "--";
+  const ss = clock?.ss ?? "--";
+  const dateStr = clock ? `${clock.dateLabel} · 星期${WEEK[clock.weekday]}` : "— —";
 
   let greet = "…";
   if (h !== undefined) {

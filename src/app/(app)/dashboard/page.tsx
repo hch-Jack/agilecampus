@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { listMySubtaskProgress, listMyTasks } from "@/lib/task";
 import { listMyTaskActivities } from "@/lib/activity";
+import { addDays, dateIn, todayIn, weekdayOfDate } from "@/lib/time";
+import { resolveUserTimeZone } from "@/lib/time-pref";
 import {
   dashboardHref,
   pickProjectFilter,
@@ -62,14 +64,17 @@ function feedParts(a: {
 }
 
 // 相对时间：传入 now 便于推导；时钟微小偏移自然落入「刚刚」。
-// 正确性前提：PG 与 Node 时区一致（timestamp 列无时区，部署时两侧须对齐）
-function fmtRelative(d: Date, now: Date): string {
+// 超过一周就落到具体日期，那个日期要按**用户的**时区写（别用 toLocaleDateString，
+// 它取的是宿主进程的时区，容器里就是 UTC）。
+//
+// 注意「几小时前」这类差值不受时区影响 —— 那是两个时刻相减，本来就没有时区可言。
+function fmtRelative(d: Date, now: Date, tz: string): string {
   const s = Math.floor((now.getTime() - d.getTime()) / 1000);
   if (s < 60) return "刚刚";
   if (s < 3600) return `${Math.floor(s / 60)}分钟前`;
   if (s < 86400) return `${Math.floor(s / 3600)}小时前`;
   if (s < 7 * 86400) return `${Math.floor(s / 86400)}天前`;
-  return d.toLocaleDateString("sv-SE");
+  return dateIn(tz, d);
 }
 
 export default async function DashboardPage({
@@ -88,12 +93,13 @@ export default async function DashboardPage({
     listMyTaskActivities(session.user.id), // 全量口径，不受任何筛选影响
   ]);
 
-  // 本地时区 YYYY-MM-DD（sv-SE 惯例，与项目总览页同款）；today 由服务端算好传给看板，客户端不取时钟
+  // 「今天 / 本周截止」一律按**用户自己的时区**在服务端算成 YYYY-MM-DD，
+  // 再由服务端传给看板 —— 客户端不取时钟，免得同一个人在两处看到不同的「今天」。
+  // 周日的算法也走日历字符串（addDays），不要用 setDate：那会把宿主时区绕回来。
+  const tz = await resolveUserTimeZone(session.user.id);
   const now = new Date();
-  const today = now.toLocaleDateString("sv-SE");
-  const sunday = new Date(now);
-  sunday.setDate(now.getDate() + ((7 - now.getDay()) % 7));
-  const weekEnd = sunday.toLocaleDateString("sv-SE");
+  const today = todayIn(tz, now);
+  const weekEnd = addDays(today, (7 - weekdayOfDate(today)) % 7);
 
   // 子任务进度合并进卡片数据（只认直接子级聚合的父 id）
   const byParent = new Map(
@@ -209,7 +215,7 @@ export default async function DashboardPage({
                     </Link>
                     {parts.after}
                   </span>{" "}
-                  <span className="text-xs text-ink-faint">{fmtRelative(a.createdAt, now)}</span>
+                  <span className="text-xs text-ink-faint">{fmtRelative(a.createdAt, now, tz)}</span>
                 </li>
               );
             })}

@@ -11,6 +11,8 @@ import { listTeamMembers } from "@/lib/team";
 import { listTeamLabels } from "@/lib/label";
 import { listAttachments } from "@/lib/attachment";
 import { listTaskActivities } from "@/lib/activity";
+import { formatDateTime } from "@/lib/time";
+import { resolveUserTimeZone } from "@/lib/time-pref";
 import {
   SubtaskList,
   STATUS_BADGE,
@@ -28,10 +30,7 @@ const PRIORITY_BADGE: Record<string, string> = {
 };
 const PRIORITY_LABEL: Record<string, string> = { high: "高", medium: "中", low: "低" };
 
-function fmtDateTime(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
+// 时间一律走 lib/time.ts，按**用户自己的**时区格式化（原来那套手搓的取的是宿主进程时区）
 
 // 动态行文案：type → 「做了什么」；field 型带旧值→新值
 function activityLine(a: {
@@ -79,6 +78,8 @@ export default async function TaskDetailPage({
   const access = await getProjectForUser(session.user.id, projectId);
   if (!access) notFound();
   const canWrite = access.role === "admin" || access.role === "student";
+  // 本页所有时间都按用户的时区渲染，故先解析一次并往下传（含给附件客户端组件）
+  const tz = await resolveUserTimeZone(session.user.id);
 
   // catch→null→notFound：不泄露「任务存在但无权限」（沿 getTaskDetail 既有口径）
   const task = await getTaskDetail(session.user.id, taskId).catch(() => null);
@@ -183,7 +184,7 @@ export default async function TaskDetailPage({
           {task.assigneeName ?? "未分配"}
           {(task.startDate || task.dueDate) &&
             ` · ${task.startDate ?? "…"}→${task.dueDate ?? "…"}`}
-          {` · 创建于 ${fmtDateTime(task.createdAt)} · 更新于 ${fmtDateTime(task.updatedAt)}`}
+          {` · 创建于 ${formatDateTime(tz,task.createdAt)} · 更新于 ${formatDateTime(tz,task.updatedAt)}`}
         </p>
       </header>
 
@@ -231,6 +232,7 @@ export default async function TaskDetailPage({
           taskId={taskId}
           attachments={attachmentRows}
           canWrite={canWrite}
+          timeZone={tz}
         />
       </section>
 
@@ -244,7 +246,7 @@ export default async function TaskDetailPage({
               <li key={a.id} className="text-sm">
                 <span className="font-medium text-ink">{a.actorName}</span>{" "}
                 <span className="text-ink-soft">{activityLine(a)}</span>{" "}
-                <span className="text-xs text-ink-faint">{fmtDateTime(a.createdAt)}</span>
+                <span className="text-xs text-ink-faint">{formatDateTime(tz,a.createdAt)}</span>
               </li>
             ))}
           </ul>

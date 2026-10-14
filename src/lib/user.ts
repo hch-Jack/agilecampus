@@ -5,6 +5,7 @@ import { eq, sql } from "drizzle-orm";
 import { hashPassword } from "./password";
 import { exchangeOAuthCode } from "./feishu";
 import { AppError, isUniqueViolation } from "./errors";
+import { AUTO_TIMEZONE, DEFAULT_TIMEZONE, isValidTimeZone } from "./time";
 
 export async function createUser(input: {
   email: string;
@@ -57,6 +58,16 @@ export async function unbindFeishu(userId: string) {
     .update(users)
     .set({ feishuOpenId: null, feishuName: null, feishuBoundAt: null })
     .where(eq(users.id, userId));
+}
+
+/**
+ * 改时区偏好。入参已由调用方（settings/actions.ts）用 `isValidTimeZone` / `AUTO_TIMEZONE` 校验过；
+ * 这里再兜一道底 —— 非法值一律落回默认的中国时间，绝不让一个坏值进库后把每页渲染都炸掉。
+ */
+export async function updateUserTimeZone(userId: string, timezone: string) {
+  const value = timezone === AUTO_TIMEZONE || isValidTimeZone(timezone) ? timezone : DEFAULT_TIMEZONE;
+  await db.update(users).set({ timezone: value }).where(eq(users.id, userId));
+  return value;
 }
 
 // 飞书登录的账号解析：已绑 openId → 返回原账号；未绑 → 自动建号（占位 email + 不可用 hash，禁邮箱登录）。

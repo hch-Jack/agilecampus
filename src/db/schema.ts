@@ -41,6 +41,11 @@ export const users = pgTable("users", {
   feishuOpenId: text("feishu_open_id").unique(),
   feishuName: text("feishu_name"),
   feishuBoundAt: timestamp("feishu_bound_at"),
+  // 时区偏好：IANA 名（如 Asia/Shanghai），或 "auto" = 跟随浏览器（见 lib/time.ts）。
+  // 默认中国时间 —— 部署容器跑在 UTC，不给默认值的话用户看到的时间会慢 8 小时。
+  // 这里写字面量而非常量：schema 由 drizzle-kit 独立加载，不引应用侧的模块。
+  // 两份值必须一致，有 tests/time.test.ts 盯着。
+  timezone: text("timezone").notNull().default("Asia/Shanghai"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

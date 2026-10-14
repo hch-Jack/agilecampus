@@ -1,16 +1,18 @@
 "use client";
 
 import { useActionState, useRef } from "react";
+import { formatInputValue } from "@/lib/time";
 import { createResourceAction, type FormState } from "./actions";
 
-// 当前本地时间 → datetime-local 所需的 "YYYY-MM-DDTHH:mm"
-function nowLocal(): string {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+// 当前时间 → datetime-local 所需的 "YYYY-MM-DDTHH:mm"。
+// 必须按**用户选的时区**写，不能用浏览器本地的 getHours()：
+// 用户把时区设成 UTC 而人在 +08 时，那个「此刻」按钮会填出错的读数，
+// 提交后由服务端按同一时区解析，于是登记的时刻也跟着错。
+function nowInZone(timeZone: string): string {
+  return formatInputValue(timeZone, new Date());
 }
 
-export function ResourceForm({ teamId }: { teamId: string }) {
+export function ResourceForm({ teamId, timeZone }: { teamId: string; timeZone: string }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(
     createResourceAction,
     null,
@@ -41,7 +43,7 @@ export function ResourceForm({ teamId }: { teamId: string }) {
             <input ref={startRef} name="startTime" type="datetime-local" className="ac-field" />
             <button
               type="button"
-              onClick={() => startRef.current && (startRef.current.value = nowLocal())}
+              onClick={() => startRef.current && (startRef.current.value = nowInZone(timeZone))}
               className="ac-btn-ghost whitespace-nowrap"
             >
               此刻
@@ -54,7 +56,7 @@ export function ResourceForm({ teamId }: { teamId: string }) {
             <input ref={endRef} name="endTime" type="datetime-local" className="ac-field" />
             <button
               type="button"
-              onClick={() => endRef.current && (endRef.current.value = nowLocal())}
+              onClick={() => endRef.current && (endRef.current.value = nowInZone(timeZone))}
               className="ac-btn-ghost whitespace-nowrap"
             >
               此刻
