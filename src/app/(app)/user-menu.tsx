@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { TimeZoneOption } from "@/lib/time";
 import { signOutAction } from "./actions";
 import { FeishuModal } from "./user-menu/feishu-modal";
@@ -107,28 +108,35 @@ export function UserMenu({
         )}
       </div>
 
-      {modal === "profile" && (
-        <ProfileModal
-          initialName={profile.name}
-          initialIdentity={profile.identity}
-          feishuOnly={profile.feishuOnly}
-          onClose={() => setModal(null)}
-        />
-      )}
-      {modal === "feishu" && (
-        <FeishuModal
-          boundName={feishu.boundName}
-          boundAtLabel={feishu.boundAtLabel}
-          onClose={() => setModal(null)}
-        />
-      )}
-      {modal === "timezone" && (
-        <TimezoneModal
-          pref={timezone.pref}
-          options={timezone.options}
-          onClose={() => setModal(null)}
-        />
-      )}
+      {/* 小窗 portal 到 body：顶栏的 backdrop-filter 会把 fixed 后代限定在顶栏盒内 */}
+      {modal === "profile" &&
+        createPortal(
+          <ProfileModal
+            initialName={profile.name}
+            initialIdentity={profile.identity}
+            feishuOnly={profile.feishuOnly}
+            onClose={() => setModal(null)}
+          />,
+          document.body,
+        )}
+      {modal === "feishu" &&
+        createPortal(
+          <FeishuModal
+            boundName={feishu.boundName}
+            boundAtLabel={feishu.boundAtLabel}
+            onClose={() => setModal(null)}
+          />,
+          document.body,
+        )}
+      {modal === "timezone" &&
+        createPortal(
+          <TimezoneModal
+            pref={timezone.pref}
+            options={timezone.options}
+            onClose={() => setModal(null)}
+          />,
+          document.body,
+        )}
     </>
   );
 }
