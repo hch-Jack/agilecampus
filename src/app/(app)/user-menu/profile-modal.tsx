@@ -119,9 +119,7 @@ export function ProfileModal({
             </span>
           )}
           <div className="min-w-0 flex-1 space-y-2">
-            <p className="text-sm text-ink-soft">
-              头像支持 PNG、JPEG、WebP，不超过 2MB。改完后聊天与顶栏的头像会一起更新。
-            </p>
+            <p className="text-sm text-ink-soft">头像支持 PNG、JPEG、WebP，不超过 2MB。</p>
             <input
               ref={avatarInputRef}
               type="file"
