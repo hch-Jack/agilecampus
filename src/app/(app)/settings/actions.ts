@@ -13,11 +13,19 @@ import { createApiToken, revokeApiToken } from "@/lib/api-token";
 import { AppError } from "@/lib/errors";
 import { AUTO_TIMEZONE, TZ_COOKIE, TZ_COOKIE_MAX_AGE, isValidTimeZone } from "@/lib/time";
 
-export async function unbindFeishuAction() {
+// 小窗表单都带一个隐藏的 from 字段（当前 pathname）：改完后按它重渲染**当前页**，
+// 顶栏/页面上的旧数据（昵称、时区、绑定状态）随之刷新，用户无需手动刷新。
+// 只认以 / 开头的合法路径，其余落回兜底页，防止脏值喂给 revalidatePath。
+function revalidateFrom(formData: FormData, fallback: string) {
+  const from = String(formData.get("from") ?? "");
+  revalidatePath(from.startsWith("/") && from.length < 1024 ? from : fallback);
+}
+
+export async function unbindFeishuAction(formData: FormData) {
   const session = await auth();
   if (!session?.user) redirect("/login");
   await unbindFeishu(session.user.id);
-  revalidatePath("/settings");
+  revalidateFrom(formData, "/settings");
 }
 
 export type TimeZoneState = { error: string } | null;
@@ -42,7 +50,7 @@ export async function updateTimeZoneAction(
   }
 
   await updateUserTimeZone(session.user.id, value);
-  revalidatePath("/settings");
+  revalidateFrom(formData, "/settings");
   return null;
 }
 
@@ -67,7 +75,8 @@ export async function syncBrowserTimeZone(tz: string) {
 }
 
 // ------------------------------------------------------------------ 个人资料
-// /settings/profile：改用户名与身份。校验规则与注册页一致（用户名全站唯一、最长 24 位）。
+// 顶栏「设置」菜单的「修改信息」小窗：改用户名与身份。校验规则与注册页一致
+// （用户名全站唯一、最长 24 位）。
 
 export type ProfileState = { ok: true } | { error: string } | null;
 
@@ -98,7 +107,7 @@ export async function updateProfileAction(
     });
     // JWT 会话里存的是登录时的用户名，重签一次让顶栏立即显示新名字（见 lib/auth.ts 的 jwt callback）
     await unstable_update({ user: { name } });
-    revalidatePath("/settings/profile");
+    revalidateFrom(formData, "/settings");
     return { ok: true };
   } catch (e) {
     if (e instanceof AppError) return { error: e.message };

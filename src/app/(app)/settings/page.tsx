@@ -1,17 +1,20 @@
 import { redirect } from "next/navigation";
-import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
-import { db } from "@/db";
-import { users } from "@/db/schema";
 import { listApiTokens } from "@/lib/api-token";
-import { DEFAULT_TIMEZONE, formatDateTime, listTimeZones } from "@/lib/time";
+import { formatDateTime } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
-import { FeishuCard } from "./feishu-card";
-import { TimezoneCard } from "./timezone-card";
 import { TokenManager, type TokenRow } from "./token-manager";
 
-// 一页装齐「AI配置」：时区、飞书通知、个人访问令牌。
+// 「AI配置」页只装个人访问令牌；时区与飞书绑定已迁到顶栏「设置」菜单的小窗里。
 // 令牌原先是独立的 /settings/tokens，2026-10 按用户要求并到这里（老路由留作跳转）。
+// 飞书 OAuth 绑定完成后仍回跳本页（?feishu=...），顶部横幅展示绑定结果。
+const FEISHU_NOTICE: Record<string, { text: string; ok: boolean }> = {
+  bound: { text: "飞书绑定成功。", ok: true },
+  state_error: { text: "绑定校验失败，请重试。", ok: false },
+  conflict: { text: "该飞书账号已绑定其他用户。", ok: false },
+  error: { text: "绑定失败，请稍后重试。", ok: false },
+};
+
 export default async function SettingsPage({
   searchParams,
 }: {
@@ -20,20 +23,11 @@ export default async function SettingsPage({
   const session = await auth();
   if (!session?.user) redirect("/login");
 
-  const [row] = await db
-    .select({
-      feishuName: users.feishuName,
-      feishuBoundAt: users.feishuBoundAt,
-      timezone: users.timezone,
-    })
-    .from(users)
-    .where(eq(users.id, session.user.id));
   const { feishu } = await searchParams;
+  const notice = feishu ? FEISHU_NOTICE[feishu] : null;
 
-  // 飞书绑定时间与令牌列表的时间都要按**用户自己的**时区显示
+  // 令牌列表的时间按**用户自己的**时区显示
   const tz = await resolveUserTimeZone(session.user.id);
-  // 选项在服务端生成后整份传给客户端：两边各算一次会因 ICU 版本不同而不一致
-  const options = listTimeZones();
 
   const tokens: TokenRow[] = (await listApiTokens(session.user.id)).map((t) => ({
     id: t.id,
@@ -48,17 +42,19 @@ export default async function SettingsPage({
       <header className="space-y-1">
         <h1 className="font-display text-2xl font-semibold text-ink">AI配置</h1>
         <p className="text-sm text-ink-soft">
-          时间显示、飞书通知与个人访问令牌——AI 助手和外部程序都从这一页配。
+          个人访问令牌——AI 助手和外部程序凭它写入，权限等同于你本人。
         </p>
       </header>
 
-      <TimezoneCard pref={row?.timezone ?? DEFAULT_TIMEZONE} options={options} />
-
-      <FeishuCard
-        boundName={row?.feishuName ?? null}
-        boundAtLabel={row?.feishuBoundAt ? formatDateTime(tz, row.feishuBoundAt) : null}
-        notice={feishu ?? null}
-      />
+      {notice && (
+        <p
+          className={`rounded-field border px-3 py-2 text-sm ${
+            notice.ok ? "border-done/30 bg-done/10 text-done" : "border-high/30 bg-high/10 text-high"
+          }`}
+        >
+          {notice.text}
+        </p>
+      )}
 
       <section className="space-y-4">
         <div className="space-y-1">
