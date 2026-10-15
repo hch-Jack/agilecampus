@@ -13,8 +13,9 @@ const NOTICE: Record<string, { text: string; ok: boolean }> = {
 
 export function FeishuCard({ boundName, boundAtLabel, notice }: Props) {
   const n = notice ? NOTICE[notice] : null;
+  // id 供顶栏「设置」菜单锚点跳转；scroll-mt 避开 sticky 顶栏
   return (
-    <section className="ac-card space-y-3 p-5">
+    <section id="feishu" className="ac-card scroll-mt-20 space-y-3 p-5">
       <h2 className="font-display text-base font-semibold text-ink">飞书通知</h2>
       <p className="text-sm text-ink-soft">
         绑定飞书后，任务被指派、完成，以及临期/逾期时，你会收到飞书私信提醒。

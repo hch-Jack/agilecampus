@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { eq } from "drizzle-orm";
-import { auth, signOut } from "@/lib/auth";
+import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { IdentityBadge } from "@/components/badges";
@@ -10,6 +10,7 @@ import { getTimeZonePref } from "@/lib/time-pref";
 import { ProjTheme } from "./proj-theme";
 import { NavLinks } from "./nav-links";
 import { TzSync } from "./tz-sync";
+import { UserMenu } from "./user-menu";
 import "./project.css";
 
 export default async function AppLayout({
@@ -48,13 +49,7 @@ export default async function AppLayout({
             </Link>
             <NavLinks />
           </div>
-          <form
-            action={async () => {
-              "use server";
-              await signOut({ redirectTo: "/login" });
-            }}
-            className="flex items-center gap-3"
-          >
+          <div className="flex items-center gap-3">
             <IdentityBadge identity={identity} className="hidden sm:inline-flex" />
             <span
               aria-hidden
@@ -63,8 +58,8 @@ export default async function AppLayout({
               {session.user.name?.charAt(0) || "?"}
             </span>
             <span className="hidden text-sm text-ink-soft sm:inline">{session.user.name}</span>
-            <button className="ac-btn-ghost">退出</button>
-          </form>
+            <UserMenu />
+          </div>
         </header>
         <div className="mx-auto max-w-5xl p-6">{children}</div>
       </div>

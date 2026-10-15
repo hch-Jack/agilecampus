@@ -10,7 +10,7 @@ import { FeishuCard } from "./feishu-card";
 import { TimezoneCard } from "./timezone-card";
 import { TokenManager, type TokenRow } from "./token-manager";
 
-// 一页装齐「AI 设置」：时区、飞书通知、个人访问令牌。
+// 一页装齐「AI配置」：时区、飞书通知、个人访问令牌。
 // 令牌原先是独立的 /settings/tokens，2026-10 按用户要求并到这里（老路由留作跳转）。
 export default async function SettingsPage({
   searchParams,
@@ -46,7 +46,7 @@ export default async function SettingsPage({
   return (
     <main className="mx-auto max-w-2xl space-y-8 py-8">
       <header className="space-y-1">
-        <h1 className="font-display text-2xl font-semibold text-ink">AI 设置</h1>
+        <h1 className="font-display text-2xl font-semibold text-ink">AI配置</h1>
         <p className="text-sm text-ink-soft">
           时间显示、飞书通知与个人访问令牌——AI 助手和外部程序都从这一页配。
         </p>

@@ -50,8 +50,9 @@ export function TimezoneCard({
   const effective = tz === AUTO_TIMEZONE ? (browserTz ?? pref) : tz;
   const preview = now ? clockParts(effective, now) : null;
 
+  // id 供顶栏「设置」菜单锚点跳转；scroll-mt 避开 sticky 顶栏
   return (
-    <form action={formAction} className="ac-card space-y-3 p-5">
+    <form id="timezone" action={formAction} className="ac-card scroll-mt-20 space-y-3 p-5">
       <h2 className="font-display text-base font-semibold text-ink">时区</h2>
       <p className="text-sm text-ink-soft">
         页面上所有时间都按这个时区显示，「今天」「已逾期」也按它算。默认北京时间。

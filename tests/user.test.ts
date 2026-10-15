@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createUser } from "@/lib/user";
+import { createUser, updateUserPassword, updateUserProfile } from "@/lib/user";
 import { verifyPassword } from "@/lib/password";
 import { AppError } from "@/lib/errors";
 import { resetDb } from "./helpers";
@@ -144,5 +144,82 @@ describe("createUser", () => {
 
     await expect(pending).rejects.toBeInstanceOf(AppError);
     await expect(pending).rejects.toThrow("该用户名已被使用，请换一个");
+  });
+});
+
+describe("updateUserProfile", () => {
+  beforeEach(resetDb);
+
+  it("改用户名与身份并返回新名字", async () => {
+    const user = await createUser({ email: "p@example.com", password: "password123", name: "旧名" });
+    const updated = await updateUserProfile(user.id, { name: "新名", identity: "student" });
+    expect(updated.name).toBe("新名");
+    const [row] = await db.select().from(users).where(eq(users.id, user.id));
+    expect(row.name).toBe("新名");
+    expect(row.identity).toBe("student");
+  });
+
+  it("重名（不区分大小写）抛出可展示错误", async () => {
+    await createUser({ email: "a@example.com", password: "password123", name: "ZhouYu" });
+    const me = await createUser({ email: "b@example.com", password: "password123", name: "孙权" });
+    await expect(
+      updateUserProfile(me.id, { name: "zhouyu", identity: null }),
+    ).rejects.toThrow("该用户名已被使用，请换一个");
+  });
+
+  it("保留自己的名字不算重名", async () => {
+    const user = await createUser({ email: "keep@example.com", password: "password123", name: "周瑜" });
+    const updated = await updateUserProfile(user.id, { name: "周瑜", identity: "teacher" });
+    expect(updated.name).toBe("周瑜");
+  });
+
+  it("身份可清空为 NULL", async () => {
+    const user = await createUser({
+      email: "wipe@example.com",
+      password: "password123",
+      name: "甲",
+      identity: "teacher",
+    });
+    await updateUserProfile(user.id, { name: "甲", identity: null });
+    const [row] = await db.select().from(users).where(eq(users.id, user.id));
+    expect(row.identity).toBeNull();
+  });
+});
+
+describe("updateUserPassword", () => {
+  beforeEach(resetDb);
+
+  it("验过旧密码后改新密码", async () => {
+    const user = await createUser({ email: "pw@example.com", password: "oldpass123", name: "甲" });
+    await updateUserPassword(user.id, {
+      currentPassword: "oldpass123",
+      newPassword: "newpass456",
+      requireCurrent: true,
+    });
+    const [row] = await db.select().from(users).where(eq(users.id, user.id));
+    expect(await verifyPassword("newpass456", row.passwordHash)).toBe(true);
+    expect(await verifyPassword("oldpass123", row.passwordHash)).toBe(false);
+  });
+
+  it("旧密码错误抛出可展示错误", async () => {
+    const user = await createUser({ email: "wrong@example.com", password: "oldpass123", name: "甲" });
+    await expect(
+      updateUserPassword(user.id, {
+        currentPassword: "wrongpass",
+        newPassword: "newpass456",
+        requireCurrent: true,
+      }),
+    ).rejects.toThrow("当前密码不正确");
+  });
+
+  it("requireCurrent=false 免验旧密码（飞书专用账号的占位密码本人无从得知）", async () => {
+    const user = await createUser({ email: "f@example.com", password: "password123", name: "甲" });
+    await updateUserPassword(user.id, {
+      currentPassword: "",
+      newPassword: "setpass456",
+      requireCurrent: false,
+    });
+    const [row] = await db.select().from(users).where(eq(users.id, user.id));
+    expect(await verifyPassword("setpass456", row.passwordHash)).toBe(true);
   });
 });

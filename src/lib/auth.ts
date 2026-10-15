@@ -12,7 +12,7 @@ const credentialsSchema = z.object({
   password: z.string().min(1),
 });
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
+export const { handlers, auth, signIn, signOut, unstable_update } = NextAuth({
   session: { strategy: "jwt" },
   pages: { signIn: "/login" },
   providers: [
@@ -51,8 +51,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
-    jwt({ token, user }) {
+    jwt({ token, user, trigger, session }) {
       if (user) token.id = user.id;
+      // 改用户名后 unstable_update({ user: { name } }) 会带着 trigger=update 重签 JWT，
+      // 不把新昵称并进 token 的话，顶栏的 session.user.name 会一直停在登录时的旧值
+      if (trigger === "update" && session?.user) {
+        if (typeof session.user.name === "string") token.name = session.user.name;
+        if (typeof session.user.email === "string") token.email = session.user.email;
+      }
       return token;
     },
     session({ session, token }) {

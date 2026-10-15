@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { db } from "@/db";
 import { users, type UserIdentity } from "@/db/schema";
-import { eq, sql } from "drizzle-orm";
-import { hashPassword } from "./password";
+import { and, eq, ne, sql } from "drizzle-orm";
+import { hashPassword, verifyPassword } from "./password";
 import { exchangeOAuthCode } from "./feishu";
 import { AppError, isUniqueViolation } from "./errors";
 import { AUTO_TIMEZONE, DEFAULT_TIMEZONE, isValidTimeZone } from "./time";
@@ -69,6 +69,51 @@ export async function bindFeishu(userId: string, input: { openId: string; name: 
     if (isUniqueViolation(e)) throw new AppError("该飞书账号已绑定其他用户");
     throw e;
   }
+}
+
+// 改用户名与身份（个人资料页）。用户名全站唯一（私信按用户名定位），
+// 查重排除自己、不区分大小写，DB 唯一索引兜底并发窗口。
+export async function updateUserProfile(
+  userId: string,
+  input: { name: string; identity: UserIdentity | null },
+) {
+  const name = input.name.trim();
+  const [nameTaken] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(sql`lower(${users.name}) = lower(${name})`, ne(users.id, userId)));
+  if (nameTaken) throw new AppError("该用户名已被使用，请换一个");
+
+  try {
+    const [user] = await db
+      .update(users)
+      .set({ name, identity: input.identity })
+      .where(eq(users.id, userId))
+      .returning({ id: users.id, name: users.name });
+    return user;
+  } catch (e) {
+    if (isUniqueViolation(e)) throw new AppError("该用户名已被使用，请换一个");
+    throw e;
+  }
+}
+
+// 改密码：先验旧密码再设新密码。飞书自动建号的账号是随机占位密码、本人无从得知，
+// 故传 requireCurrent=false 直接设置（调用方按「飞书专用账号」判定）。
+export async function updateUserPassword(
+  userId: string,
+  input: { currentPassword: string; newPassword: string; requireCurrent: boolean },
+) {
+  if (input.requireCurrent) {
+    const [user] = await db
+      .select({ passwordHash: users.passwordHash })
+      .from(users)
+      .where(eq(users.id, userId));
+    if (!user || !(await verifyPassword(input.currentPassword, user.passwordHash))) {
+      throw new AppError("当前密码不正确");
+    }
+  }
+  const passwordHash = await hashPassword(input.newPassword);
+  await db.update(users).set({ passwordHash }).where(eq(users.id, userId));
 }
 
 export async function unbindFeishu(userId: string) {
