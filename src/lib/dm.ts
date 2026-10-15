@@ -1,6 +1,14 @@
 import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { dmAttachments, dmContacts, dmMessages, users, type UserIdentity } from "@/db/schema";
+import {
+  dmAttachments,
+  dmContacts,
+  dmGroupMembers,
+  dmGroupMessages,
+  dmMessages,
+  users,
+  type UserIdentity,
+} from "@/db/schema";
 import { AppError, ForbiddenError } from "./errors";
 import { userAvatarUrl } from "./user";
 
@@ -291,22 +299,41 @@ export async function countUnread(actorId: string): Promise<number> {
 
 // —— 附件下载 ——
 
-// 只有该消息的收发双方可下载；内容随行返回，仅此路径取 data 列
+// 私信附件：收发双方可下载；群聊附件（dm_group_messages 引用）：群成员可下载。
+// 内容随行返回，仅此路径取 data 列。群成员校验内联在此而非 lib/group-chat.ts——
+// 那边 import 本文件的 findUserByUsername，反向引用会成环。
 export async function getDmAttachmentForDownload(actorId: string, attachmentId: string) {
-  const [row] = await db
+  const [dmRow] = await db
+    .select({ senderId: dmMessages.senderId, recipientId: dmMessages.recipientId })
+    .from(dmMessages)
+    .where(eq(dmMessages.attachmentId, attachmentId));
+  if (dmRow) {
+    if (dmRow.senderId !== actorId && dmRow.recipientId !== actorId) throw new ForbiddenError();
+  } else {
+    const [groupRow] = await db
+      .select({ groupId: dmGroupMessages.groupId })
+      .from(dmGroupMessages)
+      .where(eq(dmGroupMessages.attachmentId, attachmentId));
+    if (!groupRow) throw new AppError("附件不存在");
+    const [member] = await db
+      .select({ userId: dmGroupMembers.userId })
+      .from(dmGroupMembers)
+      .where(
+        and(eq(dmGroupMembers.groupId, groupRow.groupId), eq(dmGroupMembers.userId, actorId)),
+      );
+    if (!member) throw new ForbiddenError();
+  }
+
+  const [att] = await db
     .select({
       id: dmAttachments.id,
       filename: dmAttachments.filename,
       mimeType: dmAttachments.mimeType,
       size: dmAttachments.size,
       data: dmAttachments.data,
-      senderId: dmMessages.senderId,
-      recipientId: dmMessages.recipientId,
     })
     .from(dmAttachments)
-    .innerJoin(dmMessages, eq(dmMessages.attachmentId, dmAttachments.id))
     .where(eq(dmAttachments.id, attachmentId));
-  if (!row) throw new AppError("附件不存在");
-  if (row.senderId !== actorId && row.recipientId !== actorId) throw new ForbiddenError();
-  return row;
+  if (!att) throw new AppError("附件不存在");
+  return { ...att, senderId: null, recipientId: null };
 }

@@ -39,6 +39,9 @@
   --color-low: #6f7987;
   --color-low-soft: #ecedf0;
 
+  /* 语义 · 未读提醒（微信/QQ 式红点；proj-cosmic 深色主题不覆盖它，红点恒红） */
+  --color-danger: #fa5151;
+
   /* 字体 */
   --font-sans: var(--font-sans), ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-display: var(--font-display), Georgia, "Songti SC", serif;

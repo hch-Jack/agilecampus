@@ -77,7 +77,11 @@ export function NavLinks() {
           >
             {item.label}
             {item.key === "/messages" && unread > 0 && (
-              <span className="absolute -right-1 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-high px-1 text-[10px] font-bold leading-none text-white">
+              // key=unread：数字变化时重挂载，弹出动画重放一遍（微信/QQ 式）
+              <span
+                key={unread}
+                className="nav-unread-badge absolute -right-1 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-danger px-1 text-[10px] font-bold leading-none text-white"
+              >
                 {unread > 99 ? "99+" : unread}
               </span>
             )}

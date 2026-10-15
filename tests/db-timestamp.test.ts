@@ -124,8 +124,8 @@ describe("时间列的物理 schema 没有变（db:push 不该产生 ALTER）", 
     }
 
     // 数目是对不上就说明有人绕开了 dbTimestamp 自己搓了一个时间列
-    // （私信/动态流那几张表后来加过一轮，个人上下文表又加了一轮，加表就得同步这个数）
-    expect(columns).toHaveLength(29);
+    // （私信/动态流/群聊那几张表后来加过一轮，个人上下文表又加了一轮，加表就得同步这个数）
+    expect(columns).toHaveLength(34);
     for (const c of columns) expect(c.sqlType).toBe("timestamp");
 
     // createdAt / updatedAt 由 dbTimestampNow 声明，默认值必须在；
@@ -146,5 +146,8 @@ describe("时间列的物理 schema 没有变（db:push 不该产生 ALTER）", 
     // 个人上下文：两条都随行由库写，都要有默认值
     expect(getTableColumns(schema.personalContexts).createdAt.hasDefault).toBe(true);
     expect(getTableColumns(schema.personalContexts).updatedAt.hasDefault).toBe(true);
+    // 群聊：成员表的未读基线/入群时刻都由库写（有默认值，入群即起算）
+    expect(getTableColumns(schema.dmGroupMembers).lastReadAt.hasDefault).toBe(true);
+    expect(getTableColumns(schema.dmGroupMembers).joinedAt.hasDefault).toBe(true);
   });
 });

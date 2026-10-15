@@ -338,3 +338,25 @@ body.proj-cosmic .ac-btn-ghost {
 body.proj-cosmic #proj-comet {
   position: fixed; left: 0; top: 0; z-index: 9999; pointer-events: none;
 }
+
+/* —— 10. 消息页过渡 + 未读红点 —— */
+/* 点进消息页：整块自下而上浮入，与其他页面的分层入场同一节奏 */
+body.proj-cosmic .proj-page-enter {
+  animation: proj-rise .5s cubic-bezier(.22, .72, .28, 1) backwards;
+}
+/* 导航未读角标：出现与数字变化时弹一下（key=unread 重挂载触发） */
+@keyframes proj-badge-pop {
+  0%   { transform: scale(0); }
+  60%  { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+body.proj-cosmic .nav-unread-badge {
+  animation: proj-badge-pop .3s cubic-bezier(.22, .72, .28, 1) backwards;
+}
+/* 减弱动态偏好：这两处纯装饰动画直接关掉 */
+@media (prefers-reduced-motion: reduce) {
+  body.proj-cosmic .proj-page-enter,
+  body.proj-cosmic .nav-unread-badge {
+    animation: none;
+  }
+}
