@@ -2,10 +2,14 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { runAgentTurn } from "@/lib/agent/orchestrator";
+import { collectDraftOptions } from "@/lib/agent/draft-options";
 import { AppError, ForbiddenError } from "@/lib/errors";
 
+// scope 决定这轮对话挂在哪儿：project 走项目页（要 projectId），personal 走工作台（跨项目）。
+// 身份一律取自 session —— 请求体里没有、也不接受 actorId 之类的字段。
 const schema = z.object({
-  projectId: z.uuid(),
+  scope: z.enum(["project", "personal"]).default("project"),
+  projectId: z.uuid().optional(),
   userText: z.string().trim().min(1, "请输入内容"),
 });
 
@@ -18,13 +22,27 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
   }
 
+  const { scope, projectId, userText } = parsed.data;
+  if (scope === "project" && !projectId) {
+    return NextResponse.json({ error: "缺少项目 id" }, { status: 400 });
+  }
+
   try {
-    const result = await runAgentTurn({
-      actorId: session.user.id,
-      projectId: parsed.data.projectId,
-      userText: parsed.data.userText,
+    const result =
+      scope === "personal"
+        ? await runAgentTurn({ actorId: session.user.id, userText, scope: { kind: "personal" } })
+        : await runAgentTurn({ actorId: session.user.id, userText, projectId: projectId! });
+
+    // 个人 scope 的草案可能指向多个项目，下拉选项随响应一并给（见 lib/agent/draft-options.ts）
+    const options =
+      scope === "personal" ? await collectDraftOptions(session.user.id, result.drafts) : undefined;
+
+    return NextResponse.json({
+      text: result.text,
+      toolTrace: result.toolTrace,
+      drafts: result.drafts,
+      ...(options ? { options } : {}),
     });
-    return NextResponse.json({ text: result.text, toolTrace: result.toolTrace, drafts: result.drafts });
   } catch (e) {
     if (e instanceof ForbiddenError) return NextResponse.json({ error: "没有权限" }, { status: 403 });
     if (e instanceof AppError) return NextResponse.json({ error: e.message }, { status: 400 });

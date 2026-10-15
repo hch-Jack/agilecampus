@@ -8,7 +8,8 @@
 - **站内私信**：QQ 式消息栏——搜用户名找人开聊（用户名全站唯一，注册即锁定，保证精准命中一人），点对点收发消息与文件（单文件 ≤10MB），未读角标与已读标记，收发的每条消息永久留档
 - **项目看板**：里程碑 + 拖拽看板 + 任务增强（描述/完成情况/起止日/后置任务）+ 标签筛选与四维度分组（状态/指派人/优先级/里程碑，各分组下拖拽皆生效）
 - **跨项目总览**：`/projects` 聚合我所在全部团队的项目与任务进度
-- **AI 项目助手**：对话式拆解任务，两段式确认后落库（读工具 + 四写兵器草案）
+- **AI 项目助手**：对话式拆解任务，两段式确认后落库（读工具 + 四写兵器草案）；项目对话全员共享，且能看到成员「项目可见」的个人上下文
+- **AI 工作台助手 + 个人上下文**：`/dashboard` 页内一张助手卡，与项目助手**共用同一套 API 与编排**（只差 `scope`），跨项目问事、按人隔离（每人一条个人会话）；个人上下文可手填、也可让助手拟草案后确认，单人 ≤50 条、单条 ≤1000 字，每条可标「项目可见」（进项目助手，队友可见）或「仅自己」
 - **资源占用登记**：团队共享资源（服务器/算力等）的占用登记与时长汇总，纯登记无审批
 - **Personal API Token**：生成/撤销令牌，供外部程序以本人身份写入
 - **Agent 写入 API**：Claude Code 等携令牌直接添加任务、填写完成情况、登记资源占用
@@ -129,6 +130,22 @@ docker compose -f docker-compose.prod.yml up -d --build
 - `src/lib/time.ts` 是纯函数层（`tests/time.test.ts` 覆盖跨时区/夏令时/日界）。
   注意 `node:22-alpine` 官方镜像是 full-ICU；若产物退化成 small-ICU，时区换算会**静默**退化为 UTC。
 
+### 助手会话的两种 scope（`/api/chat`）
+
+`conversations` 一表两态，由 `CHECK` 钉住形状：`kind='project'` ⇒ `project_id` 非空且 `owner_id` 为空（全员共享）；
+`kind='personal'` ⇒ 反之（严格按人隔离）。`/api/chat` 与 `/api/chat/commit` 的 `scope` 缺省为 `project`（老客户端不受影响），
+`personal` 时请求体里的 `projectId` 会被**忽略**（两态互斥，不报错也不生效）—— 个人模式没有隐含项目，
+涉及项目的工具必须由模型在草案里显式给 `projectId`，
+**落库时逐条重校 `getProjectForUser`**（越权即 403，属预期而非 bug）。
+个人回合的响应会附 `options`（按草案里的 projectId 给成员/里程碑下拉，无权项目跳过），供草案卡渲染选择项。
+
+- **`actorId` 只来自 session**：两处路由的请求体里没有身份字段，草案里夹带 `userId` 在 lib 层被丢弃。
+- `uniqueIndex("conversations_owner_unique").on(ownerId)` 靠「PG 视多个 NULL 互异」同时实现
+  「项目会话不限条数 + 个人会话每人恰一条」，**别把它改成部分索引或加 `NOT NULL`**。
+- 个人上下文存在 `personal_contexts`；`visibility='shared'` 的条目会进**项目助手**的快照
+  （`shared` 是默认值：写之前请知道队友看得到，`private` 才只在本人快照里）。
+- 快照对上下文有字符预算与降级链（任务明细 → 里程碑明细 → 上下文），改 `snapshot.ts` 时别打乱这个顺序。
+
 ## 主要路由
 
 | 路由 | 说明 |
@@ -138,6 +155,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 | `/teams/[teamId]/projects` | 项目列表（admin 创建） |
 | `/teams/[teamId]/resources` | 资源占用登记 + 时长统计 |
 | `/teams/[teamId]/labels` | 团队标签管理（admin 增删改，成员只读） |
+| `/dashboard` | 工作台：分配给我的任务看板（按项目筛选/拖拽流转）+ AI 助手 + 我的个人上下文 |
 | `/projects` | 所有项目总览（跨团队聚合 + 任务统计） |
 | `/projects/[projectId]` | 项目详情：里程碑 + 看板 + 任务 + AI 助手 |
 | `/projects/[projectId]/timeline` | 项目时间线甘特 |
