@@ -38,7 +38,7 @@ export default async function AllProjectsPage() {
               <li key={p.id}>
                 <Link
                   href={`/projects/${p.id}`}
-                  className="ac-card ac-card-link group block p-4"
+                  className="ac-card ac-card-link group relative block p-4"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <span className="min-w-0 truncate font-display text-base font-semibold text-ink group-hover:text-primary">

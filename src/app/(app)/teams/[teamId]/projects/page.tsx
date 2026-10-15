@@ -29,7 +29,8 @@ export default async function ProjectsPage({
       <ul className="space-y-2">
         {projects.map((p) => (
           <li key={p.id}>
-            <Link href={`/projects/${p.id}`} className="ac-card ac-card-link group block p-4">
+            {/* relative 是给 CardSparkles 的定位祖先，别删（见 card-sparkles.tsx 的说明） */}
+            <Link href={`/projects/${p.id}`} className="ac-card ac-card-link group relative block p-4">
               <span className="font-medium text-primary group-hover:underline">{p.name}</span>
               <span className="ml-2 text-xs text-ink-soft">{p.status}</span>
               {(p.startDate || p.endDate) && (
