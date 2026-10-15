@@ -11,6 +11,12 @@ import {
   setPersonalContextVisibility,
 } from "@/lib/personal-context";
 import { AppError } from "@/lib/errors";
+import { setAiHistoryLimit } from "@/lib/agent/memory";
+import {
+  AI_HISTORY_LIMIT_DEFAULT,
+  AI_HISTORY_LIMIT_MAX,
+  AI_HISTORY_LIMIT_MIN,
+} from "@/lib/agent/history-limit";
 
 /**
  * 个人上下文的手填入口（工作台那两张卡）。
@@ -48,6 +54,35 @@ export async function addContextAction(
     if (e instanceof AppError) return { error: e.message };
     throw e;
   }
+  revalidatePath("/dashboard");
+  return { ok: true };
+}
+
+// 助手记忆条数：用户级偏好，存在 users.ai_history_limit。两个 scope 共用这一个数，
+// 故校验只做「是 0–50 的整数」，越界的钳制交给 lib（那里是唯一真相源）。
+const historyLimitSchema = z.object({
+  limit: z.coerce
+    .number("请输入数字")
+    .int("请输入整数")
+    .min(AI_HISTORY_LIMIT_MIN, `最少 ${AI_HISTORY_LIMIT_MIN} 条`)
+    .max(AI_HISTORY_LIMIT_MAX, `最多 ${AI_HISTORY_LIMIT_MAX} 条`),
+});
+
+export async function setHistoryLimitAction(
+  _prev: ContextState,
+  formData: FormData,
+): Promise<ContextState> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+
+  // 空输入回落到默认值而不是报错：清空输入框再点保存，意图是「恢复默认」
+  const raw = (formData.get("limit") ?? "").toString().trim();
+  const parsed = historyLimitSchema.safeParse({
+    limit: raw === "" ? AI_HISTORY_LIMIT_DEFAULT : raw,
+  });
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  await setAiHistoryLimit(session.user.id, parsed.data.limit);
   revalidatePath("/dashboard");
   return { ok: true };
 }

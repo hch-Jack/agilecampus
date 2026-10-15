@@ -10,6 +10,7 @@ import {
   listConversationMessages,
   listPersonalChatHistory,
   listProjectChatHistory,
+  recentMessagesForModel,
 } from "@/lib/agent/conversation";
 import { resetDb } from "./helpers";
 
@@ -123,5 +124,85 @@ describe("个人会话（控制台助手）", () => {
   it("项目历史非成员被拒", async () => {
     const { outsider, project } = await scene();
     await expect(listProjectChatHistory(outsider.id, project.id)).rejects.toThrow("没有权限");
+  });
+});
+
+// 喂给模型的「上文」：这组用例盯的是「取最近几条」与「顺序」两件事 —— 一处取反了方向，
+// 助手就会拿着最早的几句聊当下，而顺序错了会把问答颠倒过来。
+describe("recentMessagesForModel", () => {
+  beforeEach(resetDb);
+
+  it("没聊过 → 空", async () => {
+    const { student } = await scene();
+    const conv = await getOrCreatePersonalConversation(student.id);
+    expect(await recentMessagesForModel(conv.id, 10)).toEqual([]);
+  });
+
+  it("limit=0 → 空，连查都不查", async () => {
+    const { student } = await scene();
+    const conv = await getOrCreatePersonalConversation(student.id);
+    await persistTurn(conv.id, "一问", "一答", []);
+    expect(await recentMessagesForModel(conv.id, 0)).toEqual([]);
+  });
+
+  it("取的是**最近**几条，且按时间正序（问在答前）", async () => {
+    const { student } = await scene();
+    const conv = await getOrCreatePersonalConversation(student.id);
+    await persistTurn(conv.id, "甲问", "甲答", []);
+    await persistTurn(conv.id, "乙问", "乙答", []);
+
+    expect(await recentMessagesForModel(conv.id, 2)).toEqual([
+      { role: "user", content: "乙问" },
+      { role: "assistant", content: "乙答" },
+    ]);
+    // 要的比有的多 → 全给，仍是正序
+    expect((await recentMessagesForModel(conv.id, 99)).map((m) => m.content)).toEqual([
+      "甲问",
+      "甲答",
+      "乙问",
+      "乙答",
+    ]);
+    // 奇数条：切在中间（最近 3 条 = 甲答/乙问/乙答），开头的答话被丢掉，剩一问一答
+    expect((await recentMessagesForModel(conv.id, 3)).map((m) => m.content)).toEqual([
+      "乙问",
+      "乙答",
+    ]);
+  });
+
+  it("开头若是「答」就丢掉（上下文不能以答话打头）", async () => {
+    const { student } = await scene();
+    const conv = await getOrCreatePersonalConversation(student.id);
+    await persistTurn(conv.id, "一问", "一答", []);
+    // 最近一条恰好是答话 → 没有可用的上文
+    expect(await recentMessagesForModel(conv.id, 1)).toEqual([]);
+    expect(await recentMessagesForModel(conv.id, 2)).toEqual([
+      { role: "user", content: "一问" },
+      { role: "assistant", content: "一答" },
+    ]);
+  });
+
+  it("只取本会话：别人的个人会话、同一人的项目会话都不串进来", async () => {
+    const { student, outsider, project } = await scene();
+    const mine = await getOrCreatePersonalConversation(student.id);
+    await persistTurn(mine.id, "我的问题", "我的答复", []);
+
+    const theirs = await getOrCreatePersonalConversation(outsider.id);
+    await persistTurn(theirs.id, "别人的问题", "别人的答复", []);
+
+    const proj = await getOrCreateConversation(student.id, project.id);
+    await persistTurn(proj.id, "项目问题", "项目答复", []);
+
+    expect((await recentMessagesForModel(mine.id, 10)).map((m) => m.content)).toEqual([
+      "我的问题",
+      "我的答复",
+    ]);
+  });
+
+  it("同一条 INSERT 落的问与答（created_at 逐字相等）也不会颠倒", async () => {
+    const { student } = await scene();
+    const conv = await getOrCreatePersonalConversation(student.id);
+    await persistTurn(conv.id, "同一刻的问", "同一刻的答", []);
+    const rows = await recentMessagesForModel(conv.id, 2);
+    expect(rows.map((m) => m.role)).toEqual(["user", "assistant"]);
   });
 });

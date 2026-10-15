@@ -10,6 +10,7 @@ import {
   listPersonalChatHistory,
   listProjectChatHistory,
 } from "@/lib/agent/conversation";
+import { setAiHistoryLimit } from "@/lib/agent/memory";
 import { runAgentTurn } from "@/lib/agent/orchestrator";
 import { resetDb } from "./helpers";
 
@@ -218,5 +219,125 @@ describe("runAgentTurn（个人 scope：控制台助手）", () => {
     // 越权查询在轨迹里留不下任何数据，模型拿到的也只是一句错误（编排本身照常收尾）。
     expect(trace[0].output).toBeUndefined();
     expect(result.text).toBe("查不到这个项目。");
+  });
+});
+
+// 从捕获到的 prompt 里剥掉 system 段，只留对话消息 —— 用来断言「模型到底看到了哪些上文」。
+// 系统提示（军规 + 快照）另有用例盯着，这里只管 messages 那一串。
+function chatMessages(prompt: unknown) {
+  type Part = { type?: string; text?: string };
+  return (prompt as { role: string; content: unknown }[])
+    .filter((m) => m.role !== "system")
+    .map((m) => ({
+      role: m.role,
+      // AI SDK 交给 provider 时，每条消息的内容都是「部件数组」，纯文本就是单个 text 部件
+      content: Array.isArray(m.content)
+        ? (m.content as Part[])
+            .map((p) => (p.type === "text" ? (p.text ?? "") : `[${p.type}]`))
+            .join("")
+        : String(m.content),
+    }));
+}
+
+describe("runAgentTurn（续接上文）", () => {
+  beforeEach(resetDb);
+
+  it("第二轮带上前一轮的问与答，助手接得上话", async () => {
+    const { student } = await scene();
+    await runAgentTurn({
+      actorId: student.id,
+      userText: "第一问",
+      scope: { kind: "personal" },
+      model: capturingReplay([textStep("第一答")]).model,
+    });
+
+    const { model, prompts } = capturingReplay([textStep("第二答")]);
+    await runAgentTurn({
+      actorId: student.id,
+      userText: "第二问",
+      scope: { kind: "personal" },
+      model,
+    });
+
+    expect(chatMessages(prompts[0])).toEqual([
+      { role: "user", content: "第一问" },
+      { role: "assistant", content: "第一答" },
+      { role: "user", content: "第二问" },
+    ]);
+  });
+
+  it("只带最近 N 条：第三轮在 limit=2 时看不到第一轮", async () => {
+    const { student } = await scene();
+    for (const [ask, reply] of [
+      ["第一问", "第一答"],
+      ["第二问", "第二答"],
+    ]) {
+      await runAgentTurn({
+        actorId: student.id,
+        userText: ask,
+        scope: { kind: "personal" },
+        model: capturingReplay([textStep(reply)]).model,
+      });
+    }
+
+    await setAiHistoryLimit(student.id, 2);
+    const { model, prompts } = capturingReplay([textStep("第三答")]);
+    await runAgentTurn({
+      actorId: student.id,
+      userText: "第三问",
+      scope: { kind: "personal" },
+      model,
+    });
+
+    expect(chatMessages(prompts[0])).toEqual([
+      { role: "user", content: "第二问" },
+      { role: "assistant", content: "第二答" },
+      { role: "user", content: "第三问" },
+    ]);
+  });
+
+  it("条数设成 0 → 只带本轮，助手回到从前的「失忆」状态", async () => {
+    const { student } = await scene();
+    await runAgentTurn({
+      actorId: student.id,
+      userText: "第一问",
+      scope: { kind: "personal" },
+      model: capturingReplay([textStep("第一答")]).model,
+    });
+
+    await setAiHistoryLimit(student.id, 0);
+    const { model, prompts } = capturingReplay([textStep("第二答")]);
+    await runAgentTurn({
+      actorId: student.id,
+      userText: "第二问",
+      scope: { kind: "personal" },
+      model,
+    });
+
+    expect(chatMessages(prompts[0])).toEqual([{ role: "user", content: "第二问" }]);
+  });
+
+  it("项目 scope 读的是同一条偏好：项目会话也会带上文", async () => {
+    const { student, project } = await scene();
+    await runAgentTurn({
+      actorId: student.id,
+      projectId: project.id,
+      userText: "项目第一问",
+      model: capturingReplay([textStep("项目第一答")]).model,
+    });
+
+    const { model, prompts } = capturingReplay([textStep("项目第二答")]);
+    await runAgentTurn({
+      actorId: student.id,
+      projectId: project.id,
+      userText: "项目第二问",
+      model,
+    });
+
+    expect(chatMessages(prompts[0])).toEqual([
+      { role: "user", content: "项目第一问" },
+      { role: "assistant", content: "项目第一答" },
+      { role: "user", content: "项目第二问" },
+    ]);
   });
 });

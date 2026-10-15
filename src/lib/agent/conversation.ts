@@ -1,4 +1,4 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { conversations, messages } from "@/db/schema";
 import { getProjectForUser } from "@/lib/project";
@@ -114,6 +114,47 @@ async function assertCanReadConversation(
 }
 
 export type ChatHistoryMessage = { role: "user" | "assistant"; content: string };
+
+/**
+ * 喂给模型的「上文」：本会话最近的 `limit` 条聊天记录，按时间正序。
+ * **不含本轮**——本轮的用户消息此刻还没落库（落库在模型答完之后，见 `persistTurn`）。
+ *
+ * 三处讲究：
+ * 1. 要的是**最近** limit 条，故先倒序取再反转；正序取 limit 条那是「最早的头几条」。
+ * 2. 同一轮的问与答是**同一条 INSERT** 落的，`now()` 在一条语句里取值相同，`created_at`
+ *    逐字相等。故必须补一个排序列（答在下、问在上），否则谁先谁后全看 PG 心情。
+ * 3. 反转后开头若是「答」，一律丢掉：一段以答话打头的上下文没有意义，
+ *    而且有些模型不接受以 assistant 打头的 messages。
+ *
+ * 长度上限由调用方按用户偏好给（见 agent/memory.ts），这里不再二次截断。
+ */
+export async function recentMessagesForModel(
+  conversationId: string,
+  limit: number,
+): Promise<ChatHistoryMessage[]> {
+  if (limit <= 0) return [];
+
+  const rows = await db
+    .select({ role: messages.role, content: messages.content })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.conversationId, conversationId),
+        inArray(messages.role, ["user", "assistant"]),
+      ),
+    )
+    .orderBy(
+      desc(messages.createdAt),
+      desc(sql`case when ${messages.role} = 'assistant' then 1 else 0 end`),
+    )
+    .limit(limit);
+
+  const ordered: ChatHistoryMessage[] = rows
+    .reverse()
+    .map((r) => ({ role: r.role as "user" | "assistant", content: r.content }));
+  while (ordered.length > 0 && ordered[0].role === "assistant") ordered.shift();
+  return ordered;
+}
 
 async function historyOf(conversationId: string): Promise<ChatHistoryMessage[]> {
   const rows = await db

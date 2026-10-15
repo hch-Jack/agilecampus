@@ -133,10 +133,11 @@ runAgentTurn({ actorId, userText, model?, projectId } | { actorId, userText, mod
 - `draft-cards.tsx` 迁到 `src/components/`：选项改由 `options` map + `defaultProjectId` 决定，
   新增 `save_personal_context` 卡片（逐条文本框 + 可见性下拉 + 删除行）。
 - 工作台（`/dashboard`）自上而下：统计瓦片 → **任务看板** → `<AgentChat scope="personal" title="AI 助手">` → 最新记录。
-  个人上下文不单占一张卡，而是**收在助手卡右上角的「设置」按钮里**
+  助手记忆与个人上下文都不单占卡片，而是**收在助手卡右上角的「设置」按钮里**
   （`AgentChat` 的可选 `settings` 属性：给了才长按钮，点了在卡片内展开一块可滚动面板；项目页不传，行为不变）。
-  面板内容即 `PersonalContextCard`（条目列表 + 可见性徽章可点即切 + 新增表单，Server Action 在 `dashboard/actions.ts`），
-  组件本身不再自带卡片边框 —— 外层面板给背景与边框，它只排内容。
+  面板自上而下两块：`AgentHistorySetting`（助手记忆条数）、`PersonalContextCard`
+  （条目列表 + 可见性徽章可点即切 + 新增表单，Server Action 在 `dashboard/actions.ts`），
+  两块都不再自带卡片边框 —— 外层面板给背景与边框，它们只排内容。
 - 样式沿用 `.ac-card` / `.ac-field` / `.ac-btn` / `.ac-badge`，与项目助手那张卡一致。
   可见性必须在界面上说清楚：**「项目可见」意味着队友能通过项目助手看到它**（这是用户确认过的设计，
   但不能让人不知情）。
@@ -161,3 +162,39 @@ runAgentTurn({ actorId, userText, model?, projectId } | { actorId, userText, mod
 - 条数/长度上限只在应用层，DB 无 CHECK 兜底。
 - 个人模式的 `projectId` 由模型自填，落库重校兜底；模型拟到用户无权项目表现为 403，属预期。
 - 个人会话每人一条、无会话列表；工作台是单线程跨项目混排。
+
+## 十、续接上文（2026-10-16 追加）
+
+前九节做的助手是**每轮失忆**的：`messages` 只放本轮那句话，助手对上一轮的唯一印象来自快照。
+用户要「能看到先前所发的消息、可以连续之前的对话」，并要一个「AI 能看到多少条上文」的旋钮。
+
+### 旋钮放在哪：用户级，而不是会话级
+
+`users.ai_history_limit`（int，NOT NULL DEFAULT 10，0–50）。理由：
+
+- **个人会话是懒建的**（首轮发言才建，见 `getOrCreatePersonalConversation`）。存在会话行上的话，
+  用户在设置面板里改个数就得先把会话建出来 —— 一个只读页面被迫写库。
+- **项目会话是共享的**。把记忆条数存进共享会话，等于「谁最后改谁说了算」，更难解释。
+- 用户级就是一句话：「我允许助手看多少条历史」。两个 scope 读同一个数，工作台与项目页行为一致。
+
+常量与钳制落在新增的纯模块 `src/lib/agent/history-limit.ts`，读写落在 `src/lib/agent/memory.ts`。
+这一拆是照 `lib/time.ts`（纯）对 `lib/time-pref.ts`（读库）的先例：**客户端组件要引它显示上下限**，
+而 `memory.ts` 引了 `@/db`，被客户端组件引入就会把 postgres 驱动拖进浏览器包。
+
+### 取哪几条：三个坑
+
+1. **要最近的不是最早的**：先 `order by created_at desc` 取 limit 条再反转。写成正序取 limit 条，
+   拿到的是这段对话的开头 —— 助手会拿几天前的开场白回答当下的问题。
+2. **同一轮的两句时间戳逐字相等**：问与答走同一条 `INSERT`，`now()` 在一条语句里取值相同，
+   于是 `created_at` 一模一样。只按它排，谁先谁后全看 PG 心情（同一轮里出现「答在问前」）。
+   故排序列补了 `case when role='assistant' then 1 else 0 end`：**答在下、问在上**。
+3. **开头若是「答」就丢掉**：反转后可能以答话打头（用户把条数切成奇数时尤甚），
+   既没有意义，也有些模型不接受以 assistant 打头的 messages。
+
+### 与既有部分的关系
+
+- 落库路径不变：`persistTurn` 仍是唯一的写入点，**本轮的用户消息在模型答完之后才落库**，
+  所以取上文时天然不会把本轮那句重复带上 —— 拼在最前面即可。
+- 系统提示新增一段 `HISTORY_NOTE`（两个 scope 共用），大意是「上文可用来理解指代与省略，
+  但涉及数据的结论仍以工具返回与快照为准」——防「凭记忆断现状」。
+- 单条消息**不截断**：条数上限就是唯一的闸。贴长文进输入框会原样进提示词，记 BACKLOG。

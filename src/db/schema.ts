@@ -101,6 +101,10 @@ export const users = pgTable(
     // 这里写字面量而非常量：schema 由 drizzle-kit 独立加载，不引应用侧的模块。
     // 两份值必须一致，有 tests/time.test.ts 盯着。
     timezone: text("timezone").notNull().default("Asia/Shanghai"),
+    // 助手「记得多少上文」：每轮把会话里最近 N 条聊天记录一并喂给模型（0 = 完全不看历史）。
+    // 一个数供两个 scope 共用 —— 工作台助手与项目页助手读的是同一条偏好。
+    // 默认 10（约五轮问答）；上下限与钳制在 lib/agent/memory.ts 收口，别在别处写死数字。
+    aiHistoryLimit: integer("ai_history_limit").notNull().default(10),
     // 头像：PNG/JPEG/WebP 直存库内（与私信附件同构），经 /api/avatars/[userId] 流出。
     // avatarUpdatedAt 兼作缓存破坏版本号（URL 带 ?v=），换头像即覆盖旧图。
     avatarData: bytea("avatar_data"),
