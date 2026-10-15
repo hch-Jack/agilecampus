@@ -1,22 +1,20 @@
 import { notFound, redirect } from "next/navigation";
 import { z } from "zod";
-import { eq, desc } from "drizzle-orm";
 import { auth } from "@/lib/auth";
-import { db } from "@/db";
-import { conversations, messages as messagesTable } from "@/db/schema";
 import { getProjectForUser, listProjectMilestones } from "@/lib/project";
 import { listTeamMembers } from "@/lib/team";
 import { listProjectTasks } from "@/lib/task";
 import { getFeedUnreadCount, listProjectActivities, projectFeedScope } from "@/lib/activity";
 import { listTeamLabels } from "@/lib/label";
+import { listProjectChatHistory } from "@/lib/agent/conversation";
 import { parseFilters, applyFilters } from "@/lib/board-filters";
 import { todayIn } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
 import { ActivityFeed } from "@/components/activity-feed";
+import { AgentChat } from "@/components/agent-chat";
 import { MilestoneSection } from "./milestone-section";
 import { NewTaskForm } from "./new-task-form";
 import { Board } from "./board";
-import { ChatPanel } from "./chat-panel";
 import { FilterBar } from "./filter-bar";
 
 export default async function ProjectPage({
@@ -63,24 +61,8 @@ export default async function ProjectPage({
   const canWrite = role === "admin" || role === "student";
   const isAdmin = role === "admin";
 
-  const [latestConv] = await db
-    .select({ id: conversations.id })
-    .from(conversations)
-    .where(eq(conversations.projectId, projectId))
-    .orderBy(desc(conversations.createdAt))
-    .limit(1);
-
-  const history = latestConv
-    ? await db
-        .select({ role: messagesTable.role, content: messagesTable.content })
-        .from(messagesTable)
-        .where(eq(messagesTable.conversationId, latestConv.id))
-        .orderBy(messagesTable.createdAt)
-    : [];
-
-  const initialMessages = history
-    .filter((m) => m.role === "user" || m.role === "assistant")
-    .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+  // 助手历史：一律走 lib（口径与隔离都在那边收口），别在本页手搓查询
+  const initialMessages = await listProjectChatHistory(session.user.id, projectId);
 
   return (
     <main className="mx-auto max-w-5xl space-y-8 py-8">
@@ -140,11 +122,16 @@ export default async function ProjectPage({
         />
       </section>
 
-      <ChatPanel
+      <AgentChat
+        scope="project"
         projectId={projectId}
         initialMessages={initialMessages}
-        members={members}
-        milestones={projectMilestones.map((m) => ({ id: m.id, name: m.title }))}
+        defaultOptions={{
+          [projectId]: {
+            members: members.map((m) => ({ id: m.id, name: m.name })),
+            milestones: projectMilestones.map((m) => ({ id: m.id, name: m.title })),
+          },
+        }}
       />
 
       {canWrite && (

@@ -10,6 +10,7 @@ import {
   index,
   integer,
   jsonb,
+  check,
   customType,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
@@ -100,6 +101,10 @@ export const users = pgTable(
     // 这里写字面量而非常量：schema 由 drizzle-kit 独立加载，不引应用侧的模块。
     // 两份值必须一致，有 tests/time.test.ts 盯着。
     timezone: text("timezone").notNull().default("Asia/Shanghai"),
+    // 助手「记得多少上文」：每轮把会话里最近 N 条聊天记录一并喂给模型（0 = 完全不看历史）。
+    // 一个数供两个 scope 共用 —— 工作台助手与项目页助手读的是同一条偏好。
+    // 默认 10（约五轮问答）；上下限与钳制在 lib/agent/memory.ts 收口，别在别处写死数字。
+    aiHistoryLimit: integer("ai_history_limit").notNull().default(10),
     // 头像：PNG/JPEG/WebP 直存库内（与私信附件同构），经 /api/avatars/[userId] 流出。
     // avatarUpdatedAt 兼作缓存破坏版本号（URL 带 ?v=），换头像即覆盖旧图。
     avatarData: bytea("avatar_data"),
@@ -275,20 +280,37 @@ export const tasks = pgTable(
 export const messageRoleEnum = pgEnum("message_role", ["user", "assistant", "tool"]);
 export type MessageRole = (typeof messageRoleEnum.enumValues)[number];
 
+// 会话两种形态，同表承载 —— messages 只认 conversationId，分表就得把这条外键劈成两半。
+// project：项目助手（项目页），**全员共享**，projectId 必填、ownerId 为空。
+// personal：控制台助手（工作台），**严格按 ownerId 隔离**，projectId 为空。
+// 两者由下面的 CHECK 与唯一索引共同围住，库层面就不可能出现「既是项目又是个人」的脏行。
+export const conversationKindEnum = pgEnum("conversation_kind", ["project", "personal"]);
+export type ConversationKind = (typeof conversationKindEnum.enumValues)[number];
+
 export const conversations = pgTable(
   "conversations",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    projectId: uuid("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
+    kind: conversationKindEnum("kind").notNull().default("project"),
+    projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    ownerId: uuid("owner_id").references(() => users.id, { onDelete: "cascade" }),
     createdById: uuid("created_by_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     title: text("title"),
     createdAt: dbTimestampNow("created_at").notNull(),
   },
-  (t) => [index("conversations_project_idx").on(t.projectId)],
+  (t) => [
+    index("conversations_project_idx").on(t.projectId),
+    // ownerId 为 NULL 的行（项目会话）互不相犯：PG 的唯一索引视多个 NULL 为彼此不同，
+    // 于是「项目会话不限条数、个人会话每人恰一条」这一个索引就全包了。
+    uniqueIndex("conversations_owner_unique").on(t.ownerId),
+    check(
+      "conversations_scope_chk",
+      sql`(${t.kind} = 'project' AND ${t.projectId} IS NOT NULL AND ${t.ownerId} IS NULL)
+        OR (${t.kind} = 'personal' AND ${t.projectId} IS NULL AND ${t.ownerId} IS NOT NULL)`,
+    ),
+  ],
 );
 
 export const messages = pgTable(
@@ -304,6 +326,38 @@ export const messages = pgTable(
     createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [index("messages_conversation_idx").on(t.conversationId)],
+);
+
+// ------------------------------------------------------- 个人上下文
+
+// 个人上下文：每人自记的一组背景（研究方向、当下在忙什么、协作偏好…），喂给 AI 助手。
+// shared（默认）会进**项目助手**的系统提示 —— 本项目团队所有人都能通过助手看到它；
+// private 只进本人的控制台助手。默认 shared 是刻意的：团队助手要「知道每个人在做什么」，
+// 逐条可退回 private 是把该由用户决定的那部分留给他自己。
+export const personalContextVisibilityEnum = pgEnum("personal_context_visibility", [
+  "shared",
+  "private",
+]);
+export type PersonalContextVisibility = (typeof personalContextVisibilityEnum.enumValues)[number];
+
+// manual = 用户自己在界面上填的；agent = 助手拟草案、用户点确认后落的（界面据此标来路）
+export const personalContextSourceEnum = pgEnum("personal_context_source", ["manual", "agent"]);
+export type PersonalContextSource = (typeof personalContextSourceEnum.enumValues)[number];
+
+export const personalContexts = pgTable(
+  "personal_contexts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    visibility: personalContextVisibilityEnum("visibility").notNull().default("shared"),
+    source: personalContextSourceEnum("source").notNull().default("manual"),
+    createdAt: dbTimestampNow("created_at").notNull(),
+    updatedAt: dbTimestampNow("updated_at").notNull(),
+  },
+  (t) => [index("personal_contexts_user_idx").on(t.userId, t.visibility)],
 );
 
 export const taskDependencies = pgTable(

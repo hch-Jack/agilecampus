@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
-import { commitDraft } from "@/lib/agent/commit";
-import { WRITE_TOOL_NAMES } from "@/lib/agent/tools";
+import { commitDraft, commitPersonalDraft } from "@/lib/agent/commit";
+import { COMMIT_TOOL_NAMES, WRITE_TOOL_NAMES } from "@/lib/agent/tools";
 import { AppError, ForbiddenError } from "@/lib/errors";
 
+// scope 与 /api/chat 对齐：project 落库要 projectId（身份仍取自 session），
+// personal 的 projectId 由模型填在草案里、由 commitPersonalDraft 拆出来重校。
 const schema = z.object({
-  projectId: z.uuid(),
-  tool: z.enum(WRITE_TOOL_NAMES),
+  scope: z.enum(["project", "personal"]).default("project"),
+  projectId: z.uuid().optional(),
+  tool: z.enum(COMMIT_TOOL_NAMES),
   draft: z.unknown(),
 });
 
@@ -20,13 +23,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
   }
 
+  const { scope, projectId, tool, draft } = parsed.data;
+  if (scope === "project" && (!projectId || !WRITE_TOOL_NAMES.includes(tool as never))) {
+    // 项目页只有五个写工具，个人上下文不经项目页落库
+    return NextResponse.json({ error: "草案格式无效" }, { status: 400 });
+  }
+
   try {
-    const result = await commitDraft(
-      session.user.id,
-      parsed.data.projectId,
-      parsed.data.tool,
-      parsed.data.draft,
-    );
+    const result =
+      scope === "personal"
+        ? await commitPersonalDraft(session.user.id, tool, draft)
+        : await commitDraft(session.user.id, projectId!, tool as (typeof WRITE_TOOL_NAMES)[number], draft);
     return NextResponse.json(result);
   } catch (e) {
     if (e instanceof ForbiddenError) return NextResponse.json({ error: "没有权限" }, { status: 403 });

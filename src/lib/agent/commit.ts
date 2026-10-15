@@ -2,9 +2,15 @@ import { z } from "zod";
 import { db } from "@/db";
 import { createMilestone, createProject, getProjectForUser } from "@/lib/project";
 import { createTask, listProjectTasks, updateTask } from "@/lib/task";
+import { createPersonalContext } from "@/lib/personal-context";
 import { notifyTaskAssigned, notifyTaskCompleted } from "@/lib/notify";
 import { ForbiddenError } from "@/lib/errors";
-import type { WriteToolName } from "./tools";
+import {
+  personalContextDraftSchema,
+  SAVE_CONTEXT_TOOL,
+  type CommitToolName,
+  type WriteToolName,
+} from "./tools";
 
 const taskDraftSchema = z.object({
   title: z.string().min(1),
@@ -121,4 +127,58 @@ export async function commitDraft(
       return { committed: 1, conflicts: [] };
     }
   }
+}
+
+// 个人上下文：与手填表单同一个口子（lib/personal-context.ts），只是来源记为 agent 而非 manual
+export async function commitPersonalContext(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = personalContextDraftSchema.parse(draft);
+  const committed = await createPersonalContext(
+    actorId,
+    d.entries.map((e) => ({ content: e.content, visibility: e.visibility, source: "agent" })),
+  );
+  return { committed, conflicts: [] };
+}
+
+const personalCreateProjectSchema = z.object({
+  teamId: z.uuid(),
+  name: z.string().min(1),
+  description: z.string().optional(),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+});
+
+/**
+ * 控制台助手（个人 scope）的落库口。
+ *
+ * 与 `commitDraft` 的分工：**没有「当前项目」**，所以 projectId（或 teamId）由模型填在草案里，
+ * 这里负责把它拆出来、逐类重解 zod，然后把剩下的部分交给同一批实现 —— 复用而非重写，
+ * 于是「重校权限 + 复算乐观锁 + 事务整批回滚」这些既有约定一个都不少：
+ *
+ * - 改项目的四类：拆出 `projectId` 后直落 `commitDraft`，它自己会 `getProjectForUser` 重校；
+ *   模型拟到用户无权限的项目 → `ForbiddenError`（403），这是预期行为。
+ * - `create_project`：teamId 交给 `createProject`，内部 `requireTeamRole(admin)` 兜底。
+ * - `save_personal_context`：userId 恒取发话人（不可能替别人记一笔）。
+ */
+export async function commitPersonalDraft(
+  actorId: string,
+  tool: CommitToolName,
+  draft: unknown,
+): Promise<CommitResult> {
+  if (tool === SAVE_CONTEXT_TOOL) return commitPersonalContext(actorId, draft);
+
+  if (tool === "create_project") {
+    const { teamId, ...rest } = personalCreateProjectSchema.parse(draft);
+    await createProject(actorId, teamId, rest);
+    return { committed: 1, conflicts: [] };
+  }
+
+  // 余下四类：草案里带着 projectId（工具 schema 要求），此处拆出来交给项目版实现
+  const { projectId, ...rest } = z
+    .object({ projectId: z.uuid() })
+    .passthrough()
+    .parse(draft) as { projectId: string } & Record<string, unknown>;
+  return commitDraft(actorId, projectId, tool as WriteToolName, rest);
 }

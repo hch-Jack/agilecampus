@@ -3,9 +3,15 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { listMySubtaskProgress, listMyTasks } from "@/lib/task";
 import { getFeedUnreadCount, listMyTaskActivities, WORKBENCH_SCOPE } from "@/lib/activity";
+import { listPersonalChatHistory } from "@/lib/agent/conversation";
+import { getAiHistoryLimit } from "@/lib/agent/memory";
+import { listMyPersonalContext } from "@/lib/personal-context";
 import { addDays, todayIn, weekdayOfDate } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
 import { ActivityFeed } from "@/components/activity-feed";
+import { AgentChat } from "@/components/agent-chat";
+import { AgentHistorySetting } from "@/components/agent-history-setting";
+import { PersonalContextCard } from "@/components/personal-context-card";
 import {
   dashboardHref,
   pickProjectFilter,
@@ -41,10 +47,14 @@ export default async function DashboardPage({
   const session = await auth();
   if (!session?.user) redirect("/login");
 
-  const [myTasks, feed, feedUnread] = await Promise.all([
+  const [myTasks, feed, feedUnread, chatHistory, contextItems, historyLimit] = await Promise.all([
     listMyTasks(session.user.id),
     listMyTaskActivities(session.user.id), // 全量口径，不受任何筛选影响
     getFeedUnreadCount(session.user.id, WORKBENCH_SCOPE),
+    // 助手历史与个人上下文都只读：控制台助手在没有会话时不建会话（首轮发言时自然建）
+    listPersonalChatHistory(session.user.id),
+    listMyPersonalContext(session.user.id),
+    getAiHistoryLimit(session.user.id), // 只读偏好，同样不建会话
   ]);
 
   // 「今天 / 本周截止」一律按**用户自己的时区**在服务端算成 YYYY-MM-DD，
@@ -146,6 +156,24 @@ export default async function DashboardPage({
       ) : (
         <WorkbenchBoard tasks={visible} today={today} doneCount={doneCount} hideDone={hideDone} />
       )}
+
+      {/* 控制台助手：与项目页那个打同一个 /api/chat，只是 scope 不同（跨项目 + 按人隔离）。
+          助手记忆 + 个人上下文都收在它右上角的「设置」里，不再单占卡片。 */}
+      <AgentChat
+        scope="personal"
+        title="AI 助手"
+        initialMessages={chatHistory}
+        settings={
+          <div className="space-y-4">
+            <AgentHistorySetting limit={historyLimit} />
+            <div className="border-t border-line pt-3">
+              <PersonalContextCard items={contextItems} />
+            </div>
+          </div>
+        }
+        emptyHint="问我手上任意项目的事，如「我这周有什么要交的」「把调研拆成任务」；也可以说「记住我周三下午有课」。"
+        placeholder="问点什么，或交代一句让我记住…"
+      />
 
       <ActivityFeed
         activities={feed}

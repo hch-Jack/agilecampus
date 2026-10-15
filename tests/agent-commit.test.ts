@@ -6,7 +6,8 @@ import { createUser } from "@/lib/user";
 import { createTeam, joinTeam, updateMemberRole } from "@/lib/team";
 import { createProject, createMilestone } from "@/lib/project";
 import { createTask, listProjectTasks, updateTask } from "@/lib/task";
-import { commitDraft } from "@/lib/agent/commit";
+import { commitDraft, commitPersonalDraft } from "@/lib/agent/commit";
+import { listMyPersonalContext } from "@/lib/personal-context";
 import { resetDb } from "./helpers";
 
 async function makeUser(email: string) {
@@ -134,5 +135,47 @@ describe("commitDraft 事务化", () => {
 
     const after = await listProjectTasks(owner.id, project.id);
     expect(after).toHaveLength(0); // 「合法一」不得残留
+  });
+});
+
+describe("commitPersonalDraft（控制台助手的落库口）", () => {
+  beforeEach(resetDb);
+
+  it("改任务草案的读时版本对不上 → 报冲突且不落库", async () => {
+    const { student, project } = await scene();
+    const task = await createTask(student.id, project.id, { title: "甲" });
+    const r = await commitPersonalDraft(student.id, "update_tasks", {
+      projectId: project.id,
+      updates: [
+        { taskId: task.id, updatedAt: new Date(0).toISOString(), patch: { status: "done" } },
+      ],
+    });
+    expect(r).toEqual({ committed: 0, conflicts: [task.id] });
+    const [after] = await listProjectTasks(student.id, project.id);
+    expect(after.status).toBe("todo");
+  });
+
+  it("save_personal_context 记成 agent 来源，空条目被拒", async () => {
+    const { student } = await scene();
+    const r = await commitPersonalDraft(student.id, "save_personal_context", {
+      entries: [{ content: "我在准备中期答辩" }],
+    });
+    expect(r).toEqual({ committed: 1, conflicts: [] });
+    expect((await listMyPersonalContext(student.id))[0]).toMatchObject({
+      content: "我在准备中期答辩",
+      source: "agent",
+      visibility: "shared",
+    });
+
+    await expect(
+      commitPersonalDraft(student.id, "save_personal_context", { entries: [] }),
+    ).rejects.toThrow("没有要保存的上下文");
+  });
+
+  it("改项目类的草案缺 projectId → 报草案格式无效", async () => {
+    const { student } = await scene();
+    await expect(
+      commitPersonalDraft(student.id, "create_milestone", { title: "中期答辩" }),
+    ).rejects.toThrow();
   });
 });
