@@ -146,17 +146,6 @@ export default async function DashboardPage({
         ))}
       </section>
 
-      {/* 控制台助手：与项目页那个打同一个 /api/chat，只是 scope 不同（跨项目 + 按人隔离） */}
-      <AgentChat
-        scope="personal"
-        title="AI 助手"
-        initialMessages={chatHistory}
-        emptyHint="问我手上任意项目的事，如「我这周有什么要交的」「把调研拆成任务」；也可以说「记住我周三下午有课」。"
-        placeholder="问点什么，或交代一句让我记住…"
-      />
-
-      <PersonalContextCard items={contextItems} />
-
       {myTasks.length === 0 ? (
         <div className="ac-card p-8 text-center text-sm text-ink-soft">
           暂无分配给你的任务——去项目看板看看。
@@ -164,6 +153,17 @@ export default async function DashboardPage({
       ) : (
         <WorkbenchBoard tasks={visible} today={today} doneCount={doneCount} hideDone={hideDone} />
       )}
+
+      {/* 控制台助手：与项目页那个打同一个 /api/chat，只是 scope 不同（跨项目 + 按人隔离）。
+          个人上下文收在它右上角的「设置」里，不再单占一张卡。 */}
+      <AgentChat
+        scope="personal"
+        title="AI 助手"
+        initialMessages={chatHistory}
+        settings={<PersonalContextCard items={contextItems} />}
+        emptyHint="问我手上任意项目的事，如「我这周有什么要交的」「把调研拆成任务」；也可以说「记住我周三下午有课」。"
+        placeholder="问点什么，或交代一句让我记住…"
+      />
 
       <ActivityFeed
         activities={feed}

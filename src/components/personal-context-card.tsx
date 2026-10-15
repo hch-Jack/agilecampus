@@ -9,7 +9,8 @@ import {
 } from "@/app/(app)/dashboard/actions";
 
 /**
- * 我的个人上下文：一张列表 + 一行新增。
+ * 我的个人上下文：一张列表 + 一行新增。**嵌在助手卡片的「设置」面板里**渲染
+ * （见 `agent-chat.tsx` 的 `settings`），故自带背景与边框由外层给，这里只排内容。
  *
  * 「项目可见」是默认值，因为它意味着**队友可以通过项目助手看到这条**——界面必须说清楚，
  * 否则就是拿别人的信息去换助手的聪明。故每条都挂着可见性徽章（点一下即切换），
@@ -30,18 +31,18 @@ export function PersonalContextCard({ items }: { items: ContextRow[] }) {
   const error = state && "error" in state ? state.error : null;
 
   return (
-    <section className="ac-card space-y-3 p-4">
-      <div className="flex items-baseline justify-between gap-2">
-        <h2 className="font-medium text-ink">我的个人上下文</h2>
-        <span className="text-xs text-ink-faint">
+    <section className="space-y-3">
+      <div>
+        <h3 className="text-sm font-medium text-ink">我的个人上下文</h3>
+        <p className="mt-0.5 text-xs text-ink-faint">
           助手据此了解你在做什么；「项目可见」的条目，队友问项目助手时也会看到
-        </span>
+        </p>
       </div>
 
       {items.length === 0 ? (
         <p className="text-sm text-ink-soft">
           还没记什么。写一条吧，比如「我在做遥感图像分割，每周三下午有课」——
-          也可以直接跟上面的助手说，让它拟好草案你来确认。
+          也可以直接跟下面的助手说，让它拟好草案你来确认。
         </p>
       ) : (
         <ul className="divide-y divide-line">

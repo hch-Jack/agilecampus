@@ -132,9 +132,11 @@ runAgentTurn({ actorId, userText, model?, projectId } | { actorId, userText, mod
   按 `scope` 组请求体；个人回合的 `options` 存在**消息**上（一轮可能横跨多个项目）。
 - `draft-cards.tsx` 迁到 `src/components/`：选项改由 `options` map + `defaultProjectId` 决定，
   新增 `save_personal_context` 卡片（逐条文本框 + 可见性下拉 + 删除行）。
-- 工作台（`/dashboard`）：统计瓦片与看板之间插 `<AgentChat scope="personal" title="AI 助手">`，
-  其后是 `<PersonalContextCard>`（列出条目 + 可见性徽章可点即切 + 新增表单，
-  Server Action 在 `dashboard/actions.ts`）。
+- 工作台（`/dashboard`）自上而下：统计瓦片 → **任务看板** → `<AgentChat scope="personal" title="AI 助手">` → 最新记录。
+  个人上下文不单占一张卡，而是**收在助手卡右上角的「设置」按钮里**
+  （`AgentChat` 的可选 `settings` 属性：给了才长按钮，点了在卡片内展开一块可滚动面板；项目页不传，行为不变）。
+  面板内容即 `PersonalContextCard`（条目列表 + 可见性徽章可点即切 + 新增表单，Server Action 在 `dashboard/actions.ts`），
+  组件本身不再自带卡片边框 —— 外层面板给背景与边框，它只排内容。
 - 样式沿用 `.ac-card` / `.ac-field` / `.ac-btn` / `.ac-badge`，与项目助手那张卡一致。
   可见性必须在界面上说清楚：**「项目可见」意味着队友能通过项目助手看到它**（这是用户确认过的设计，
   但不能让人不知情）。

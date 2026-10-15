@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { DraftCards, type ChatScope, type Draft, type OptionMap } from "@/components/draft-cards";
 
 /**
@@ -9,6 +9,9 @@ import { DraftCards, type ChatScope, type Draft, type OptionMap } from "@/compon
  * 两处打的是同一个 `/api/chat`，差别只在请求体：项目页带 projectId，工作台带 scope。
  * 个人回合的响应会额外带 `options`（草案可能指向多个项目），故按消息随行保存 ——
  * 楼上楼下两条消息的草案可以指向不同项目。
+ *
+ * `settings` 是可选的：给了就在标题栏右侧长出「设置」按钮，点开把这块内容收进卡片里
+ * （工作台拿它装「我的个人上下文」）。项目页不传，于是没有按钮、行为逐字不变。
  */
 
 export type ChatMessage = {
@@ -26,6 +29,7 @@ export function AgentChat({
   title = "项目助手",
   emptyHint = "向助手提问，如「当前进度如何？」或「把调研拆成任务」",
   placeholder = "问点什么…",
+  settings,
 }: {
   scope: ChatScope;
   /** 项目 scope 必填；个人 scope 的 projectId 由助手按草案自己填 */
@@ -36,11 +40,14 @@ export function AgentChat({
   title?: string;
   emptyHint?: string;
   placeholder?: string;
+  /** 有值才显示右上角「设置」按钮，点开即在此卡片内展开这块内容 */
+  settings?: ReactNode;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
 
   async function send() {
     const text = input.trim();
@@ -75,7 +82,32 @@ export function AgentChat({
 
   return (
     <section className="ac-card space-y-3 p-4">
-      <h2 className="font-medium text-ink">{title}</h2>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-medium text-ink">{title}</h2>
+        {settings && (
+          <button
+            type="button"
+            onClick={() => setShowSettings((v) => !v)}
+            aria-expanded={showSettings}
+            aria-controls="agent-chat-settings"
+            className={`ac-btn-ghost ${
+              showSettings ? "border-primary bg-primary-soft text-primary" : ""
+            }`}
+          >
+            {showSettings ? "收起设置" : "设置"}
+          </button>
+        )}
+      </div>
+
+      {settings && showSettings && (
+        <div
+          id="agent-chat-settings"
+          className="max-h-80 overflow-y-auto rounded-lg border border-line bg-sunken p-3"
+        >
+          {settings}
+        </div>
+      )}
+
       <div className="max-h-96 space-y-2 overflow-y-auto">
         {messages.map((m, i) => (
           <div key={i}>
