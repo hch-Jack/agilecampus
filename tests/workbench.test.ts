@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { createUser } from "@/lib/user";
 import { createTeam, joinTeam, updateMemberRole } from "@/lib/team";
 import { createProject, updateProject } from "@/lib/project";
@@ -422,6 +422,20 @@ describe("动态流未读", () => {
     expect(marker).toBeDefined();
     expect(await getFeedUnreadCount(student.id, WORKBENCH_SCOPE)).toBe(0);
   });
+
+  it("标记已读后同一毫秒内的旧动态不再计未读（比较不丢微秒精度）", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    const scope = projectFeedScope(project.id);
+    await markFeedRead(student.id, scope);
+
+    // 把已读时刻拨到该动态同一毫秒的末尾（微秒比动态更晚）：动态在标记之前，理当不计未读；
+    // 旧实现把 last_read_at 读到 JS 丢微秒后再比较，会把它漏计成 1（角标清不掉的偶发根因）
+    await db.execute(
+      sql`update feed_reads set last_read_at = (select date_trunc('milliseconds', created_at) + interval '999 microseconds' from task_activities where task_id = ${task.id}) where user_id = ${student.id} and scope = ${scope}`,
+    );
+    expect(await getFeedUnreadCount(student.id, scope)).toBe(0);
+  });
 });
 
 describe("clearFeed（清除记录只清自己视角）", () => {
@@ -474,6 +488,19 @@ describe("clearFeed（清除记录只清自己视角）", () => {
     await clearFeed(student.id, projectFeedScope(project.id));
     expect(await listProjectActivities(student.id, project.id)).toHaveLength(0);
     // 任务时间线不受项目流清除影响（仍是清空后的状态）
+    expect(await listTaskActivities(student.id, task.id)).toHaveLength(0);
+  });
+
+  it("清除时刻同一毫秒内的旧动态也被隐藏（比较不丢微秒精度）", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    await clearFeed(student.id, taskFeedScope(task.id));
+
+    // 把清除时刻拨到该动态同一毫秒的末尾（微秒比动态更晚）：动态在清除之前，理当隐藏；
+    // 旧实现把 cleared_at 读到 JS 丢微秒后再比较，会把它漏成可见（CI 偶发挂掉的根因）
+    await db.execute(
+      sql`update feed_reads set cleared_at = (select date_trunc('milliseconds', created_at) + interval '999 microseconds' from task_activities where task_id = ${task.id}) where user_id = ${student.id} and scope = ${taskFeedScope(task.id)}`,
+    );
     expect(await listTaskActivities(student.id, task.id)).toHaveLength(0);
   });
 

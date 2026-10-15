@@ -42,7 +42,7 @@ export async function listTaskActivities(actorId: string, taskId: string, limit 
   if (!task) throw new AppError("任务不存在");
   const access = await getProjectForUser(actorId, task.projectId);
   if (!access) throw new ForbiddenError();
-  const clearedAt = await feedClearedAt(actorId, taskFeedScope(taskId));
+  const clearedAfter = await feedClearedAfter(actorId, taskFeedScope(taskId));
 
   return db
     .select({
@@ -60,7 +60,7 @@ export async function listTaskActivities(actorId: string, taskId: string, limit 
       and(
         eq(taskActivities.taskId, taskId),
         // 「清除记录」后的旧动态对本人隐藏（见 clearFeed），他人查询不受影响
-        ...(clearedAt ? [gt(taskActivities.createdAt, clearedAt)] : []),
+        ...(clearedAfter ? [clearedAfter] : []),
       ),
     )
     .orderBy(desc(taskActivities.createdAt))
@@ -103,7 +103,7 @@ export async function listMyTaskActivities(
   actorId: string,
   limit = 20,
 ): Promise<TaskActivityRow[]> {
-  const clearedAt = await feedClearedAt(actorId, WORKBENCH_SCOPE);
+  const clearedAfter = await feedClearedAfter(actorId, WORKBENCH_SCOPE);
   return db
     .select(feedColumns)
     .from(taskActivities)
@@ -119,7 +119,7 @@ export async function listMyTaskActivities(
         eq(tasks.assigneeId, actorId),
         eq(projects.status, "active"),
         // 「清除记录」后的旧动态对本人隐藏（见 clearFeed），他人查询不受影响
-        ...(clearedAt ? [gt(taskActivities.createdAt, clearedAt)] : []),
+        ...(clearedAfter ? [clearedAfter] : []),
       ),
     )
     // 同一事务写入的多条动态时间戳相同，二级键保证顺序确定
@@ -137,7 +137,7 @@ export async function listProjectActivities(
 ): Promise<TaskActivityRow[]> {
   const access = await getProjectForUser(actorId, projectId);
   if (!access) throw new ForbiddenError();
-  const clearedAt = await feedClearedAt(actorId, projectFeedScope(projectId));
+  const clearedAfter = await feedClearedAfter(actorId, projectFeedScope(projectId));
 
   return db
     .select(feedColumns)
@@ -149,20 +149,26 @@ export async function listProjectActivities(
       and(
         eq(tasks.projectId, projectId),
         // 「清除记录」后的旧动态对本人隐藏（见 clearFeed），他人查询不受影响
-        ...(clearedAt ? [gt(taskActivities.createdAt, clearedAt)] : []),
+        ...(clearedAfter ? [clearedAfter] : []),
       ),
     )
     .orderBy(desc(taskActivities.createdAt), desc(taskActivities.id))
     .limit(limit);
 }
 
-// 某用户在某 scope 的「清除」时刻（无 = 未清除过）
-async function feedClearedAt(actorId: string, scope: string): Promise<Date | null> {
+// 某用户在某 scope 的「清除」时刻（无 = 未清除过），返回可直接拼进 WHERE 的比较条件。
+// 比较必须留在 SQL 里：时刻读到 JS（Date 只有毫秒精度）再当参数传回去会丢微秒，
+// 「清除前同一毫秒内」的动态会被漏成可见（CI 上偶发挂掉的 clearFeed 用例即此因）。
+async function feedClearedAfter(actorId: string, scope: string) {
   const [row] = await db
     .select({ clearedAt: feedReads.clearedAt })
     .from(feedReads)
     .where(and(eq(feedReads.userId, actorId), eq(feedReads.scope, scope)));
-  return row?.clearedAt ?? null;
+  if (!row?.clearedAt) return null;
+  return gt(
+    taskActivities.createdAt,
+    sql`(select cleared_at from feed_reads where user_id = ${actorId} and scope = ${scope})`,
+  );
 }
 
 // -------------------------------------------------------------------- 未读
@@ -193,7 +199,12 @@ export async function getFeedUnreadCount(actorId: string, scope: string): Promis
     .where(and(eq(feedReads.userId, actorId), eq(feedReads.scope, scope)));
   if (!marker) return 0;
 
-  const afterMarker = gt(taskActivities.createdAt, marker.lastReadAt);
+  // 与库里的已读时刻原值比较（子查询不经过 JS）：marker 读到 JS 再当参数传回
+  // 会丢微秒精度，「标记已读前同一毫秒内」的动态会被漏计成未读（角标清不掉）
+  const afterMarker = gt(
+    taskActivities.createdAt,
+    sql`(select last_read_at from feed_reads where user_id = ${actorId} and scope = ${scope})`,
+  );
 
   let row: { n: number };
   if (scope === WORKBENCH_SCOPE) {
