@@ -242,6 +242,35 @@ body.proj-cosmic [role="dialog"] * {
   animation: none !important;
 }
 
+/* —— 顶栏「设置」菜单与弹窗的打开动画 ——
+   与全站入场动画同一曲线（cubic-bezier(.22,.72,.28,1)）+ 自下而上浮入。 */
+@keyframes ac-pop-in {
+  from { opacity: 0; transform: translateY(-6px) scale(.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes ac-modal-in {
+  from { opacity: 0; transform: translateY(14px) scale(.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes ac-backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.ac-pop-in {
+  transform-origin: top right;
+  animation: ac-pop-in .22s cubic-bezier(.22, .72, .28, 1) both;
+}
+.ac-modal-in {
+  animation: ac-modal-in .3s cubic-bezier(.22, .72, .28, 1) both;
+}
+.ac-backdrop-in {
+  animation: ac-backdrop-in .25s ease both;
+}
+/* 星空主题里上面那条规则会把弹窗自身的动画也一并禁掉——恢复它 */
+body.proj-cosmic .ac-modal-in {
+  animation: ac-modal-in .3s cubic-bezier(.22, .72, .28, 1) both !important;
+}
+
 /* —— 6. 任务卡：追光 + 3D 微倾斜 —— */
 body.proj-cosmic .proj-card {
   position: relative;

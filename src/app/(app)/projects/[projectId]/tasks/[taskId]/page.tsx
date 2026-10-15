@@ -10,7 +10,8 @@ import { getTaskDetail, listSubtasks, listProjectDependencies } from "@/lib/task
 import { listTeamMembers } from "@/lib/team";
 import { listTeamLabels } from "@/lib/label";
 import { listAttachments } from "@/lib/attachment";
-import { listTaskActivities } from "@/lib/activity";
+import { getFeedUnreadCount, listTaskActivities, taskFeedScope } from "@/lib/activity";
+import { ActivityFeed } from "@/components/activity-feed";
 import { formatDateTime } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
 import {
@@ -31,35 +32,6 @@ const PRIORITY_BADGE: Record<string, string> = {
 const PRIORITY_LABEL: Record<string, string> = { high: "高", medium: "中", low: "低" };
 
 // 时间一律走 lib/time.ts，按**用户自己的**时区格式化（原来那套手搓的取的是宿主进程时区）
-
-// 动态行文案：type → 「做了什么」；field 型带旧值→新值
-function activityLine(a: {
-  type: string;
-  field: string | null;
-  oldValue: string | null;
-  newValue: string | null;
-}): string {
-  switch (a.type) {
-    case "created":
-      return "创建了任务";
-    case "field":
-      return `把${a.field ?? "字段"}从 ${a.oldValue ?? "无"} 改为 ${a.newValue ?? "无"}`;
-    case "subtask_added":
-      return `添加了子任务「${a.newValue ?? ""}」`;
-    case "subtask_done":
-      return `完成了子任务「${a.newValue ?? ""}」`;
-    case "subtask_reopened":
-      return `重启了子任务「${a.newValue ?? ""}」`;
-    case "subtask_deleted":
-      return `删除了子任务「${a.newValue ?? ""}」`;
-    case "attachment_added":
-      return `上传了附件「${a.newValue ?? ""}」`;
-    case "attachment_deleted":
-      return `删除了附件「${a.newValue ?? ""}」`;
-    default:
-      return a.type;
-  }
-}
 
 export default async function TaskDetailPage({
   params,
@@ -85,13 +57,15 @@ export default async function TaskDetailPage({
   const task = await getTaskDetail(session.user.id, taskId).catch(() => null);
   if (!task || task.projectId !== projectId) notFound();
 
-  const [subtasks, dependencies, milestones, activities, attachments] = await Promise.all([
-    listSubtasks(session.user.id, taskId),
-    listProjectDependencies(session.user.id, projectId),
-    listProjectMilestones(session.user.id, projectId),
-    listTaskActivities(session.user.id, taskId),
-    listAttachments(session.user.id, taskId),
-  ]);
+  const [subtasks, dependencies, milestones, activities, attachments, taskFeedUnread] =
+    await Promise.all([
+      listSubtasks(session.user.id, taskId),
+      listProjectDependencies(session.user.id, projectId),
+      listProjectMilestones(session.user.id, projectId),
+      listTaskActivities(session.user.id, taskId),
+      listAttachments(session.user.id, taskId),
+      getFeedUnreadCount(session.user.id, taskFeedScope(taskId)),
+    ]);
   // teacher 只读，无须成员表（仅子任务添加表单用）
   const members = canWrite ? await listTeamMembers(access.project.teamId) : [];
 
@@ -236,22 +210,18 @@ export default async function TaskDetailPage({
         />
       </section>
 
-      <section className="ac-card p-5">
-        <h2 className="font-display text-lg font-semibold text-ink">动态</h2>
-        {activities.length === 0 ? (
-          <p className="mt-2 text-sm text-ink-faint">暂无动态</p>
-        ) : (
-          <ul className="mt-2 space-y-1.5">
-            {activities.map((a) => (
-              <li key={a.id} className="text-sm">
-                <span className="font-medium text-ink">{a.actorName}</span>{" "}
-                <span className="text-ink-soft">{activityLine(a)}</span>{" "}
-                <span className="text-xs text-ink-faint">{formatDateTime(tz,a.createdAt)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      {/* 动态走「最新记录」同款模块：未读角标+标记已读+新消息红点+内部滚动+清除记录。
+          任务页无拖拽事件源，改由回流的新行驱动未读 +1（bumpOnNewRows） */}
+      <ActivityFeed
+        activities={activities}
+        tz={tz}
+        now={new Date()}
+        title="动态"
+        unreadScope={taskFeedScope(taskId)}
+        unreadCount={taskFeedUnread}
+        clearScope={taskFeedScope(taskId)}
+        bumpOnNewRows
+      />
     </main>
   );
 }

@@ -1,15 +1,17 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { eq } from "drizzle-orm";
-import { auth, signOut } from "@/lib/auth";
+import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { IdentityBadge } from "@/components/badges";
-import { AUTO_TIMEZONE } from "@/lib/time";
-import { getTimeZonePref } from "@/lib/time-pref";
+import { AUTO_TIMEZONE, DEFAULT_TIMEZONE, formatDateTime, listTimeZones } from "@/lib/time";
+import { getTimeZonePref, resolveUserTimeZone } from "@/lib/time-pref";
+import { userAvatarUrl } from "@/lib/user";
 import { ProjTheme } from "./proj-theme";
 import { NavLinks } from "./nav-links";
 import { TzSync } from "./tz-sync";
+import { UserMenu } from "./user-menu";
 import "./project.css";
 
 export default async function AppLayout({
@@ -20,12 +22,22 @@ export default async function AppLayout({
   const session = await auth();
   if (!session?.user) redirect("/login");
 
-  // 读取当前用户身份（teacher / student）；老用户与飞书用户为 NULL，不显示标签
-  const [identityRow] = await db
-    .select({ identity: users.identity })
+  // 一次取齐顶栏需要的一切：身份徽章、「设置」菜单三个小窗的初始值
+  const [row] = await db
+    .select({
+      name: users.name,
+      email: users.email,
+      identity: users.identity,
+      feishuName: users.feishuName,
+      feishuBoundAt: users.feishuBoundAt,
+      timezone: users.timezone,
+      avatarUpdatedAt: users.avatarUpdatedAt,
+    })
     .from(users)
     .where(eq(users.id, session.user.id));
-  const identity = identityRow?.identity ?? null;
+  const identity = row?.identity ?? null;
+  const tz = await resolveUserTimeZone(session.user.id);
+  const avatarUrl = userAvatarUrl(session.user.id, row?.avatarUpdatedAt ?? null);
 
   // 时区偏好为「跟随浏览器」时，才需要客户端把本机时区报到 cookie 里
   const timeZonePref = await getTimeZonePref(session.user.id);
@@ -48,23 +60,45 @@ export default async function AppLayout({
             </Link>
             <NavLinks />
           </div>
-          <form
-            action={async () => {
-              "use server";
-              await signOut({ redirectTo: "/login" });
-            }}
-            className="flex items-center gap-3"
-          >
+          <div className="flex items-center gap-3">
             <IdentityBadge identity={identity} className="hidden sm:inline-flex" />
-            <span
-              aria-hidden
-              className="proj-avatar hidden h-10 w-10 place-items-center rounded-full text-base font-bold text-white sm:grid"
-            >
-              {session.user.name?.charAt(0) || "?"}
-            </span>
+            {avatarUrl ? (
+              // 有头像显图片；proj-avatar 类只在宇宙主题里有样式（描边光晕），图片沿用同一圈。
+              // 头像是 <2MB 的本地小图且按版本号寻址长缓存，next/image 优化器帮不上忙。
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={avatarUrl}
+                alt=""
+                className="proj-avatar hidden h-10 w-10 rounded-full border border-line object-cover sm:block"
+              />
+            ) : (
+              <span
+                aria-hidden
+                className="proj-avatar hidden h-10 w-10 place-items-center rounded-full text-base font-bold text-white sm:grid"
+              >
+                {session.user.name?.charAt(0) || "?"}
+              </span>
+            )}
             <span className="hidden text-sm text-ink-soft sm:inline">{session.user.name}</span>
-            <button className="ac-btn-ghost">退出</button>
-          </form>
+            <UserMenu
+              profile={{
+                name: row?.name ?? "",
+                identity: row?.identity ?? null,
+                // 飞书自动建号的账号是随机占位密码、本人无从得知，改密码免验旧密码
+                feishuOnly: row?.email.endsWith("@feishu.local") ?? false,
+                avatarUrl,
+              }}
+              feishu={{
+                boundName: row?.feishuName ?? null,
+                boundAtLabel: row?.feishuBoundAt ? formatDateTime(tz, row.feishuBoundAt) : null,
+              }}
+              timezone={{
+                pref: row?.timezone ?? DEFAULT_TIMEZONE,
+                // 选项在服务端生成后整份传给客户端：两边各算一次会因 ICU 版本不同而不一致
+                options: listTimeZones(),
+              }}
+            />
+          </div>
         </header>
         <div className="mx-auto max-w-5xl p-6">{children}</div>
       </div>

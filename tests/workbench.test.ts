@@ -1,16 +1,18 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { createUser } from "@/lib/user";
 import { createTeam, joinTeam, updateMemberRole } from "@/lib/team";
 import { createProject, updateProject } from "@/lib/project";
 import { createTask, createSubtask, listMySubtaskProgress, listMyTasks, updateTask } from "@/lib/task";
 import {
-  clearProjectActivities,
+  clearFeed,
   getFeedUnreadCount,
   listMyTaskActivities,
   listProjectActivities,
+  listTaskActivities,
   markFeedRead,
   projectFeedScope,
+  taskFeedScope,
   WORKBENCH_SCOPE,
 } from "@/lib/activity";
 import { ForbiddenError } from "@/lib/errors";
@@ -20,9 +22,9 @@ import {
   projectChips,
 } from "@/lib/workbench-filters";
 import { db } from "@/db";
-import { feedReads, tasks as tasksTable } from "@/db/schema";
+import { feedReads, taskActivities, tasks as tasksTable } from "@/db/schema";
 import { moveTaskAction } from "@/app/(app)/projects/[projectId]/actions";
-import { clearProjectActivitiesAction, markFeedReadAction } from "@/app/(app)/actions";
+import { clearFeedAction, markFeedReadAction } from "@/app/(app)/actions";
 import { resetDb } from "./helpers";
 
 // moveTaskAction 走 auth() 与 revalidatePath，须 mock（照 task-detail-features.test.ts 头部惯例）
@@ -388,12 +390,26 @@ describe("动态流未读", () => {
     expect(await getFeedUnreadCount(student.id, projectFeedScope(project.id))).toBe(1);
   });
 
+  it("task scope 只计该任务动态", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    const other = await createTask(owner.id, project.id, { title: "O", assigneeId: student.id });
+    await markFeedRead(student.id, taskFeedScope(task.id));
+
+    await updateTask(student.id, task.id, { status: "doing" });
+    await updateTask(student.id, other.id, { status: "doing" });
+    expect(await getFeedUnreadCount(student.id, taskFeedScope(task.id))).toBe(1);
+    // 项目 scope 尚无标记，不因任务 scope 已读而受影响
+    expect(await getFeedUnreadCount(student.id, projectFeedScope(project.id))).toBe(0);
+  });
+
   it("markFeedReadAction 校验 scope 白名单", async () => {
     const { owner, student, project } = await scene();
     await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
     authMock.userId = student.id;
 
     await markFeedReadAction("project:not-a-uuid");
+    await markFeedReadAction("task:not-a-uuid");
     await markFeedReadAction(`${WORKBENCH_SCOPE}; drop`);
     // 非法 scope 不落库
     expect(await db.select().from(feedReads)).toHaveLength(0);
@@ -406,59 +422,132 @@ describe("动态流未读", () => {
     expect(marker).toBeDefined();
     expect(await getFeedUnreadCount(student.id, WORKBENCH_SCOPE)).toBe(0);
   });
+
+  it("标记已读后同一毫秒内的旧动态不再计未读（比较不丢微秒精度）", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    const scope = projectFeedScope(project.id);
+    await markFeedRead(student.id, scope);
+
+    // 把已读时刻拨到该动态同一毫秒的末尾（微秒比动态更晚）：动态在标记之前，理当不计未读；
+    // 旧实现把 last_read_at 读到 JS 丢微秒后再比较，会把它漏计成 1（角标清不掉的偶发根因）
+    await db.execute(
+      sql`update feed_reads set last_read_at = (select date_trunc('milliseconds', created_at) + interval '999 microseconds' from task_activities where task_id = ${task.id}) where user_id = ${student.id} and scope = ${scope}`,
+    );
+    expect(await getFeedUnreadCount(student.id, scope)).toBe(0);
+  });
 });
 
-describe("clearProjectActivities", () => {
-  it("管理员清空本项目全部动态，他项目不受影响", async () => {
-    const { owner, student, project, team } = await scene();
-    const other = await createProject(owner.id, team.id, { name: "官渡之战" });
-    const task = await createTask(owner.id, project.id, { title: "本项目", assigneeId: student.id });
+describe("clearFeed（清除记录只清自己视角）", () => {
+  it("清除后自己看到的动态流为空，库内数据与他人视图不动", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
     await updateTask(student.id, task.id, { status: "doing" });
-    await createTask(owner.id, other.id, { title: "他项目", assigneeId: student.id });
+    await updateTask(owner.id, task.id, { status: "done" });
+    await markFeedRead(student.id, projectFeedScope(project.id));
+    await updateTask(student.id, task.id, { status: "todo" });
+    expect(await getFeedUnreadCount(student.id, projectFeedScope(project.id))).toBe(1);
 
-    await clearProjectActivities(owner.id, project.id);
+    await clearFeed(student.id, projectFeedScope(project.id));
+
+    // 学生自己的视角被清空，未读同时归零
     expect(await listProjectActivities(student.id, project.id)).toHaveLength(0);
-    expect(await listProjectActivities(student.id, other.id)).toHaveLength(1);
-    // 只删动态，任务本身不动
-    const [kept] = await db
-      .select({ title: tasksTable.title })
-      .from(tasksTable)
-      .where(eq(tasksTable.id, task.id));
-    expect(kept.title).toBe("本项目");
+    expect(await getFeedUnreadCount(student.id, projectFeedScope(project.id))).toBe(0);
+    // 其他人的视角不受影响：owner 仍能看到全部 4 条
+    expect(await listProjectActivities(owner.id, project.id)).toHaveLength(4);
+    // 库内数据一条没删
+    expect(await db.select().from(taskActivities)).toHaveLength(4);
   });
 
-  it("非管理员（学生/教师）抛 ForbiddenError", async () => {
-    const { owner, student, teacher, project } = await scene();
+  it("清除后新产生的记录照常显示、重新计未读", async () => {
+    const { owner, student, project } = await scene();
     const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
     await updateTask(student.id, task.id, { status: "doing" });
 
-    await expect(clearProjectActivities(student.id, project.id)).rejects.toThrow(ForbiddenError);
-    await expect(clearProjectActivities(teacher.id, project.id)).rejects.toThrow(ForbiddenError);
-    expect(await listProjectActivities(student.id, project.id)).toHaveLength(2);
+    await clearFeed(student.id, projectFeedScope(project.id));
+    expect(await listProjectActivities(student.id, project.id)).toHaveLength(0);
+
+    await updateTask(student.id, task.id, { status: "done" });
+    const feed = await listProjectActivities(student.id, project.id);
+    expect(feed).toHaveLength(1);
+    expect(feed[0].type).toBe("field");
+    expect(feed[0].field).toBe("状态");
+    expect(await getFeedUnreadCount(student.id, projectFeedScope(project.id))).toBe(1);
   });
 
-  it("非成员抛 ForbiddenError", async () => {
-    const { owner, student, outsider, project } = await scene();
-    await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
-    await expect(clearProjectActivities(outsider.id, project.id)).rejects.toThrow(ForbiddenError);
-  });
-
-  it("clearProjectActivitiesAction 走权限与参数校验", async () => {
+  it("task 与 project 两条流各自清除、互不影响", async () => {
     const { owner, student, project } = await scene();
-    await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    await updateTask(student.id, task.id, { status: "doing" });
+
+    await clearFeed(student.id, taskFeedScope(task.id));
+    // 任务时间线清空；项目流（同项目的全部动态）原样
+    expect(await listTaskActivities(student.id, task.id)).toHaveLength(0);
+    expect(await listProjectActivities(student.id, project.id)).toHaveLength(2);
+
+    await clearFeed(student.id, projectFeedScope(project.id));
+    expect(await listProjectActivities(student.id, project.id)).toHaveLength(0);
+    // 任务时间线不受项目流清除影响（仍是清空后的状态）
+    expect(await listTaskActivities(student.id, task.id)).toHaveLength(0);
+  });
+
+  it("清除时刻同一毫秒内的旧动态也被隐藏（比较不丢微秒精度）", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    await clearFeed(student.id, taskFeedScope(task.id));
+
+    // 把清除时刻拨到该动态同一毫秒的末尾（微秒比动态更晚）：动态在清除之前，理当隐藏；
+    // 旧实现把 cleared_at 读到 JS 丢微秒后再比较，会把它漏成可见（CI 偶发挂掉的根因）
+    await db.execute(
+      sql`update feed_reads set cleared_at = (select date_trunc('milliseconds', created_at) + interval '999 microseconds' from task_activities where task_id = ${task.id}) where user_id = ${student.id} and scope = ${taskFeedScope(task.id)}`,
+    );
+    expect(await listTaskActivities(student.id, task.id)).toHaveLength(0);
+  });
+
+  it("workbench 与 project 两条流各自清除、互不影响", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    await updateTask(student.id, task.id, { status: "doing" });
+
+    await clearFeed(student.id, projectFeedScope(project.id));
+    // 项目流清空；工作台流（分配给我的全部动态）原样
+    expect(await listProjectActivities(student.id, project.id)).toHaveLength(0);
+    expect(await listMyTaskActivities(student.id)).toHaveLength(2);
+
+    await clearFeed(student.id, WORKBENCH_SCOPE);
+    expect(await listMyTaskActivities(student.id)).toHaveLength(0);
+    // 项目流不受工作台清除影响（仍是清空后的状态）
+    expect(await listProjectActivities(student.id, project.id)).toHaveLength(0);
+  });
+
+  it("clearFeedAction 校验登录与 scope 白名单，清除落库 clearedAt", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    const scope = projectFeedScope(project.id);
 
     authMock.userId = null;
-    expect(await clearProjectActivitiesAction(project.id)).toEqual({ error: "请先登录" });
+    expect(await clearFeedAction(scope)).toEqual({ error: "请先登录" });
 
     authMock.userId = student.id;
-    expect(await clearProjectActivitiesAction("not-a-uuid")).toEqual({ error: "参数无效" });
-    expect(await clearProjectActivitiesAction(project.id)).toEqual({
-      error: "仅项目管理员可清除记录",
-    });
+    expect(await clearFeedAction("project:not-a-uuid")).toEqual({ error: "参数无效" });
+    expect(await clearFeedAction("task:not-a-uuid")).toEqual({ error: "参数无效" });
+    expect(await clearFeedAction(`${WORKBENCH_SCOPE}; drop`)).toEqual({ error: "参数无效" });
+    // 非法 scope 不落库
+    expect(await db.select().from(feedReads)).toHaveLength(0);
 
-    authMock.userId = owner.id;
-    expect(await clearProjectActivitiesAction(project.id)).toBeNull();
+    expect(await clearFeedAction(scope)).toBeNull();
+    const [marker] = await db
+      .select()
+      .from(feedReads)
+      .where(and(eq(feedReads.userId, student.id), eq(feedReads.scope, scope)));
+    expect(marker?.clearedAt).toBeInstanceOf(Date);
     expect(await listProjectActivities(student.id, project.id)).toHaveLength(0);
+
+    // task scope 走同一白名单与清除逻辑，并按 taskId 反查项目路径 revalidate
+    revalidateMock.fn = vi.fn();
+    expect(await clearFeedAction(taskFeedScope(task.id))).toBeNull();
+    expect(await listTaskActivities(student.id, task.id)).toHaveLength(0);
+    expect(revalidateMock.fn).toHaveBeenCalledWith(`/projects/${project.id}/tasks/${task.id}`);
   });
 });
 

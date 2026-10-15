@@ -21,7 +21,8 @@ export function TaskCard({
   projectId: string;
   canWrite: boolean;
 }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+  // 拖拽浮层由看板 DragOverlay 渲染，这里不再应用 transform：卡片原位留下低透明幽灵
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: task.id,
     disabled: !canWrite,
   });
@@ -41,12 +42,21 @@ export function TaskCard({
   return (
     <div
       ref={setNodeRef}
-      style={
-        transform
-          ? { transform: `translate(${transform.x}px, ${transform.y}px)` }
-          : undefined
-      }
-      className={`ac-card p-3 text-sm transition hover:shadow-md ${isDragging ? "opacity-50" : ""}`}
+      onMouseMove={(e) => {
+        const el = e.currentTarget;
+        const r = el.getBoundingClientRect();
+        const x = e.clientX - r.left;
+        const y = e.clientY - r.top;
+        el.style.setProperty("--mx", `${x}px`);
+        el.style.setProperty("--my", `${y}px`);
+        el.style.setProperty("--ry", `${((x / r.width - 0.5) * 6).toFixed(2)}deg`);
+        el.style.setProperty("--rx", `${(-(y / r.height - 0.5) * 6).toFixed(2)}deg`);
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.setProperty("--rx", "0deg");
+        e.currentTarget.style.setProperty("--ry", "0deg");
+      }}
+      className={`ac-card proj-card p-3 text-sm transition ${isDragging ? "dragging" : ""}`}
     >
       <div
         {...listeners}

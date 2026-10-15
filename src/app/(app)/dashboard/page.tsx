@@ -154,6 +154,7 @@ export default async function DashboardPage({
         showProject
         unreadScope={WORKBENCH_SCOPE}
         unreadCount={feedUnread}
+        clearScope={WORKBENCH_SCOPE}
       />
     </main>
   );

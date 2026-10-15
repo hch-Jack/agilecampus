@@ -11,7 +11,7 @@ const ITEMS = [
   { key: "/projects", href: "/projects", label: "所有项目" },
   { key: "/teams", href: "/teams", label: "我的团队" },
   { key: "/messages", href: "/messages", label: "消息" },
-  { key: "/settings", href: "/settings", label: "AI 设置" },
+  { key: "/settings", href: "/settings", label: "AI配置" },
 ] as const;
 
 // 当前路径落在哪个导航分区（含子页）

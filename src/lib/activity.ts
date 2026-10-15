@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gt, sql } from "drizzle-orm";
 import { db, type DbTx } from "@/db";
 import { feedReads, projects, taskActivities, tasks, teamMembers, users } from "@/db/schema";
 import { AppError, ForbiddenError } from "./errors";
@@ -42,6 +42,7 @@ export async function listTaskActivities(actorId: string, taskId: string, limit 
   if (!task) throw new AppError("任务不存在");
   const access = await getProjectForUser(actorId, task.projectId);
   if (!access) throw new ForbiddenError();
+  const clearedAfter = await feedClearedAfter(actorId, taskFeedScope(taskId));
 
   return db
     .select({
@@ -55,7 +56,13 @@ export async function listTaskActivities(actorId: string, taskId: string, limit 
     })
     .from(taskActivities)
     .innerJoin(users, eq(taskActivities.actorId, users.id))
-    .where(eq(taskActivities.taskId, taskId))
+    .where(
+      and(
+        eq(taskActivities.taskId, taskId),
+        // 「清除记录」后的旧动态对本人隐藏（见 clearFeed），他人查询不受影响
+        ...(clearedAfter ? [clearedAfter] : []),
+      ),
+    )
     .orderBy(desc(taskActivities.createdAt))
     .limit(limit);
 }
@@ -96,6 +103,7 @@ export async function listMyTaskActivities(
   actorId: string,
   limit = 20,
 ): Promise<TaskActivityRow[]> {
+  const clearedAfter = await feedClearedAfter(actorId, WORKBENCH_SCOPE);
   return db
     .select(feedColumns)
     .from(taskActivities)
@@ -106,7 +114,14 @@ export async function listMyTaskActivities(
       teamMembers,
       and(eq(teamMembers.teamId, projects.teamId), eq(teamMembers.userId, actorId)),
     )
-    .where(and(eq(tasks.assigneeId, actorId), eq(projects.status, "active")))
+    .where(
+      and(
+        eq(tasks.assigneeId, actorId),
+        eq(projects.status, "active"),
+        // 「清除记录」后的旧动态对本人隐藏（见 clearFeed），他人查询不受影响
+        ...(clearedAfter ? [clearedAfter] : []),
+      ),
+    )
     // 同一事务写入的多条动态时间戳相同，二级键保证顺序确定
     .orderBy(desc(taskActivities.createdAt), desc(taskActivities.id))
     .limit(limit);
@@ -122,6 +137,7 @@ export async function listProjectActivities(
 ): Promise<TaskActivityRow[]> {
   const access = await getProjectForUser(actorId, projectId);
   if (!access) throw new ForbiddenError();
+  const clearedAfter = await feedClearedAfter(actorId, projectFeedScope(projectId));
 
   return db
     .select(feedColumns)
@@ -129,28 +145,52 @@ export async function listProjectActivities(
     .innerJoin(tasks, eq(taskActivities.taskId, tasks.id))
     .innerJoin(projects, eq(tasks.projectId, projects.id))
     .innerJoin(users, eq(taskActivities.actorId, users.id))
-    .where(eq(tasks.projectId, projectId))
+    .where(
+      and(
+        eq(tasks.projectId, projectId),
+        // 「清除记录」后的旧动态对本人隐藏（见 clearFeed），他人查询不受影响
+        ...(clearedAfter ? [clearedAfter] : []),
+      ),
+    )
     .orderBy(desc(taskActivities.createdAt), desc(taskActivities.id))
     .limit(limit);
 }
 
+// 某用户在某 scope 的「清除」时刻（无 = 未清除过），返回可直接拼进 WHERE 的比较条件。
+// 比较必须留在 SQL 里：时刻读到 JS（Date 只有毫秒精度）再当参数传回去会丢微秒，
+// 「清除前同一毫秒内」的动态会被漏成可见（CI 上偶发挂掉的 clearFeed 用例即此因）。
+async function feedClearedAfter(actorId: string, scope: string) {
+  const [row] = await db
+    .select({ clearedAt: feedReads.clearedAt })
+    .from(feedReads)
+    .where(and(eq(feedReads.userId, actorId), eq(feedReads.scope, scope)));
+  if (!row?.clearedAt) return null;
+  return gt(
+    taskActivities.createdAt,
+    sql`(select cleared_at from feed_reads where user_id = ${actorId} and scope = ${scope})`,
+  );
+}
+
 // -------------------------------------------------------------------- 未读
 
-// 动态流 scope：工作台与项目页各记各的已读标记，互不影响
+// 动态流 scope：工作台、项目页、任务页各记各的已读标记，互不影响
 export const WORKBENCH_SCOPE = "workbench";
 export function projectFeedScope(projectId: string) {
   return `project:${projectId}`;
 }
-// server action 入口的白名单校验：scope 只能由这两者拼出，防脏数据行
+export function taskFeedScope(taskId: string) {
+  return `task:${taskId}`;
+}
+// server action 入口的白名单校验：scope 只能由这三者拼出，防脏数据行
 export function isFeedScopeValid(scope: string) {
   return (
     scope === WORKBENCH_SCOPE ||
-    /^project:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(scope)
+    /^(project|task):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(scope)
   );
 }
 
 // 未读数 = 该 scope 动态流中 createdAt 晚于已读标记的条数。
-// 口径与对应 feed 查询一致（workbench 限「分配给我」的 active 项目；project 限该项目）。
+// 口径与对应 feed 查询一致（workbench 限「分配给我」的 active 项目；project 限该项目；task 限该任务）。
 // 没有标记 = 视为全部已读：功能上线时不给存量用户灌一屏未读。
 export async function getFeedUnreadCount(actorId: string, scope: string): Promise<number> {
   const [marker] = await db
@@ -159,26 +199,39 @@ export async function getFeedUnreadCount(actorId: string, scope: string): Promis
     .where(and(eq(feedReads.userId, actorId), eq(feedReads.scope, scope)));
   if (!marker) return 0;
 
-  const afterMarker = gt(taskActivities.createdAt, marker.lastReadAt);
+  // 与库里的已读时刻原值比较（子查询不经过 JS）：marker 读到 JS 再当参数传回
+  // 会丢微秒精度，「标记已读前同一毫秒内」的动态会被漏计成未读（角标清不掉）
+  const afterMarker = gt(
+    taskActivities.createdAt,
+    sql`(select last_read_at from feed_reads where user_id = ${actorId} and scope = ${scope})`,
+  );
 
-  const [row] =
-    scope === WORKBENCH_SCOPE
-      ? await db
-          .select({ n: sql<number>`count(*)::int` })
-          .from(taskActivities)
-          .innerJoin(tasks, eq(taskActivities.taskId, tasks.id))
-          .innerJoin(projects, eq(tasks.projectId, projects.id))
-          .innerJoin(
-            teamMembers,
-            and(eq(teamMembers.teamId, projects.teamId), eq(teamMembers.userId, actorId)),
-          )
-          .where(and(afterMarker, eq(tasks.assigneeId, actorId), eq(projects.status, "active")))
-      : await db
-          .select({ n: sql<number>`count(*)::int` })
-          .from(taskActivities)
-          .innerJoin(tasks, eq(taskActivities.taskId, tasks.id))
-          .innerJoin(projects, eq(tasks.projectId, projects.id))
-          .where(and(afterMarker, eq(tasks.projectId, scope.slice("project:".length))));
+  let row: { n: number };
+  if (scope === WORKBENCH_SCOPE) {
+    [row] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(taskActivities)
+      .innerJoin(tasks, eq(taskActivities.taskId, tasks.id))
+      .innerJoin(projects, eq(tasks.projectId, projects.id))
+      .innerJoin(
+        teamMembers,
+        and(eq(teamMembers.teamId, projects.teamId), eq(teamMembers.userId, actorId)),
+      )
+      .where(and(afterMarker, eq(tasks.assigneeId, actorId), eq(projects.status, "active")));
+  } else if (scope.startsWith("project:")) {
+    [row] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(taskActivities)
+      .innerJoin(tasks, eq(taskActivities.taskId, tasks.id))
+      .innerJoin(projects, eq(tasks.projectId, projects.id))
+      .where(and(afterMarker, eq(tasks.projectId, scope.slice("project:".length))));
+  } else {
+    // task: 只数该任务自己的动态，无需 join
+    [row] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(taskActivities)
+      .where(and(afterMarker, eq(taskActivities.taskId, scope.slice("task:".length))));
+  }
 
   return row.n;
 }
@@ -196,19 +249,15 @@ export async function markFeedRead(actorId: string, scope: string): Promise<void
     });
 }
 
-// 项目页「清除记录」：删掉该项目全部任务的动态（含任务详情时间线的历史），
-// 只删动态、不动任务本身。破坏性操作，仅项目管理员可用。
-export async function clearProjectActivities(actorId: string, projectId: string): Promise<void> {
-  const access = await getProjectForUser(actorId, projectId);
-  if (!access) throw new ForbiddenError();
-  if (access.role !== "admin") throw new ForbiddenError();
-
+// 「清除记录」：只清空该用户**自己看到的**动态流——把清除时刻记成 cleared_at，
+// 该 scope 的 feed 查询据此隐藏这一刻之前的记录，并顺手把未读归零。
+// 库内数据与他人视图一律不动（人人可清、谁也不影响别人）；此后新产生的记录照常显示、照常计未读。
+export async function clearFeed(actorId: string, scope: string): Promise<void> {
   await db
-    .delete(taskActivities)
-    .where(
-      inArray(
-        taskActivities.taskId,
-        db.select({ taskId: tasks.id }).from(tasks).where(eq(tasks.projectId, projectId)),
-      ),
-    );
+    .insert(feedReads)
+    .values({ userId: actorId, scope, lastReadAt: sql`now()`, clearedAt: sql`now()` })
+    .onConflictDoUpdate({
+      target: [feedReads.userId, feedReads.scope],
+      set: { lastReadAt: sql`now()`, clearedAt: sql`now()` },
+    });
 }

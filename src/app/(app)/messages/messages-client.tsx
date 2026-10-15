@@ -30,7 +30,27 @@ function fmtSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-function Avatar({ name, className = "" }: { name: string; className?: string }) {
+function Avatar({
+  name,
+  url,
+  className = "",
+}: {
+  name: string;
+  url?: string | null;
+  className?: string;
+}) {
+  // 对方传过头像就显图片（换头像后 URL 的 ?v= 版本号会变，4s 轮询自动带出新的）。
+  // 头像是 <2MB 的本地小图且按版本号寻址长缓存，next/image 优化器帮不上忙。
+  if (url) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={url}
+        alt=""
+        className={`shrink-0 rounded-full border border-line object-cover ${className}`}
+      />
+    );
+  }
   return (
     <span
       aria-hidden
@@ -129,7 +149,7 @@ export function MessagesClient({ timeZone }: { timeZone: string }) {
   }
 
   function selectPeer(c: DmConversation) {
-    setPeer({ id: c.peerId, name: c.peerName, identity: c.identity });
+    setPeer({ id: c.peerId, name: c.peerName, identity: c.identity, avatarUrl: c.peerAvatarUrl });
     peerIdRef.current = c.peerId;
     setMsgs([]);
     setSendError("");
@@ -213,7 +233,7 @@ export function MessagesClient({ timeZone }: { timeZone: string }) {
                       peer?.id === c.peerId ? "bg-primary-soft" : "hover:bg-sunken"
                     }`}
                   >
-                    <Avatar name={c.peerName} className="h-10 w-10 text-base" />
+                    <Avatar name={c.peerName} url={c.peerAvatarUrl} className="h-10 w-10 text-base" />
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-1.5">
                         <span className="truncate text-sm font-medium text-ink">{c.peerName}</span>
@@ -256,7 +276,7 @@ export function MessagesClient({ timeZone }: { timeZone: string }) {
               >
                 ←
               </button>
-              <Avatar name={peer.name} className="h-8 w-8" />
+              <Avatar name={peer.name} url={peer.avatarUrl} className="h-8 w-8" />
               <span className="text-sm font-semibold text-ink">{peer.name}</span>
               <IdentityBadge identity={peer.identity} />
               <span className="ml-auto text-xs text-ink-faint">消息自动留存</span>
