@@ -100,6 +100,11 @@ export const users = pgTable(
     // 这里写字面量而非常量：schema 由 drizzle-kit 独立加载，不引应用侧的模块。
     // 两份值必须一致，有 tests/time.test.ts 盯着。
     timezone: text("timezone").notNull().default("Asia/Shanghai"),
+    // 头像：PNG/JPEG/WebP 直存库内（与私信附件同构），经 /api/avatars/[userId] 流出。
+    // avatarUpdatedAt 兼作缓存破坏版本号（URL 带 ?v=），换头像即覆盖旧图。
+    avatarData: bytea("avatar_data"),
+    avatarMime: text("avatar_mime"),
+    avatarUpdatedAt: dbTimestamp("avatar_updated_at"),
     createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [uniqueIndex("users_name_unique").on(t.name)],

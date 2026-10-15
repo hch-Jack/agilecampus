@@ -33,7 +33,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="ac-modal-in relative w-full max-w-md rounded-card border border-line bg-surface shadow-pop"
+        className="ac-modal-in relative w-full max-w-md overflow-hidden rounded-card border border-line bg-surface shadow-pop"
       >
         <header className="flex items-center justify-between border-b border-line px-5 py-3">
           <h2 className="font-display text-base font-semibold text-ink">{title}</h2>

@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createUser, updateUserPassword, updateUserProfile } from "@/lib/user";
+import {
+  createUser,
+  detectAvatarMime,
+  updateUserAvatar,
+  updateUserPassword,
+  updateUserProfile,
+  userAvatarUrl,
+} from "@/lib/user";
 import { verifyPassword } from "@/lib/password";
 import { AppError } from "@/lib/errors";
 import { resetDb } from "./helpers";
@@ -183,6 +190,65 @@ describe("updateUserProfile", () => {
     await updateUserProfile(user.id, { name: "甲", identity: null });
     const [row] = await db.select().from(users).where(eq(users.id, user.id));
     expect(row.identity).toBeNull();
+  });
+});
+
+describe("detectAvatarMime", () => {
+  it("按魔数认出 PNG / JPEG / WebP", () => {
+    const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+    const jpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+    const webp = Uint8Array.from([
+      0x52, 0x49, 0x46, 0x46, 0x00, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50,
+    ]);
+    expect(detectAvatarMime(png)).toBe("image/png");
+    expect(detectAvatarMime(jpeg)).toBe("image/jpeg");
+    expect(detectAvatarMime(webp)).toBe("image/webp");
+  });
+
+  it("伪造 file.type 救不了：字节不匹配即拒绝", () => {
+    const gif = Uint8Array.from([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x00, 0x00]);
+    expect(detectAvatarMime(gif)).toBeNull();
+    expect(detectAvatarMime(Uint8Array.from([0x89, 0x50]))).toBeNull(); // 太短
+    expect(detectAvatarMime(new Uint8Array(0))).toBeNull();
+  });
+});
+
+describe("updateUserAvatar", () => {
+  beforeEach(resetDb);
+
+  it("写入图片字节与 MIME，并盖上上传时刻", async () => {
+    const user = await createUser({ email: "av@example.com", password: "password123", name: "甲" });
+    const data = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    await updateUserAvatar(user.id, data, "image/png");
+
+    const [row] = await db.select().from(users).where(eq(users.id, user.id));
+    expect(Buffer.from(row.avatarData ?? new Uint8Array(0))).toEqual(data);
+    expect(row.avatarMime).toBe("image/png");
+    expect(row.avatarUpdatedAt).toBeInstanceOf(Date);
+  });
+
+  it("换头像即覆盖旧图（同一条记录，不留旧版本）", async () => {
+    const user = await createUser({ email: "av2@example.com", password: "password123", name: "乙" });
+    await updateUserAvatar(user.id, Buffer.from([0x89, 0x50, 0x4e, 0x47]), "image/png");
+    await updateUserAvatar(user.id, Buffer.from([0xff, 0xd8, 0xff]), "image/jpeg");
+
+    const [row] = await db.select().from(users).where(eq(users.id, user.id));
+    expect(row.avatarMime).toBe("image/jpeg");
+    expect(Buffer.from(row.avatarData ?? new Uint8Array(0))).toEqual(
+      Buffer.from([0xff, 0xd8, 0xff]),
+    );
+  });
+
+  it("userAvatarUrl：没传过头像返回 null，传过则带版本号", async () => {
+    const user = await createUser({ email: "av3@example.com", password: "password123", name: "丙" });
+    const [before] = await db.select().from(users).where(eq(users.id, user.id));
+    expect(userAvatarUrl(user.id, before.avatarUpdatedAt)).toBeNull();
+
+    await updateUserAvatar(user.id, Buffer.from([0x89, 0x50, 0x4e, 0x47]), "image/png");
+    const [after] = await db.select().from(users).where(eq(users.id, user.id));
+    expect(userAvatarUrl(user.id, after.avatarUpdatedAt)).toBe(
+      `/api/avatars/${user.id}?v=${after.avatarUpdatedAt!.getTime()}`,
+    );
   });
 });
 

@@ -125,7 +125,7 @@ describe("时间列的物理 schema 没有变（db:push 不该产生 ALTER）", 
 
     // 数目是对不上就说明有人绕开了 dbTimestamp 自己搓了一个时间列
     // （私信/动态流那几张表后来加过一轮，加表就得同步这个数）
-    expect(columns).toHaveLength(26);
+    expect(columns).toHaveLength(27);
     for (const c of columns) expect(c.sqlType).toBe("timestamp");
 
     // createdAt / updatedAt 由 dbTimestampNow 声明，默认值必须在；
@@ -133,6 +133,7 @@ describe("时间列的物理 schema 没有变（db:push 不该产生 ALTER）", 
     expect(getTableColumns(schema.users).createdAt.hasDefault).toBe(true);
     expect(getTableColumns(schema.tasks).updatedAt.hasDefault).toBe(true);
     expect(getTableColumns(schema.users).feishuBoundAt.hasDefault).toBe(false);
+    expect(getTableColumns(schema.users).avatarUpdatedAt.hasDefault).toBe(false);
     expect(getTableColumns(schema.resourceUsages).endTime.hasDefault).toBe(false);
     expect(getTableColumns(schema.resourceUsages).startTime.hasDefault).toBe(false);
     // 私信：消息时刻由库写、已读时刻由应用写（可为空，不能有默认值）；

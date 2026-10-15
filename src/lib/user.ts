@@ -133,6 +133,45 @@ export async function updateUserTimeZone(userId: string, timezone: string) {
   return value;
 }
 
+// ------------------------------------------------------------------ 头像
+// 头像直存 users 表 bytea（与私信附件同构），经 /api/avatars/[userId] 流出。
+// 全站统一从这里拼 URL：?v= 带上传时刻（毫秒），换头像即换地址、旧缓存自然失效。
+export const AVATAR_MAX_SIZE = 2 * 1024 * 1024;
+
+export function userAvatarUrl(userId: string, avatarUpdatedAt: Date | null): string | null {
+  return avatarUpdatedAt ? `/api/avatars/${userId}?v=${avatarUpdatedAt.getTime()}` : null;
+}
+
+// 魔数嗅探：不信客户端报上来的 file.type，只收 PNG / JPEG / WebP。
+export function detectAvatarMime(data: Uint8Array): string | null {
+  if (
+    data.length >= 8 &&
+    data[0] === 0x89 && data[1] === 0x50 && data[2] === 0x4e && data[3] === 0x47
+  ) {
+    return "image/png";
+  }
+  if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    data.length >= 12 &&
+    data[0] === 0x52 && data[1] === 0x49 && data[2] === 0x46 && data[3] === 0x46 &&
+    data[8] === 0x57 && data[9] === 0x45 && data[10] === 0x42 && data[11] === 0x50
+  ) {
+    return "image/webp";
+  }
+  return null;
+}
+
+// 覆盖式更新：换头像即覆盖旧图，旧版本 URL（?v= 旧值）从此 404，不落垃圾行。
+// 尺寸与格式由调用方（settings/actions.ts）先验过，这里只负责落库。
+export async function updateUserAvatar(userId: string, data: Buffer, mime: string) {
+  await db
+    .update(users)
+    .set({ avatarData: data, avatarMime: mime, avatarUpdatedAt: sql`now()` })
+    .where(eq(users.id, userId));
+}
+
 // 飞书登录的账号解析：已绑 openId → 返回原账号；未绑 → 自动建号（占位 email + 不可用 hash，禁邮箱登录）。
 export async function findOrCreateByFeishu(input: { openId: string; name: string }) {
   const [existing] = await db

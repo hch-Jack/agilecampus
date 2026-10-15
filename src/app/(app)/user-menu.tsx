@@ -23,7 +23,12 @@ export function UserMenu({
   feishu,
   timezone,
 }: {
-  profile: { name: string; identity: "teacher" | "student" | null; feishuOnly: boolean };
+  profile: {
+    name: string;
+    identity: "teacher" | "student" | null;
+    feishuOnly: boolean;
+    avatarUrl: string | null;
+  };
   feishu: { boundName: string | null; boundAtLabel: string | null };
   timezone: { pref: string; options: TimeZoneOption[] };
 }) {
@@ -62,7 +67,7 @@ export function UserMenu({
           aria-label="设置"
           title="设置"
           onClick={() => setOpen((v) => !v)}
-          className="ac-btn-ghost grid h-10 w-10 place-items-center rounded-full"
+          className="ac-btn-ghost grid h-10 w-10 place-items-center rounded-full p-0"
         >
           <svg
             viewBox="0 0 24 24"
@@ -115,6 +120,7 @@ export function UserMenu({
             initialName={profile.name}
             initialIdentity={profile.identity}
             feishuOnly={profile.feishuOnly}
+            initialAvatarUrl={profile.avatarUrl}
             onClose={() => setModal(null)}
           />,
           document.body,

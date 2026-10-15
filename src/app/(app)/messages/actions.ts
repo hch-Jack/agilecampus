@@ -34,10 +34,7 @@ async function withUser<T>(fn: (userId: string) => Promise<T>): Promise<Result<T
 
 // 搜用户名加会话：命中 → 加入消息列表并返回对方；未命中 → error（前端提示重输）
 export async function searchAddUserAction(rawName: string): Promise<Result<DmPeer>> {
-  return withUser(async (userId) => {
-    const user = await addContactByUsername(userId, rawName);
-    return { id: user.id, name: user.name, identity: user.identity };
-  });
+  return withUser(async (userId) => addContactByUsername(userId, rawName));
 }
 
 export async function getConversationsAction(): Promise<Result<DmConversation[]>> {

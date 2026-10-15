@@ -2,6 +2,7 @@ import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { dmAttachments, dmContacts, dmMessages, users, type UserIdentity } from "@/db/schema";
 import { AppError, ForbiddenError } from "./errors";
+import { userAvatarUrl } from "./user";
 
 // 单文件大小上限：10MB，与任务附件同限。上传走 server action，
 // 体积限制与 next.config 的 experimental.serverActions.bodySizeLimit（12mb）配套。
@@ -9,7 +10,13 @@ export const DM_ATTACHMENT_MAX_SIZE = 10 * 1024 * 1024;
 
 // 会话对端的展示信息（聊天窗口头部 / 搜索命中返回）。类型放这里而非 "use server"
 // 文件——server action 文件里 re-export 类型会被 Turbopack 误编译成运行时导出（ReferenceError）。
-export type DmPeer = { id: string; name: string; identity: UserIdentity | null };
+export type DmPeer = {
+  id: string;
+  name: string;
+  identity: UserIdentity | null;
+  // 头像地址（带 ?v= 版本号）；null=没传过头像，前端回落成名字首字
+  avatarUrl: string | null;
+};
 
 // —— 搜索与添加 ——
 
@@ -19,12 +26,17 @@ export async function findUserByUsername(actorId: string, rawName: string) {
   const name = rawName.trim();
   if (!name) throw new AppError("请输入用户名");
   const [user] = await db
-    .select({ id: users.id, name: users.name, identity: users.identity })
+    .select({
+      id: users.id,
+      name: users.name,
+      identity: users.identity,
+      avatarUpdatedAt: users.avatarUpdatedAt,
+    })
     .from(users)
     .where(sql`lower(${users.name}) = lower(${name})`);
   if (!user) throw new AppError("用户不存在，请检查用户名后重新输入");
   if (user.id === actorId) throw new AppError("这是你自己，换个名字试试");
-  return user;
+  return { ...user, avatarUrl: userAvatarUrl(user.id, user.avatarUpdatedAt) };
 }
 
 // 会话行（幂等）：无则建，有则原样返回。onConflictDoNothing 兜并发，空手而归时回查。
@@ -60,6 +72,7 @@ export type DmConversation = {
   peerId: string;
   peerName: string;
   identity: UserIdentity | null;
+  peerAvatarUrl: string | null;
   // 最近一条消息预览（文件消息为「[文件] 文件名」）；null=刚添加还没说过话
   preview: string | null;
   lastAt: string | null; // ISO
@@ -73,6 +86,7 @@ export async function listConversations(actorId: string): Promise<DmConversation
       peerId: dmContacts.peerId,
       peerName: users.name,
       identity: users.identity,
+      avatarUpdatedAt: users.avatarUpdatedAt,
       addedAt: dmContacts.createdAt,
     })
     .from(dmContacts)
@@ -121,6 +135,7 @@ export async function listConversations(actorId: string): Promise<DmConversation
         peerId: c.peerId,
         peerName: c.peerName,
         identity: c.identity,
+        peerAvatarUrl: userAvatarUrl(c.peerId, c.avatarUpdatedAt),
         preview: m ? (m.attachmentFilename ? `[文件] ${m.attachmentFilename}` : m.content) : null,
         lastAt: m ? m.createdAt.toISOString() : null,
         lastMine: m?.senderId === actorId,
@@ -145,7 +160,12 @@ export async function listMessages(
   peerId: string,
 ): Promise<{ peer: DmPeer; messages: DmMessageView[] }> {
   const [peer] = await db
-    .select({ id: users.id, name: users.name, identity: users.identity })
+    .select({
+      id: users.id,
+      name: users.name,
+      identity: users.identity,
+      avatarUpdatedAt: users.avatarUpdatedAt,
+    })
     .from(users)
     .where(eq(users.id, peerId));
   if (!peer) throw new AppError("用户不存在");
@@ -185,7 +205,7 @@ export async function listMessages(
     );
 
   return {
-    peer,
+    peer: { ...peer, avatarUrl: userAvatarUrl(peer.id, peer.avatarUpdatedAt) },
     messages: rows.map((r) => ({
       id: r.id,
       mine: r.senderId === actorId,

@@ -8,7 +8,15 @@ import { eq } from "drizzle-orm";
 import { auth, unstable_update } from "@/lib/auth";
 import { db } from "@/db";
 import { users } from "@/db/schema";
-import { unbindFeishu, updateUserPassword, updateUserProfile, updateUserTimeZone } from "@/lib/user";
+import {
+  AVATAR_MAX_SIZE,
+  detectAvatarMime,
+  unbindFeishu,
+  updateUserAvatar,
+  updateUserPassword,
+  updateUserProfile,
+  updateUserTimeZone,
+} from "@/lib/user";
 import { createApiToken, revokeApiToken } from "@/lib/api-token";
 import { AppError } from "@/lib/errors";
 import { AUTO_TIMEZONE, TZ_COOKIE, TZ_COOKIE_MAX_AGE, isValidTimeZone } from "@/lib/time";
@@ -150,6 +158,30 @@ export async function updatePasswordAction(
     if (e instanceof AppError) return { error: e.message };
     throw e;
   }
+}
+
+export type AvatarState = { ok: true } | { error: string } | null;
+
+// 上传头像：图片校验（类型按魔数、大小 ≤ 2MB）在服务端做，客户端先拦一道省往返。
+// 成功后 revalidateFrom 重渲染当前页 —— 顶栏头像与「修改信息」小窗的预览一起换新。
+export async function uploadAvatarAction(
+  _prev: AvatarState,
+  formData: FormData,
+): Promise<AvatarState> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+
+  const entry = formData.get("avatar");
+  if (!(entry instanceof File) || entry.size === 0) return { error: "请选择图片" };
+  if (entry.size > AVATAR_MAX_SIZE) return { error: "图片不能超过 2MB" };
+
+  const data = Buffer.from(await entry.arrayBuffer());
+  const mime = detectAvatarMime(data);
+  if (!mime) return { error: "仅支持 PNG、JPEG、WebP 图片" };
+
+  await updateUserAvatar(session.user.id, data, mime);
+  revalidateFrom(formData, "/settings");
+  return { ok: true };
 }
 
 // ------------------------------------------------------------------ 访问令牌
