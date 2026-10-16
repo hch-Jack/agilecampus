@@ -175,6 +175,87 @@ export const dmContacts = pgTable(
   ],
 );
 
+// —— 群聊（微信/QQ 式）。表名带 dm_ 前缀属私信域：conversations/messages 已被 AI 会话占用。——
+
+// 群：名称 1..30 字由应用层校验（lib/group-chat.ts）；解散即删行，成员/消息/邀请随 cascade 清掉
+export const dmGroups = pgTable("dm_groups", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  ownerId: uuid("owner_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  createdAt: dbTimestampNow("created_at").notNull(),
+});
+
+// 群成员：lastReadAt 是未读基线——进群/接受邀请/打开会话时置为 DB 时钟 now()，
+// 未读 = 该时刻**之后**别人发的消息。所有写入都用 DB 时钟（列默认值或 sql`now()`），
+// 绝不传 JS Date，避免与 dbWallClock 的会话时区换算口径打架。
+export const dmGroupMembers = pgTable(
+  "dm_group_members",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => dmGroups.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    lastReadAt: dbTimestampNow("last_read_at").notNull(),
+    joinedAt: dbTimestampNow("joined_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("dm_group_members_group_user_unique").on(t.groupId, t.userId),
+    index("dm_group_members_user_idx").on(t.userId),
+  ],
+);
+
+// 群消息：content 与 attachmentId 至少其一非空（应用层校验，同 dm_messages）；
+// 附件复用 dm_attachments。群聊无已读回执，已读状态只记在成员表的 lastReadAt 上。
+export const dmGroupMessages = pgTable(
+  "dm_group_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => dmGroups.id, { onDelete: "cascade" }),
+    senderId: uuid("sender_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    content: text("content").notNull().default(""),
+    attachmentId: uuid("attachment_id").references(() => dmAttachments.id, {
+      onDelete: "set null",
+    }),
+    createdAt: dbTimestampNow("created_at").notNull(),
+  },
+  (t) => [
+    index("dm_group_messages_group_created_idx").on(t.groupId, t.createdAt),
+    index("dm_group_messages_attachment_idx").on(t.attachmentId),
+  ],
+);
+
+// 群邀请：**行存在即待处理**，接受/拒绝都删行——(群, 被邀请人) 唯一索引即保证
+// 「一人最多一份待处理邀请」，拒绝后行已删可重邀，无需 status 列。
+export const dmGroupInvites = pgTable(
+  "dm_group_invites",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => dmGroups.id, { onDelete: "cascade" }),
+    inviterId: uuid("inviter_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    inviteeId: uuid("invitee_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: dbTimestampNow("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("dm_group_invites_group_invitee_unique").on(t.groupId, t.inviteeId),
+    index("dm_group_invites_invitee_idx").on(t.inviteeId),
+  ],
+);
+
 export const teams = pgTable("teams", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
