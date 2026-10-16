@@ -144,6 +144,8 @@ function IdOrSelect({
   if (options.length === 0) return <span className="text-ink">{value.slice(0, 8)}…</span>;
   return (
     <select value={value} onChange={(e) => onChange(e.target.value)} className="ac-field w-auto text-xs">
+      {/* 原值不在选项里（模型臆造、或那人已退队）：显式列出来，否则下拉会一片空白 */}
+      {!options.some((o) => o.id === value) && <option value={value}>{value.slice(0, 8)}…</option>}
       {options.map((o) => (
         <option key={o.id} value={o.id}>
           {o.name}
