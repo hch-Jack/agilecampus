@@ -277,11 +277,14 @@ export function buildPersonalTools(actorId: string) {
           }),
         ),
       }),
-      // 为每个 update 填入当前 updatedAt（乐观锁读时版本），供 commit 比对
+      // 为每个 update 填入当前 updatedAt（乐观锁读时版本），供 commit 比对；
+      // projectId 必须一并进草案 —— 个人模式没有「当前项目」，落库口 commitPersonalDraft
+      // 只能从草案里取它来重校权限（漏了就会在确认那一步报「草案格式无效」）。
       execute: async ({ projectId, updates }) => {
         const rows = await listProjectTasks(actorId, projectId);
         const versionOf = new Map(rows.map((r) => [r.id, r.updatedAt]));
         return draftEnvelope("update_tasks", {
+          projectId,
           updates: updates.map((u) => ({
             taskId: u.taskId,
             updatedAt: versionOf.get(u.taskId)?.toISOString() ?? "",

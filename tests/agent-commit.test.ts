@@ -172,10 +172,12 @@ describe("commitPersonalDraft（控制台助手的落库口）", () => {
     ).rejects.toThrow("没有要保存的上下文");
   });
 
-  it("改项目类的草案缺 projectId → 报草案格式无效", async () => {
+  it("改项目类的草案缺 projectId → 报出可诊断的错，而不是笼统的「草案格式无效」", async () => {
     const { student } = await scene();
+    // 个人模式没有「当前项目」，projectId 只能来自草案。缺了它就直说，用户才知道该让助手重拟；
+    // 从前这一句会被路由统一翻译成「草案格式无效」，看不出是谁漏了东西（见 tools.ts 的 update_tasks）。
     await expect(
       commitPersonalDraft(student.id, "create_milestone", { title: "中期答辩" }),
-    ).rejects.toThrow();
+    ).rejects.toThrow("草案里没带项目 id");
   });
 });

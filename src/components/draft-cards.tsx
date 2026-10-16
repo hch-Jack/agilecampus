@@ -117,6 +117,95 @@ export function DraftCards({
   );
 }
 
+// 批量变更卡片认得出来的字段。认不出的（模型将来加的新字段）照原样显示，不假装能改。
+const PATCH_FIELDS: Record<string, { label: string; kind: "text" | "status" | "priority" | "member" | "milestone" | "date" }> = {
+  title: { label: "标题", kind: "text" },
+  status: { label: "状态", kind: "status" },
+  assigneeId: { label: "负责人", kind: "member" },
+  dueDate: { label: "截止日", kind: "date" },
+  milestoneId: { label: "里程碑", kind: "milestone" },
+  priority: { label: "优先级", kind: "priority" },
+};
+
+const STATUS_TEXT: Record<string, string> = { todo: "待办", doing: "进行中", done: "已完成" };
+const PRIORITY_TEXT: Record<string, string> = { low: "低", medium: "中", high: "高" };
+
+// 选项来自响应里的 options（按草案的 projectId 查）——查不到就只显示 id，
+// 不给一个空下拉：那样看着像「未分配」，确认下去却仍是原来那个人。
+function IdOrSelect({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: Option[];
+  onChange: (v: string) => void;
+}) {
+  if (options.length === 0) return <span className="text-ink">{value.slice(0, 8)}…</span>;
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className="ac-field w-auto text-xs">
+      {options.map((o) => (
+        <option key={o.id} value={o.id}>
+          {o.name}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function PatchField({
+  field,
+  value,
+  members,
+  milestones,
+  onChange,
+}: {
+  field: string;
+  value: unknown;
+  members: Option[];
+  milestones: Option[];
+  onChange: (v: unknown) => void;
+}) {
+  const spec = PATCH_FIELDS[field];
+  if (!spec) return <span className="text-ink-soft">{`${field}=${JSON.stringify(value)}`}</span>;
+  const v = typeof value === "string" ? value : "";
+  return (
+    <label className="flex items-center gap-1">
+      <span className="text-ink-soft">{spec.label}</span>
+      {spec.kind === "text" && (
+        <input value={v} onChange={(e) => onChange(e.target.value)} className="ac-field w-auto text-xs" />
+      )}
+      {spec.kind === "date" && (
+        <input type="date" value={v} onChange={(e) => onChange(e.target.value)} className="ac-field w-auto text-xs" />
+      )}
+      {spec.kind === "status" && (
+        <select value={v} onChange={(e) => onChange(e.target.value)} className="ac-field w-auto text-xs">
+          {Object.entries(STATUS_TEXT).map(([k, t]) => (
+            <option key={k} value={k}>
+              {t}
+            </option>
+          ))}
+        </select>
+      )}
+      {spec.kind === "priority" && (
+        <select value={v} onChange={(e) => onChange(e.target.value)} className="ac-field w-auto text-xs">
+          {Object.entries(PRIORITY_TEXT).map(([k, t]) => (
+            <option key={k} value={k}>
+              {t}
+            </option>
+          ))}
+        </select>
+      )}
+      {spec.kind === "member" && (
+        <IdOrSelect value={v} options={members} onChange={(x) => onChange(x)} />
+      )}
+      {spec.kind === "milestone" && (
+        <IdOrSelect value={v} options={milestones} onChange={(x) => onChange(x)} />
+      )}
+    </label>
+  );
+}
+
 function DraftCard({
   draft,
   options,
@@ -256,12 +345,26 @@ function DraftCard({
 
   if (draft.tool === "update_tasks") {
     const d = data as { updates: { taskId: string; updatedAt: string; patch: Record<string, unknown> }[] };
+    const setPatch = (idx: number, patch: Record<string, unknown>) =>
+      setData({
+        ...d,
+        updates: d.updates.map((u, i) => (i === idx ? { ...u, patch: { ...u.patch, ...patch } } : u)),
+      });
     return (
       <CardShell title={`批量变更（${d.updates.length}）`} onConfirm={() => save("update_tasks", d)}>
         {d.updates.map((u, idx) => (
-          <div key={idx} className="border-b border-line pb-1 text-xs">
-            <span className="text-ink-soft">任务 {u.taskId.slice(0, 8)}…：</span>
-            <span className="text-ink">{JSON.stringify(u.patch)}</span>
+          <div key={idx} className="flex flex-wrap items-center gap-2 border-b border-line pb-1 text-xs">
+            <span className="text-ink-soft">任务 {u.taskId.slice(0, 8)}…</span>
+            {Object.entries(u.patch).map(([field, value]) => (
+              <PatchField
+                key={field}
+                field={field}
+                value={value}
+                members={opts.members}
+                milestones={opts.milestones}
+                onChange={(v) => setPatch(idx, { [field]: v })}
+              />
+            ))}
           </div>
         ))}
       </CardShell>

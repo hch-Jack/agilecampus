@@ -4,7 +4,7 @@ import { createMilestone, createProject, getProjectForUser } from "@/lib/project
 import { createTask, listProjectTasks, updateTask } from "@/lib/task";
 import { createPersonalContext } from "@/lib/personal-context";
 import { notifyTaskAssigned, notifyTaskCompleted } from "@/lib/notify";
-import { ForbiddenError } from "@/lib/errors";
+import { AppError, ForbiddenError } from "@/lib/errors";
 import {
   personalContextDraftSchema,
   SAVE_CONTEXT_TOOL,
@@ -175,10 +175,12 @@ export async function commitPersonalDraft(
     return { committed: 1, conflicts: [] };
   }
 
-  // 余下四类：草案里带着 projectId（工具 schema 要求），此处拆出来交给项目版实现
-  const { projectId, ...rest } = z
-    .object({ projectId: z.uuid() })
-    .passthrough()
-    .parse(draft) as { projectId: string } & Record<string, unknown>;
+  // 余下四类：草案里带着 projectId（工具 schema 要求），此处拆出来交给项目版实现。
+  // 个人模式没有「当前项目」，projectId 只能从草案里来 —— 缺了就说清楚是哪一环缺，
+  // 别让笼统的「草案格式无效」把它盖住（update_tasks 曾漏带 projectId，症状正是如此）。
+  const { projectId, ...rest } = (draft ?? {}) as Record<string, unknown>;
+  if (typeof projectId !== "string" || !z.uuid().safeParse(projectId).success) {
+    throw new AppError("草案里没带项目 id，请让助手重拟一次（说明是哪个项目即可）");
+  }
   return commitDraft(actorId, projectId, tool as WriteToolName, rest);
 }
