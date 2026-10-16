@@ -37,7 +37,13 @@ export async function POST(req: Request) {
     return NextResponse.json(result);
   } catch (e) {
     if (e instanceof ForbiddenError) return NextResponse.json({ error: "没有权限" }, { status: 403 });
-    if (e instanceof z.ZodError) return NextResponse.json({ error: "草案格式无效" }, { status: 400 });
+    // 带上出问题的字段：草案里少一个 id、或某个字段形状不对，都落到这一句上。
+    // 只说「草案格式无效」的话，报错点在落库、病因却在拟稿，用户与后来人都无从下手。
+    if (e instanceof z.ZodError) {
+      const issue = e.issues[0];
+      const where = issue?.path.join(".") || "载荷";
+      return NextResponse.json({ error: `草案格式无效（${where}）：${issue?.message ?? ""}`.trim() }, { status: 400 });
+    }
     if (e instanceof AppError) return NextResponse.json({ error: e.message }, { status: 400 });
     console.error("[/api/chat/commit] 落库失败:", e);
     return NextResponse.json({ error: "落库失败，请重试" }, { status: 500 });

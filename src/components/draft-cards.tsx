@@ -47,10 +47,17 @@ async function commit(
 function CardShell({
   title,
   onConfirm,
+  invalid,
   children,
 }: {
   title: string;
   onConfirm: () => Promise<string | null>;
+  /**
+   * 这张卡还差什么才能落库（必填框空了、列表被删空了…）。有值就禁用「确认」并显出来 ——
+   * 挡在点击之前，别让它走到落库口换回一句「草案格式无效」：那句话既没说是哪个框，
+   * 用户还得自己猜哪儿不对。空/未给即视为没问题。
+   */
+  invalid?: string;
   children: React.ReactNode;
 }) {
   const router = useRouter();
@@ -69,8 +76,9 @@ function CardShell({
       <p className="text-xs font-medium text-accent">待确认：{title}</p>
       {children}
       {err && <p className="text-xs text-high">{err}</p>}
+      {invalid && <p className="text-xs text-ink-soft">{invalid}</p>}
       <button
-        disabled={state === "pending"}
+        disabled={state === "pending" || !!invalid}
         onClick={async () => {
           setState("pending");
           setErr(null);
@@ -89,6 +97,11 @@ function CardShell({
       </button>
     </div>
   );
+}
+
+// 必填校验：挑出第一处不对的地方（数组顺序即优先级），交给 CardShell 去禁用确认
+function firstProblem(problems: (string | null)[]): string | undefined {
+  return problems.find((p) => p !== null) ?? undefined;
 }
 
 export function DraftCards({
@@ -178,7 +191,14 @@ function PatchField({
         <input value={v} onChange={(e) => onChange(e.target.value)} className="ac-field w-auto text-xs" />
       )}
       {spec.kind === "date" && (
-        <input type="date" value={v} onChange={(e) => onChange(e.target.value)} className="ac-field w-auto text-xs" />
+        // 清空 = 把这个日期**清掉**（送 null），不是「不改」：模型提的日期被用户删掉，
+        // 意思显然是不想要它。落库口的 patchSchema 按 nullable 收，updateTask 也认这个语义。
+        <input
+          type="date"
+          value={v}
+          onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
+          className="ac-field w-auto text-xs"
+        />
       )}
       {spec.kind === "status" && (
         <select value={v} onChange={(e) => onChange(e.target.value)} className="ac-field w-auto text-xs">
@@ -230,10 +250,15 @@ function DraftCard({
     const d = data as { entries: { content: string; visibility?: string }[] };
     const setEntry = (idx: number, patch: object) =>
       setData({ ...d, entries: d.entries.map((e, i) => (i === idx ? { ...e, ...patch } : e)) });
+    const invalid = firstProblem([
+      d.entries.length === 0 ? "没有要保存的条目" : null,
+      d.entries.some((e) => e.content.trim() === "") ? "有条内容为空" : null,
+    ]);
     return (
       <CardShell
         title={`记入我的上下文（${d.entries.length}）`}
         onConfirm={() => save("save_personal_context", d)}
+        invalid={invalid}
       >
         {d.entries.map((e, idx) => (
           <div key={idx} className="flex flex-wrap gap-1 border-b border-line pb-1">
@@ -268,8 +293,15 @@ function DraftCard({
 
   if (draft.tool === "create_project") {
     const d = data as { name?: string; description?: string; startDate?: string; endDate?: string };
+    const invalid = firstProblem([
+      (d.name ?? "").trim() === "" ? "项目名不能为空" : null,
+      // 个人 scope 没有「当前团队」，teamId 只能由助手填在草案里；缺了就是它没填对
+      scope === "personal" && typeof data.teamId !== "string"
+        ? "草案里没带团队，请让助手重拟一次"
+        : null,
+    ]);
     return (
-      <CardShell title="创建项目" onConfirm={() => save("create_project", d)}>
+      <CardShell title="创建项目" onConfirm={() => save("create_project", d)} invalid={invalid}>
         <input
           value={d.name ?? ""}
           onChange={(e) => setData({ ...d, name: e.target.value })}
@@ -284,8 +316,9 @@ function DraftCard({
           rows={2}
         />
         <div className="flex gap-1">
-          <input type="date" value={d.startDate ?? ""} onChange={(e) => setData({ ...d, startDate: e.target.value })} className="ac-field w-auto text-xs" />
-          <input type="date" value={d.endDate ?? ""} onChange={(e) => setData({ ...d, endDate: e.target.value })} className="ac-field w-auto text-xs" />
+          {/* 可选日期：清空即「不设」，故送 undefined（空串会一路走到 date 列，PG 直接报错） */}
+          <input type="date" value={d.startDate ?? ""} onChange={(e) => setData({ ...d, startDate: e.target.value || undefined })} className="ac-field w-auto text-xs" />
+          <input type="date" value={d.endDate ?? ""} onChange={(e) => setData({ ...d, endDate: e.target.value || undefined })} className="ac-field w-auto text-xs" />
         </div>
       </CardShell>
     );
@@ -294,7 +327,11 @@ function DraftCard({
   if (draft.tool === "create_milestone") {
     const d = data as { title?: string; targetDate?: string };
     return (
-      <CardShell title="创建里程碑" onConfirm={() => save("create_milestone", d)}>
+      <CardShell
+        title="创建里程碑"
+        onConfirm={() => save("create_milestone", d)}
+        invalid={d.title?.trim() ? undefined : "里程碑名称不能为空"}
+      >
         <input
           value={d.title ?? ""}
           onChange={(e) => setData({ ...d, title: e.target.value })}
@@ -317,8 +354,16 @@ function DraftCard({
     };
     const setTask = (idx: number, patch: object) =>
       setData({ ...d, tasks: d.tasks.map((t, i) => (i === idx ? { ...t, ...patch } : t)) });
+    const invalid = firstProblem([
+      d.tasks.length === 0 ? "至少要留一个任务" : null,
+      d.tasks.some((t) => t.title.trim() === "") ? "有条任务没写标题" : null,
+    ]);
     return (
-      <CardShell title={`拆解任务（${d.tasks.length}）`} onConfirm={() => save("decompose_tasks", d)}>
+      <CardShell
+        title={`拆解任务（${d.tasks.length}）`}
+        onConfirm={() => save("decompose_tasks", d)}
+        invalid={invalid}
+      >
         {d.tasks.map((t, idx) => (
           <div key={idx} className="flex flex-wrap gap-1 border-b border-line pb-1">
             <input value={t.title} onChange={(e) => setTask(idx, { title: e.target.value })} className="ac-field flex-1 text-xs" />
@@ -352,8 +397,18 @@ function DraftCard({
         ...d,
         updates: d.updates.map((u, i) => (i === idx ? { ...u, patch: { ...u.patch, ...patch } } : u)),
       });
+    const invalid = firstProblem([
+      d.updates.length === 0 ? "没有要改的任务" : null,
+      d.updates.some((u) => u.patch.title !== undefined && String(u.patch.title).trim() === "")
+        ? "有任务标题被清空了"
+        : null,
+    ]);
     return (
-      <CardShell title={`批量变更（${d.updates.length}）`} onConfirm={() => save("update_tasks", d)}>
+      <CardShell
+        title={`批量变更（${d.updates.length}）`}
+        onConfirm={() => save("update_tasks", d)}
+        invalid={invalid}
+      >
         {d.updates.map((u, idx) => (
           <div key={idx} className="flex flex-wrap items-center gap-2 border-b border-line pb-1 text-xs">
             <span className="text-ink-soft">任务 {u.taskId.slice(0, 8)}…</span>
@@ -375,16 +430,23 @@ function DraftCard({
 
   if (draft.tool === "plan_sprint") {
     const d = data as { milestoneId: string; taskIds: string[]; dueDate: string };
+    // 截止日在这里是**必填**（排期就是定日子）：清空后不禁用，落库只会回一句报错
+    const invalid = firstProblem([
+      d.dueDate === "" ? "排期要给截止日" : null,
+      d.taskIds.length === 0 ? "没有要排期的任务" : null,
+    ]);
     return (
-      <CardShell title={`排期（${d.taskIds.length} 任务）`} onConfirm={() => save("plan_sprint", d)}>
+      <CardShell
+        title={`排期（${d.taskIds.length} 任务）`}
+        onConfirm={() => save("plan_sprint", d)}
+        invalid={invalid}
+      >
         <div className="flex flex-wrap items-center gap-1 text-xs">
-          <select value={d.milestoneId} onChange={(e) => setData({ ...d, milestoneId: e.target.value })} className="ac-field w-auto text-xs">
-            {opts.milestones.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
-          </select>
+          <IdOrSelect
+            value={d.milestoneId}
+            options={opts.milestones}
+            onChange={(v) => setData({ ...d, milestoneId: v })}
+          />
           <input type="date" value={d.dueDate} onChange={(e) => setData({ ...d, dueDate: e.target.value })} className="ac-field w-auto text-xs" />
           <span className="text-ink-soft">{d.taskIds.length} 个任务</span>
         </div>

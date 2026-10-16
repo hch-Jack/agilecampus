@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { tasks, projects } from "@/db/schema";
 import { createUser } from "@/lib/user";
 import { createTeam, joinTeam, updateMemberRole } from "@/lib/team";
-import { createProject, createMilestone } from "@/lib/project";
+import { createProject, createMilestone, listProjectMilestones } from "@/lib/project";
 import { createTask, listProjectTasks, updateTask } from "@/lib/task";
 import { commitDraft, commitPersonalDraft } from "@/lib/agent/commit";
 import { listMyPersonalContext } from "@/lib/personal-context";
@@ -179,5 +179,82 @@ describe("commitPersonalDraft（控制台助手的落库口）", () => {
     await expect(
       commitPersonalDraft(student.id, "create_milestone", { title: "中期答辩" }),
     ).rejects.toThrow("草案里没带项目 id");
+  });
+
+  it("create_project 的 teamId 缺了或填成团队名 → 同样报得出是哪一环缺", async () => {
+    const { student } = await scene();
+    // 与上面那四类同理：个人模式也没有「当前团队」，teamId 只能从草案里来
+    await expect(commitPersonalDraft(student.id, "create_project", { name: "新项目" })).rejects.toThrow(
+      "草案里没带团队 id",
+    );
+    await expect(
+      commitPersonalDraft(student.id, "create_project", { teamId: "东吴实验室", name: "新项目" }),
+    ).rejects.toThrow("草案里没带团队 id");
+  });
+});
+
+// 卡片上把日期框**清空**，浏览器交出的是空串。它一路骗过 z.string() 与 lib 里 `if (d && …)` 的
+// 真值判断，最后撞在 PG 的 date 列上（invalid input syntax for type date: ""）→ 用户看到 500
+// 「落库失败，请重试」。这组用例把「空串」在这道门上的语义钉死。
+describe("commitPersonalDraft — 日期字段的空串与 null", () => {
+  beforeEach(resetDb);
+
+  it("空串 = 没给：既不落库、也不报错，原值不动", async () => {
+    const { student, project } = await scene();
+    const task = await createTask(student.id, project.id, { title: "甲", dueDate: "2026-11-01" });
+    const r = await commitPersonalDraft(student.id, "update_tasks", {
+      projectId: project.id,
+      updates: [{ taskId: task.id, updatedAt: task.updatedAt.toISOString(), patch: { dueDate: "" } }],
+    });
+    expect(r).toEqual({ committed: 1, conflicts: [] });
+    expect((await listProjectTasks(student.id, project.id))[0].dueDate).toBe("2026-11-01");
+  });
+
+  it("null = 清掉这个日期（卡片上清空用法一栏时送的就是它）", async () => {
+    const { student, project } = await scene();
+    const task = await createTask(student.id, project.id, { title: "甲", dueDate: "2026-11-01" });
+    const r = await commitPersonalDraft(student.id, "update_tasks", {
+      projectId: project.id,
+      updates: [{ taskId: task.id, updatedAt: task.updatedAt.toISOString(), patch: { dueDate: null } }],
+    });
+    expect(r).toEqual({ committed: 1, conflicts: [] });
+    expect((await listProjectTasks(student.id, project.id))[0].dueDate).toBeNull();
+  });
+
+  it("新建项目/里程碑的空串日期也走同一条路（不撞 date 列）", async () => {
+    const { owner, project, team } = await scene(); // 建项目/里程碑都要 admin
+    const ms = await commitPersonalDraft(owner.id, "create_milestone", {
+      projectId: project.id,
+      title: "中期答辩",
+      targetDate: "",
+    });
+    expect(ms).toEqual({ committed: 1, conflicts: [] });
+    expect((await listProjectMilestones(owner.id, project.id))[0].targetDate).toBeNull();
+
+    expect(
+      await commitPersonalDraft(owner.id, "create_project", {
+        teamId: team.id,
+        name: "新项目",
+        startDate: "",
+        endDate: "2026-12-31",
+      }),
+    ).toEqual({ committed: 1, conflicts: [] });
+    const [created] = await db.select().from(projects).where(eq(projects.name, "新项目"));
+    expect(created.startDate).toBeNull(); // 空串 = 不设
+    expect(created.endDate).toBe("2026-12-31"); // 给了的照常落
+  });
+
+  it("排期的截止日是必填：空串在这一关就被拦下，并说得出是谁", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(student.id, project.id, { title: "甲" });
+    const milestone = await createMilestone(owner.id, project.id, { title: "中期答辩" });
+    await expect(
+      commitPersonalDraft(student.id, "plan_sprint", {
+        projectId: project.id,
+        milestoneId: milestone.id,
+        taskIds: [task.id],
+        dueDate: "",
+      }),
+    ).rejects.toThrow("排期要给截止日");
   });
 });
