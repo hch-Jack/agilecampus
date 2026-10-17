@@ -10,6 +10,7 @@ import { getTaskDetail, listSubtasks, listProjectDependencies } from "@/lib/task
 import { listTeamMembers } from "@/lib/team";
 import { listTeamLabels } from "@/lib/label";
 import { listAttachments } from "@/lib/attachment";
+import { listTaskComments } from "@/lib/comment";
 import { getFeedUnreadCount, listTaskActivities, taskFeedScope } from "@/lib/activity";
 import { ActivityFeed } from "@/components/activity-feed";
 import { formatDateTime } from "@/lib/time";
@@ -21,6 +22,7 @@ import {
   type SubtaskRowData,
 } from "./subtask-list";
 import { AttachmentList, type AttachmentRowData } from "./attachment-list";
+import { CommentList, type CommentRowData } from "./comment-list";
 import { TaskOverview } from "./task-overview";
 
 // 优先级软色 token（与 task-card.tsx 的 PRIORITY_BADGE 同映射，本地复制以免动共享文件）
@@ -57,13 +59,14 @@ export default async function TaskDetailPage({
   const task = await getTaskDetail(session.user.id, taskId).catch(() => null);
   if (!task || task.projectId !== projectId) notFound();
 
-  const [subtasks, dependencies, milestones, activities, attachments, taskFeedUnread] =
+  const [subtasks, dependencies, milestones, activities, attachments, comments, taskFeedUnread] =
     await Promise.all([
       listSubtasks(session.user.id, taskId),
       listProjectDependencies(session.user.id, projectId),
       listProjectMilestones(session.user.id, projectId),
       listTaskActivities(session.user.id, taskId),
       listAttachments(session.user.id, taskId),
+      listTaskComments(session.user.id, taskId),
       getFeedUnreadCount(session.user.id, taskFeedScope(taskId)),
     ]);
   // teacher 只读，无须成员表（仅子任务添加表单用）
@@ -120,6 +123,13 @@ export default async function TaskDetailPage({
     size: a.size,
     createdAt: a.createdAt,
     uploaderName: a.uploaderName,
+  }));
+  const commentRows: CommentRowData[] = comments.map((c) => ({
+    id: c.id,
+    content: c.content,
+    createdAt: c.createdAt,
+    authorId: c.authorId,
+    authorName: c.authorName,
   }));
 
   return (
@@ -206,6 +216,17 @@ export default async function TaskDetailPage({
           taskId={taskId}
           attachments={attachmentRows}
           canWrite={canWrite}
+          timeZone={tz}
+        />
+      </section>
+
+      <section className="ac-card p-5">
+        <CommentList
+          projectId={projectId}
+          taskId={taskId}
+          comments={commentRows}
+          currentUserId={session.user.id}
+          canComment={true}
           timeZone={tz}
         />
       </section>

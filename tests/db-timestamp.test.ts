@@ -124,8 +124,8 @@ describe("时间列的物理 schema 没有变（db:push 不该产生 ALTER）", 
     }
 
     // 数目是对不上就说明有人绕开了 dbTimestamp 自己搓了一个时间列
-    // （私信/动态流/群聊那几张表后来加过一轮，个人上下文表又加了一轮，加表就得同步这个数）
-    expect(columns).toHaveLength(34);
+    // （私信/动态流/群聊那几张表后来加过一轮，个人上下文表又加了一轮，留言板再加一轮，加表就得同步这个数）
+    expect(columns).toHaveLength(35);
     for (const c of columns) expect(c.sqlType).toBe("timestamp");
 
     // createdAt / updatedAt 由 dbTimestampNow 声明，默认值必须在；

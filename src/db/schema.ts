@@ -608,3 +608,21 @@ export const feedReads = pgTable(
   },
   (t) => [primaryKey({ columns: [t.userId, t.scope] })],
 );
+
+// 任务留言板（评论）：团队成员可在任务详情页留言讨论。
+// 任务删除时留言级联消失。
+export const taskComments = pgTable(
+  "task_comments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    authorId: uuid("author_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    createdAt: dbTimestampNow("created_at").notNull(),
+  },
+  (t) => [index("task_comments_task_idx").on(t.taskId)],
+);
