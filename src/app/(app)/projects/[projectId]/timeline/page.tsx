@@ -4,27 +4,14 @@ import { notFound, redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { getProjectForUser, listProjectMilestones } from "@/lib/project";
 import { listProjectTasks } from "@/lib/task";
+import {
+  buildTimeScale,
+  formatMonthDay as fmtMD,
+  inferTaskSpan,
+  parseDay,
+} from "@/lib/gantt";
 import { todayIn } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
-
-const DAY = 86_400_000;
-
-// "YYYY-MM-DD" → **UTC** 零点毫秒；无值返回 null。
-//
-// 这里刻意锚在 UTC：date 列是日历日、没有时区含义，而这张图只需要「第几天到第几天」
-// 的差值。以前锚在宿主本地零点，整张图的坐标系就跟着容器的时区跑，
-// 今日竖线也就落在了宿主时区的今天上 —— 与看板按用户时区算的「今天」对不上。
-// 锚在 UTC 后，坐标系是纯粹的日历算术，今日竖线由传入的 todayMs 决定。
-function parseDay(s: string | null): number | null {
-  if (!s) return null;
-  const t = Date.parse(`${s}T00:00:00Z`);
-  return Number.isNaN(t) ? null : t;
-}
-
-function fmtMD(ms: number): string {
-  const d = new Date(ms);
-  return `${d.getUTCMonth() + 1}/${String(d.getUTCDate()).padStart(2, "0")}`;
-}
 
 type TaskRow = Awaited<ReturnType<typeof listProjectTasks>>[number];
 
@@ -60,16 +47,12 @@ export default async function TimelinePage({
   const scheduled: { task: TaskRow; start: number; end: number }[] = [];
   const unscheduled: TaskRow[] = [];
   for (const t of tasks) {
-    const s0 = parseDay(t.startDate);
-    const d0 = parseDay(t.dueDate);
-    if (s0 === null && d0 === null) {
+    const span = inferTaskSpan(t.startDate, t.dueDate);
+    if (!span) {
       unscheduled.push(t);
       continue;
     }
-    const start = s0 ?? d0!;
-    let end = (d0 ?? s0!) + DAY; // 截止日含当日 → +1 天，保证有宽度
-    if (end <= start) end = start + DAY;
-    scheduled.push({ task: t, start, end });
+    scheduled.push({ task: t, ...span });
   }
 
   // 今日竖线：按**用户自己的时区**定「今天是哪一天」，再落到同一套日历坐标系上
@@ -79,9 +62,17 @@ export default async function TimelinePage({
   return (
     <main className="mx-auto max-w-5xl space-y-6 py-8">
       <header className="space-y-1">
-        <Link href={`/projects/${projectId}`} className="text-xs text-ink-soft hover:text-primary">
-          ← 返回项目
-        </Link>
+        <div className="flex items-center gap-3 text-xs text-ink-soft">
+          <Link href={`/projects/${projectId}`} className="hover:text-primary">
+            ← 返回项目
+          </Link>
+          <Link href={`/projects/${projectId}/graph`} className="hover:text-primary">
+            关系图 →
+          </Link>
+          <Link href={`/projects/${projectId}/flow`} className="hover:text-primary">
+            流程图 →
+          </Link>
+        </div>
         <h1 className="font-display text-2xl font-semibold text-ink">
           {access.project.name} · 时间线
         </h1>
@@ -125,19 +116,16 @@ function Gantt({
   milestones: { id: string; title: string }[];
   todayMs: number;
 }) {
-  // 时间范围：涵盖全部横条 + 今日，两端各留 4% 余白
-  let min = Math.min(...scheduled.map((s) => s.start), todayMs);
-  let max = Math.max(...scheduled.map((s) => s.end), todayMs + DAY);
-  const rawSpan = Math.max(max - min, DAY);
-  const pad = rawSpan * 0.04;
-  min -= pad;
-  max += pad;
-  const span = max - min;
-
-  const pct = (ms: number) => ((ms - min) / span) * 100;
-
-  // 5 个均匀刻度
-  const ticks = Array.from({ length: 5 }, (_, i) => min + (span * i) / 4);
+  // 时间范围：涵盖全部横条 + 今日，两端各留 4% 余白（关系图共用同一套算法）
+  const scale = buildTimeScale({
+    spans: scheduled.map((s) => ({ start: s.start, end: s.end })),
+    milestoneTargetDates: [],
+    projectStartDate: null,
+    projectEndDate: null,
+    todayMs,
+  });
+  const pct = scale.pct;
+  const ticks = scale.ticks;
   const todayPct = pct(todayMs);
 
   // 按里程碑分组（保持里程碑顺序，末尾附「无里程碑」）
