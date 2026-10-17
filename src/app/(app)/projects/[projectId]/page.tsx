@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
@@ -67,14 +68,56 @@ export default async function ProjectPage({
   return (
     <main className="mx-auto max-w-5xl space-y-8 py-8">
       <header>
-        <div className="flex items-start justify-between gap-3">
-          <h1 className="font-display text-2xl font-semibold text-ink">{project.name}</h1>
-          <a
-            href={`/projects/${projectId}/timeline`}
-            className="ac-btn-ghost whitespace-nowrap"
-          >
-            时间线
-          </a>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <h1 className="min-w-0 font-display text-2xl font-semibold text-ink">
+            {project.name}
+          </h1>
+          <div className="flex shrink-0 items-center gap-2">
+            <Link
+              href={`/projects/${projectId}/timeline`}
+              className="ac-btn-ghost whitespace-nowrap"
+            >
+              时间线
+            </Link>
+            <Link
+              href={`/projects/${projectId}/graph`}
+              className="ac-btn-ghost whitespace-nowrap"
+            >
+              <svg
+                viewBox="0 0 16 16"
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                aria-hidden="true"
+              >
+                <circle cx="4" cy="4" r="2" />
+                <circle cx="12" cy="8" r="2" />
+                <circle cx="4" cy="12" r="2" />
+                <path d="M5.7 4.8 10.3 7.2M10.3 8.8 5.7 11.2" />
+              </svg>
+              关系图
+            </Link>
+            <Link
+              href={`/projects/${projectId}/flow`}
+              className="ac-btn-ghost whitespace-nowrap"
+            >
+              <svg
+                viewBox="0 0 16 16"
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                aria-hidden="true"
+              >
+                <rect x="1.5" y="2.5" width="4.5" height="3.5" rx="1" />
+                <rect x="10" y="6.2" width="4.5" height="3.5" rx="1" />
+                <rect x="1.5" y="10" width="4.5" height="3.5" rx="1" />
+                <path d="M6 4.2h2.2v3.8H10M6 11.8h2.2V7.9H10" />
+              </svg>
+              流程图
+            </Link>
+          </div>
         </div>
         {project.description && (
           <p className="mt-1 text-sm text-ink-soft">{project.description}</p>

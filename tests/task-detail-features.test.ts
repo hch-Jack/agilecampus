@@ -458,6 +458,68 @@ describe("任务编辑/删除 action（详情页）", () => {
     expect(calls.some((c) => c[0] === `/projects/${project.id}`)).toBe(true);
   });
 
+  it("只改其他字段时保留历史跨层级后置边", async () => {
+    const { owner, project, parent } = await editScene();
+    const child = await createSubtask(owner.id, parent.id, { title: "子任务" });
+    const top = await createTask(owner.id, project.id, { title: "顶层任务" });
+    await db
+      .insert(taskDependencies)
+      .values({ predecessorId: child.id, successorId: top.id });
+    authMock.userId = owner.id;
+
+    const res = await updateTaskAction(
+      null,
+      editForm({ projectId: project.id, taskId: child.id }),
+    );
+    expect(res).toEqual({ ok: true });
+
+    const deps = await db
+      .select({ successorId: taskDependencies.successorId })
+      .from(taskDependencies)
+      .where(eq(taskDependencies.predecessorId, child.id));
+    expect(deps.map((d) => d.successorId)).toEqual([top.id]);
+  });
+
+  it("新增同级后置后移除历史跨层级边", async () => {
+    const { owner, project, parent } = await editScene();
+    const child = await createSubtask(owner.id, parent.id, { title: "子任务" });
+    const sibling = await createSubtask(owner.id, parent.id, { title: "兄弟任务" });
+    const top = await createTask(owner.id, project.id, { title: "顶层任务" });
+    await db
+      .insert(taskDependencies)
+      .values({ predecessorId: child.id, successorId: top.id });
+    authMock.userId = owner.id;
+
+    const fd = editForm({ projectId: project.id, taskId: child.id });
+    fd.append("successorIds", sibling.id);
+    const res = await updateTaskAction(null, fd);
+    expect(res).toEqual({ ok: true });
+
+    const deps = await db
+      .select({ successorId: taskDependencies.successorId })
+      .from(taskDependencies)
+      .where(eq(taskDependencies.predecessorId, child.id));
+    expect(deps.map((d) => d.successorId)).toEqual([sibling.id]);
+  });
+
+  it("提交跨层级后置被服务端拒绝", async () => {
+    const { owner, project, parent } = await editScene();
+    const child = await createSubtask(owner.id, parent.id, { title: "子任务" });
+    const top = await createTask(owner.id, project.id, { title: "顶层任务" });
+    authMock.userId = owner.id;
+
+    const fd = editForm({ projectId: project.id, taskId: child.id });
+    fd.append("successorIds", top.id);
+    const res = await updateTaskAction(null, fd);
+    expect((res as { error: string }).error).toBe("后置任务须与当前任务同级");
+
+    const deps = await db
+      .select({ successorId: taskDependencies.successorId })
+      .from(taskDependencies)
+      .where(eq(taskDependencies.predecessorId, child.id));
+    expect(deps).toEqual([]);
+  });
+
   it("teacher 编辑被拒且不改库", async () => {
     const { teacher, parent, project } = await editScene();
     authMock.userId = teacher.id;

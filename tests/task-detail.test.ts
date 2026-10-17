@@ -3,11 +3,14 @@ import { createUser } from "@/lib/user";
 import { createTeam, joinTeam } from "@/lib/team";
 import { createProject } from "@/lib/project";
 import {
+  createSubtask,
   createTask,
   updateTask,
   setTaskSuccessors,
   listProjectDependencies,
 } from "@/lib/task";
+import { db } from "@/db";
+import { taskDependencies } from "@/db/schema";
 import { resetDb } from "./helpers";
 
 async function makeUser(email: string) {
@@ -84,5 +87,99 @@ describe("后置任务关联", () => {
     const { outsider, student, project } = await scene();
     const a = await createTask(student.id, project.id, { title: "甲" });
     await expect(setTaskSuccessors(outsider.id, a.id, [])).rejects.toThrow("没有权限");
+  });
+
+  it("同一父任务下的兄弟可互设后置", async () => {
+    const { student, project } = await scene();
+    const parent = await createTask(student.id, project.id, { title: "父" });
+    const c1 = await createSubtask(student.id, parent.id, { title: "子1" });
+    const c2 = await createSubtask(student.id, parent.id, { title: "子2" });
+
+    await setTaskSuccessors(student.id, c1.id, [c2.id]);
+    const deps = await listProjectDependencies(student.id, project.id);
+    expect(deps).toEqual([{ predecessorId: c1.id, successorId: c2.id }]);
+  });
+
+  it("父→子、子→父、跨父同深度都被同级规则拒绝", async () => {
+    const { student, project } = await scene();
+    const p1 = await createTask(student.id, project.id, { title: "父1" });
+    const p2 = await createTask(student.id, project.id, { title: "父2" });
+    const c1 = await createSubtask(student.id, p1.id, { title: "子1" });
+    const c3 = await createSubtask(student.id, p2.id, { title: "子3" });
+
+    await expect(setTaskSuccessors(student.id, p1.id, [c1.id])).rejects.toThrow("同级");
+    await expect(setTaskSuccessors(student.id, c1.id, [p1.id])).rejects.toThrow("同级");
+    await expect(setTaskSuccessors(student.id, c1.id, [c3.id])).rejects.toThrow("同级");
+  });
+
+  it("重复的后置 id 去重后只落一条边", async () => {
+    const { student, project } = await scene();
+    const a = await createTask(student.id, project.id, { title: "甲" });
+    const b = await createTask(student.id, project.id, { title: "乙" });
+
+    await setTaskSuccessors(student.id, a.id, [b.id, b.id]);
+    const deps = await listProjectDependencies(student.id, project.id);
+    expect(deps).toHaveLength(1);
+    expect(deps[0].successorId).toBe(b.id);
+  });
+
+  it("拒绝间接环 a→b→c→a", async () => {
+    const { student, project } = await scene();
+    const parent = await createTask(student.id, project.id, { title: "父" });
+    const a = await createSubtask(student.id, parent.id, { title: "子A" });
+    const b = await createSubtask(student.id, parent.id, { title: "子B" });
+    const c = await createSubtask(student.id, parent.id, { title: "子C" });
+
+    await setTaskSuccessors(student.id, a.id, [b.id]);
+    await setTaskSuccessors(student.id, b.id, [c.id]);
+    await expect(setTaskSuccessors(student.id, c.id, [a.id])).rejects.toThrow("循环");
+  });
+
+  it("历史跨层级边可读；改同级集合时才被移除", async () => {
+    const { student, project } = await scene();
+    const parent = await createTask(student.id, project.id, { title: "父" });
+    const c1 = await createSubtask(student.id, parent.id, { title: "子1" });
+    const c2 = await createSubtask(student.id, parent.id, { title: "子2" });
+    const top = await createTask(student.id, project.id, { title: "顶层" });
+
+    // 模拟规则上线前的历史数据：子任务 → 顶层任务
+    await db
+      .insert(taskDependencies)
+      .values({ predecessorId: c1.id, successorId: top.id });
+
+    expect(await listProjectDependencies(student.id, project.id)).toHaveLength(1);
+
+    // 同级集合变化后走全量替换，历史边移除
+    await setTaskSuccessors(student.id, c1.id, [c2.id]);
+    const deps = await listProjectDependencies(student.id, project.id);
+    expect(deps).toEqual([{ predecessorId: c1.id, successorId: c2.id }]);
+  });
+
+  it("同级集合未变时可保留历史跨层级边（preserve 选项）", async () => {
+    const { student, project } = await scene();
+    const parent = await createTask(student.id, project.id, { title: "父" });
+    const c1 = await createSubtask(student.id, parent.id, { title: "子1" });
+    const c2 = await createSubtask(student.id, parent.id, { title: "子2" });
+    const top = await createTask(student.id, project.id, { title: "顶层" });
+
+    await db
+      .insert(taskDependencies)
+      .values({ predecessorId: c1.id, successorId: top.id });
+
+    // 提交的同级集合（空）与库中一致 → 不动任何边
+    await setTaskSuccessors(student.id, c1.id, [], {
+      preserveCrossLevelIfSiblingSetUnchanged: true,
+    });
+    expect(await listProjectDependencies(student.id, project.id)).toEqual([
+      { predecessorId: c1.id, successorId: top.id },
+    ]);
+
+    // 同级集合变化 → 全量替换，历史边移除
+    await setTaskSuccessors(student.id, c1.id, [c2.id], {
+      preserveCrossLevelIfSiblingSetUnchanged: true,
+    });
+    expect(await listProjectDependencies(student.id, project.id)).toEqual([
+      { predecessorId: c1.id, successorId: c2.id },
+    ]);
   });
 });
