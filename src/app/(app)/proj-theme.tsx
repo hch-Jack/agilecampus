@@ -125,7 +125,18 @@ export function ProjTheme({ children }: { children: ReactNode }) {
       <div className="proj-blob b1" aria-hidden />
       <div className="proj-blob b2" aria-hidden />
       <div className="proj-blob b3" aria-hidden />
-      <canvas ref={cometRef} id="proj-comet" aria-hidden />
+      {/* 这层装饰的样式都挂在 body.proj-cosmic 上，而那个类是挂载之后的 useEffect 才加的。
+          类名落地前 canvas 不在任何固定定位里 —— 它又已被上面的 fit() 设成 innerHeight 高，
+          于是以整屏高度留在文档流里，把 <main> 往下顶 619px。偏偏 Next 的路由滚动处理器就在
+          同一个 commit 里量 <main> 的位置，量到「页面不在视口」便 scrollIntoView()，等类名生效
+          canvas 转正、布局回落时，滚动位置已经留在那个假位置上了（从欢迎页进工作台就停在半空）。
+          内联定位写在元素上，与类名时序无关，这一帧的位移直接消失。值与 .proj-comet 的规则一致。 */}
+      <canvas
+        ref={cometRef}
+        id="proj-comet"
+        aria-hidden
+        style={{ position: "fixed", left: 0, top: 0, zIndex: 9999, pointerEvents: "none" }}
+      />
       {children}
     </>
   );
