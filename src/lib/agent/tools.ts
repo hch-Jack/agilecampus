@@ -234,7 +234,7 @@ export function buildPersonalTools(actorId: string) {
       description:
         "拟一个新项目草案（挂在我指定的团队下）。必须给 teamId（取自快照「我的团队」）。仅产草案，需人工确认后落库。",
       inputSchema: z.object({
-        teamId: z.string().describe("取自快照「我的团队」中的 teamId"),
+        teamId: z.uuid().describe("取自快照「我的团队」中的 teamId"),
         name: z.string(),
         description: z.string().optional(),
         startDate: z.string().optional(),
@@ -245,7 +245,7 @@ export function buildPersonalTools(actorId: string) {
     decompose_tasks: tool({
       description: "把目标/需求拆成某项目的任务清单草案。必须给 projectId。仅产草案，需人工确认后落库。",
       inputSchema: z.object({
-        projectId: z.string().describe("取自快照「我参与的项目」或 list_projects"),
+        projectId: z.uuid().describe("取自快照「我参与的项目」或 list_projects"),
         tasks: z.array(
           z.object({
             title: z.string(),
@@ -262,7 +262,7 @@ export function buildPersonalTools(actorId: string) {
     update_tasks: tool({
       description: "拟某项目的批量任务变更草案（状态/负责人/截止日/里程碑/优先级/标题）。必须给 projectId。仅产草案。",
       inputSchema: z.object({
-        projectId: z.string().describe("取自快照「我参与的项目」或 list_projects"),
+        projectId: z.uuid().describe("取自快照「我参与的项目」或 list_projects"),
         updates: z.array(
           z.object({
             taskId: z.string(),
@@ -277,11 +277,14 @@ export function buildPersonalTools(actorId: string) {
           }),
         ),
       }),
-      // 为每个 update 填入当前 updatedAt（乐观锁读时版本），供 commit 比对
+      // 为每个 update 填入当前 updatedAt（乐观锁读时版本），供 commit 比对；
+      // projectId 必须一并进草案 —— 个人模式没有「当前项目」，落库口 commitPersonalDraft
+      // 只能从草案里取它来重校权限（漏了就会在确认那一步报「草案格式无效」）。
       execute: async ({ projectId, updates }) => {
         const rows = await listProjectTasks(actorId, projectId);
         const versionOf = new Map(rows.map((r) => [r.id, r.updatedAt]));
         return draftEnvelope("update_tasks", {
+          projectId,
           updates: updates.map((u) => ({
             taskId: u.taskId,
             updatedAt: versionOf.get(u.taskId)?.toISOString() ?? "",
@@ -293,7 +296,7 @@ export function buildPersonalTools(actorId: string) {
     plan_sprint: tool({
       description: "把某项目的一组任务排入某里程碑并统一设截止日。必须给 projectId。仅产草案。",
       inputSchema: z.object({
-        projectId: z.string().describe("取自快照「我参与的项目」或 list_projects"),
+        projectId: z.uuid().describe("取自快照「我参与的项目」或 list_projects"),
         milestoneId: z.string(),
         taskIds: z.array(z.string()),
         dueDate: z.string(),
@@ -303,7 +306,7 @@ export function buildPersonalTools(actorId: string) {
     create_milestone: tool({
       description: "在某项目下拟一个里程碑草案（阶段节点，如中期答辩）。必须给 projectId。仅产草案。",
       inputSchema: z.object({
-        projectId: z.string().describe("取自快照「我参与的项目」或 list_projects"),
+        projectId: z.uuid().describe("取自快照「我参与的项目」或 list_projects"),
         title: z.string(),
         targetDate: z.string().optional().describe("目标日期 YYYY-MM-DD"),
       }),

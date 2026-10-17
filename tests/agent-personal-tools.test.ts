@@ -4,13 +4,15 @@ import { personalContexts } from "@/db/schema";
 import { createUser } from "@/lib/user";
 import { createTeam, joinTeam } from "@/lib/team";
 import { createProject, createMilestone } from "@/lib/project";
-import { createTask } from "@/lib/task";
+import { createTask, listProjectTasks } from "@/lib/task";
+import { commitPersonalDraft } from "@/lib/agent/commit";
 import {
   buildPersonalTools,
   buildTools,
   COMMIT_TOOL_NAMES,
   SAVE_CONTEXT_TOOL,
   WRITE_TOOL_NAMES,
+  type CommitToolName,
 } from "@/lib/agent/tools";
 import { resetDb } from "./helpers";
 
@@ -178,5 +180,84 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     expect(WRITE_TOOL_NAMES).toHaveLength(5);
     expect(WRITE_TOOL_NAMES).not.toContain(SAVE_CONTEXT_TOOL);
     expect(COMMIT_TOOL_NAMES).toEqual([...WRITE_TOOL_NAMES, SAVE_CONTEXT_TOOL]);
+  });
+});
+
+// 两个 scope 的分工不同：项目版的 projectId 由请求体给（工具 schema 里没有它），
+// 个人版没有「当前项目」，只能从草案里取（见 commitPersonalDraft）。
+// 工具漏带那个 id 时，卡片照常渲染、点「确认」才炸成「草案格式无效」——
+// 曾经 update_tasks 就漏了 projectId，所以这里逐件把草案喂给落库口，兜住整类。
+describe("个人写工具的草案，落库口都吃得下", () => {
+  beforeEach(resetDb);
+
+  it("五件写工具的草案都自带 projectId / teamId，且能原样落库", async () => {
+    const { owner, student, project } = await scene();
+    // owner 是 admin：建里程碑、改别人任务这类动作都归他
+    const task = await createTask(owner.id, project.id, { title: "写开题报告" });
+    const milestone = await createMilestone(owner.id, project.id, { title: "中期答辩" });
+    const tools = buildPersonalTools(owner.id);
+
+    // 逐件产草案（入参与模型给的等价）；五件都在任何落库之前拟定，
+    // 故 update_tasks 带的读时版本号仍是 task 当时的 updatedAt
+    const envelopes = [
+      await tools.create_milestone.execute!({ projectId: project.id, title: "终期答辩" }, opts),
+      await tools.create_project.execute!({ teamId: project.teamId, name: "新项目" }, opts),
+      await tools.decompose_tasks.execute!(
+        { projectId: project.id, tasks: [{ title: "乙", assigneeId: student.id }] },
+        opts,
+      ),
+      await tools.update_tasks.execute!(
+        { projectId: project.id, updates: [{ taskId: task.id, patch: { assigneeId: student.id } }] },
+        opts,
+      ),
+      await tools.plan_sprint.execute!(
+        { projectId: project.id, milestoneId: milestone.id, taskIds: [task.id], dueDate: "2026-11-01" },
+        opts,
+      ),
+    ];
+
+    for (const env of envelopes) {
+      const { tool, draft } = env as { tool: CommitToolName; draft: Record<string, unknown> };
+      // 落库口要的那个 id：改项目的四件取 projectId，create_project 取 teamId
+      expect(Object.keys(draft), `${tool} 的草案没带落库口要的 id`).toContain(
+        tool === "create_project" ? "teamId" : "projectId",
+      );
+      // 原样交给个人落库口 —— 少了上面那个 id，这里正是那句「草案格式无效」
+      const result = await commitPersonalDraft(owner.id, tool, draft);
+      expect(result.committed, `${tool} 一条都没落`).toBeGreaterThan(0);
+      expect(result.conflicts, `${tool} 不该有版本冲突`).toEqual([]);
+    }
+
+    // 落库真的生效了（不是「没报错但什么也没发生」）
+    expect((await listProjectTasks(owner.id, project.id)).find((t) => t.id === task.id)).toMatchObject({
+      assigneeId: student.id,
+      milestoneId: milestone.id,
+      dueDate: "2026-11-01",
+    });
+  });
+
+  it("转派任务：工作台助手拟的 update_tasks 草案确认即可落库", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "写开题报告" });
+    const tools = buildPersonalTools(owner.id);
+
+    const env = (await tools.update_tasks.execute!(
+      {
+        projectId: project.id,
+        updates: [{ taskId: task.id, patch: { assigneeId: student.id } }],
+      },
+      opts,
+    )) as { draft: { projectId: string; updates: { updatedAt: string }[] } };
+
+    expect(env.draft.projectId).toBe(project.id);
+    expect(env.draft.updates[0].updatedAt).toBe(task.updatedAt.toISOString());
+    await expect(commitPersonalDraft(owner.id, "update_tasks", env.draft)).resolves.toEqual({
+      committed: 1,
+      conflicts: [],
+    });
+    expect((await listProjectTasks(owner.id, project.id))[0]).toMatchObject({
+      id: task.id,
+      assigneeId: student.id,
+    });
   });
 });

@@ -383,3 +383,105 @@ PG 的唯一索引视**多个 NULL 互异**，所以项目会话（`ownerId` 为
 - 测试断言 prompt 时要注意：AI SDK 交给 provider 的每条消息，`content` 都是**部件数组**
   （纯文本 = 单个 `{type:"text"}`），不是字符串。别照着自己传进去的字符串去断言。
 - README 的「助手会话的两种 scope」一节补了这条约定（含排序键与「别把 db 拖进纯模块」的告诫）。
+
+## 个人写工具漏带 projectId：转派任务在「确认」那一步才炸「草案格式无效」
+
+（用户报：「我用AI助手转派任务的时候会碰到这种问题：待确认：批量变更（2）……草案格式无效」）
+
+**根因是两个 scope 的约定不对称。** 项目版的 `projectId` 由请求体给（工具 schema 里根本没有它）；
+个人版没有「当前项目」，只能从**草案里**取（`commitPersonalDraft` 拆出来交给项目版实现）。
+`buildPersonalTools` 的五件写工具里四件是 `draftEnvelope(tool, input)` —— projectId 天然带上；
+唯独 `update_tasks` 要手工拼信封（补读时版本号），`projectId` 就漏在了解构之外。
+于是卡片照常渲染（它只读 `patch`），点「确认落库」才在落库口抛 ZodError，
+被 `/api/chat/commit` 统一翻译成「草案格式无效」——**报错点在落库，病因却在拟稿**。
+
+同一个漏字段还顺手废掉了卡片的下拉框：`collectDraftOptions` 也是按草案里的 projectId 去查选项的，
+拿不到 id 就没有 members/milestones 可给。
+
+**为什么测试没拦住**：既有用例「update_tasks 草案补上读时版本号」只断言 `taskId`/`updatedAt` ——
+而这两个字段正是那处手工拼装里**唯二的产物**，漏掉的那个恰好不在断言里。
+「只测改动过的字段」这种写法，围栏正好开在缺口上。
+
+**修法与围栏**：
+
+- 信封补上 `projectId`（**只改个人版**；项目版故意不带，别顺手"统一"）。
+- `commitPersonalDraft` 缺 id 时改抛可诊断的 `AppError`（「草案里没带项目 id，请让助手重拟一次」），
+  不再被笼统的「草案格式无效」盖住。
+- `tests/agent-personal-tools.test.ts` 新增一组围栏：**逐件**把五件写工具的草案原样喂给
+  `commitPersonalDraft`，断言「带着落库口要的那个 id」且 `committed > 0`。已实测：把 `projectId`
+  改回去，两条用例立刻红。这类「拟稿丢字段、落库才炸」的错，只有把**整条链子**（工具 → 信封 →
+  落库口）串起来测才拦得住。
+
+**顺带改了卡片的可读性**：`update_tasks` 原来把 `{"assigneeId":"b0b0…"}` 原样 `JSON.stringify`
+出来 —— 转派时根本看不出转给谁。现按字段名渲染中文标签 + 可改控件（负责人/里程碑取响应里的选项）。
+**选项查不到时退化为只显示 id，不给空下拉**：空下拉看着像「未分配」，确认下去却仍是原来那个人。
+认不出的字段（模型将来加的新字段）照原样显示，不假装能改。
+
+## 同一条链子的系统排查：还有三处会「拖到确认那一刻才炸」
+
+（用户要：「顺便看看还有没有类似的问题修一下」。做法是顺着
+**工具信封 → 落库口 zod → 卡片字段 → 路由请求体** 逐段比对，且每条都拿代码实测过，
+不靠读代码下结论。）
+
+### 1. 日期框清空 → 空串直通 date 列 → 500（最重的一条）
+
+卡片上把日期框清空，浏览器交出来的是**空串**。它骗过 `z.string().optional()`，也骗过 lib 里
+`if (d && !isValidDate(d))` 这种真值判断（空串 falsy = 「没给」），最后撞在 PG 的 date 列上。
+
+实测（把修复拿掉再跑）：
+
+| 调用 | 结果 |
+| --- | --- |
+| `updateTask({ dueDate: "" })` | PG 报 `invalid input syntax for type date: ""` |
+| `createMilestone({ targetDate: "" })` | 同上 |
+| `createProject({ startDate: "" })` | 同上 |
+| `updateTask({ dueDate: null })` | ✅ 成功，字段被清空 |
+
+用户看到的是路由兜底的 **500「落库失败，请重试」** —— 与上一轮那句「草案格式无效」同一个毛病：
+报错点与病因隔着好几层。
+
+**修法**：落库口加 `optionalDate`（空串一律当**没给**）；`update_tasks` 的 patch 收 `null`
+（=「清掉这个日期」）；卡片里三个可选日期框清空即 `undefined`，只有 `update_tasks` 的日期框
+清空送 `null`（模型提的日期被用户删掉，意思显然是不想要它）；`plan_sprint` 的截止日是必填，
+空串在 zod 这关就被拦下，且报错带字段名。
+
+**围栏**：`tests/agent-commit.test.ts` 新增「日期字段的空串与 null」一组。已实测把 normalization
+拿掉，用例立刻红在 `invalid input syntax for type date: ""` 上。
+
+### 2. 必填框被清空/删空 → 也要等到点确认才报「草案格式无效」
+
+项目名、里程碑名、任务标题被清空，或把拆解列表删到空 —— 这些在落库口的 `min(1)` 上才翻车，
+回给用户的还是上一轮那句笼统话。**卡片本来就把字段摊开给人改了，那就该在改的地方拦**：
+`CardShell` 加 `invalid` 通道，有值即禁用「确认」并把差什么写出来（`firstProblem` 挑第一处）。
+一处机制、五个分支各自给文案，不新开校验层。
+
+### 3. 个人版 `create_project` 的 teamId：工具与落库口形状不一致，且没有守卫
+
+工具 schema 是 `z.string()`，落库口是 `z.uuid()`；而上一轮只给 projectId 加了守卫。
+于是「缺 teamId / 把团队名填进去」还是只会得到最笼统那句。**修法**：
+
+- 守卫补齐（「草案里没带团队 id，请让助手重拟一次」）。
+- 五个写工具的 id 参数（personal 的 projectId/teamId）钉成 `z.uuid()`：形状不对在**工具调用当轮**
+  就失败、模型自己就能改，而不是留一张点了必炸的卡。**读工具仍是 `z.string()`** —— 它们的失败
+  当场发生、当场重试，没有「拖到确认才炸」的问题。
+- `personalCreateProjectSchema` 改成 `createProjectSchema.extend({ teamId })`，两处字段定义从此
+  不可能再各写各的。
+
+### 顺带：军规 3 在个人 scope 指了一个不存在的段
+
+「assigneeId 只能用快照『成员』段落里的 id」—— 个人快照里**没有**成员段（那是项目助手的常驻段）。
+已在个人 scope 的说明里点破，别让模型满世界找它。
+
+### 一处刻意没做（要开先验）
+
+**没让「助手自己清空日期」。** 要表达「清掉截止日」，工具 schema 得从 `z.string().optional()`
+变成 `.nullable()`，转成 JSON Schema 就是 `anyOf:[string,null]`。**本机 `DEEPSEEK_API_KEY` 是空串，
+真实模型回合验不了** —— 万一 provider 对这个 schema 挑食，坏的是整个助手而不是一条边角。
+故只放开「用户在卡片上清空」这条（落库口已收 null），模型侧维持原样：它若送空串，语义是「不改」
+（无害），不是静默清空。要开这条，得先在有 key 的环境里验一轮。
+
+### 另一件系统性的：路由不再只说「草案格式无效」
+
+`/api/chat/commit` 收到 ZodError 时改回 **`草案格式无效（字段路径）：具体原因`**。
+上一轮的漏 projectId、这一轮的 teamId 形状，最终都撞在同一句话上；带上路径后，
+下一个人（或下一次的助手）一眼能看到是哪个字段、差在哪。

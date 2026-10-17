@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { DraftCards, type ChatScope, type Draft, type OptionMap } from "@/components/draft-cards";
 
 /**
@@ -48,6 +48,16 @@ export function AgentChat({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // 消息区是定高可滚动的（max-h-96）：不主动贴底的话，刚发出的那句、以及随后落下来的
+  // 答复（还带一叠草案卡）全长在视野下方，得手动往下拖才看得见 —— 看上去像「没反应」。
+  // 这里读 scrollHeight 会强制一次布局，故同一次提交里渲染出来的草案卡高度也算在内。
+  // 依赖里带上 pending：从「思考中…」转回结果时再贴一次，等卡片撑开也不会露在半路。
+  useEffect(() => {
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, pending]);
 
   async function send() {
     const text = input.trim();
@@ -108,7 +118,7 @@ export function AgentChat({
         </div>
       )}
 
-      <div className="max-h-96 space-y-2 overflow-y-auto">
+      <div ref={listRef} className="max-h-96 space-y-2 overflow-y-auto">
         {messages.map((m, i) => (
           <div key={i}>
             <div className={`rounded-lg p-2.5 text-sm ${m.role === "user" ? "bg-sunken" : "bg-primary-soft"}`}>
