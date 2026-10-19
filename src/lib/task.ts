@@ -1,4 +1,5 @@
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
 import type { DbTx } from "@/db";
 import {
@@ -552,6 +553,177 @@ export async function listProjectDependencies(actorId: string, projectId: string
     .from(taskDependencies)
     .innerJoin(tasks, eq(taskDependencies.predecessorId, tasks.id))
     .where(eq(tasks.projectId, projectId));
+}
+
+// 依赖边上的一端（助手读任务详情 / 关系图用）
+export type TaskLink = {
+  id: string;
+  title: string;
+  status: TaskStatus;
+  parentTaskId: string | null;
+};
+
+async function linkedTasks(direction: "up" | "down", taskId: string): Promise<TaskLink[]> {
+  const selfCol = direction === "up" ? taskDependencies.successorId : taskDependencies.predecessorId;
+  const otherCol = direction === "up" ? taskDependencies.predecessorId : taskDependencies.successorId;
+  return db
+    .select({
+      id: tasks.id,
+      title: tasks.title,
+      status: tasks.status,
+      parentTaskId: tasks.parentTaskId,
+    })
+    .from(taskDependencies)
+    .innerJoin(tasks, eq(otherCol, tasks.id))
+    .where(eq(selfCol, taskId))
+    .orderBy(tasks.sortOrder);
+}
+
+// 单任务的前置/后置（关系图的基本单元）。权限口径同 getTaskDetail。
+export async function listTaskLinks(actorId: string, taskId: string) {
+  const [task] = await db
+    .select({ projectId: tasks.projectId })
+    .from(tasks)
+    .where(eq(tasks.id, taskId));
+  if (!task) throw new AppError("任务不存在");
+  await requireProjectAccess(actorId, task.projectId);
+
+  const [predecessors, successors] = await Promise.all([
+    linkedTasks("up", taskId),
+    linkedTasks("down", taskId),
+  ]);
+  return { predecessors, successors };
+}
+
+// 项目级依赖边（带两端标题/状态/是否跨层级），供关系图与助手读工具用。
+// 旧 listProjectDependencies 的返回形状被图页面与测试钉死，故另开一个函数。
+export async function listProjectDependenciesDetailed(actorId: string, projectId: string) {
+  await requireProjectAccess(actorId, projectId);
+
+  const pred = alias(tasks, "pred");
+  const succ = alias(tasks, "succ");
+  const rows = await db
+    .select({
+      predecessorId: taskDependencies.predecessorId,
+      predecessorTitle: pred.title,
+      predecessorStatus: pred.status,
+      predecessorParentTaskId: pred.parentTaskId,
+      successorId: taskDependencies.successorId,
+      successorTitle: succ.title,
+      successorStatus: succ.status,
+      successorParentTaskId: succ.parentTaskId,
+    })
+    .from(taskDependencies)
+    // 权限过滤：边的前端须属于该项目（后端由插入时校验保证，这里只用作收敛）
+    .innerJoin(tasks, eq(taskDependencies.predecessorId, tasks.id))
+    .innerJoin(pred, eq(taskDependencies.predecessorId, pred.id))
+    .innerJoin(succ, eq(taskDependencies.successorId, succ.id))
+    .where(eq(tasks.projectId, projectId))
+    .orderBy(pred.sortOrder, succ.sortOrder);
+
+  return rows.map((r) => ({
+    ...r,
+    crossLevel: r.predecessorParentTaskId !== r.successorParentTaskId,
+  }));
+}
+
+// 任务详情聚合：详情 + 子任务 + 前置/后置 + 里程碑/父任务标题。
+// opts.projectId 用于项目 scope 的自校（防止项目助手读到别的项目）。
+export async function getTaskDetailBundle(
+  actorId: string,
+  taskId: string,
+  opts?: { projectId?: string },
+) {
+  const detail = await getTaskDetail(actorId, taskId);
+  if (opts?.projectId && detail.projectId !== opts.projectId)
+    throw new AppError("任务不属于该项目");
+
+  const [subtasks, links, milestoneRow, parentRow] = await Promise.all([
+    listSubtasks(actorId, taskId),
+    listTaskLinks(actorId, taskId),
+    detail.milestoneId
+      ? db
+          .select({ title: milestones.title })
+          .from(milestones)
+          .where(eq(milestones.id, detail.milestoneId))
+      : Promise.resolve([]),
+    detail.parentTaskId
+      ? db.select({ title: tasks.title }).from(tasks).where(eq(tasks.id, detail.parentTaskId))
+      : Promise.resolve([]),
+  ]);
+
+  return {
+    ...detail,
+    milestoneTitle: milestoneRow[0]?.title ?? null,
+    parentTitle: parentRow[0]?.title ?? null,
+    subtasks,
+    predecessors: links.predecessors,
+    successors: links.successors,
+  };
+}
+
+// 后置任务的**增量**调整（add / remove），补 setTaskSuccessors 的全量替换语义。
+// 只动「同级」边：历史跨层级边既不在可增范围、也不允许经此删除（显式报错，
+// 否则 setTaskSuccessors 的 preserve 选项会让删除静默无效）。
+export async function applyTaskSuccessorDelta(
+  actorId: string,
+  predecessorId: string,
+  delta: { add?: string[] | null; remove?: string[] | null },
+  opts?: { projectId?: string },
+) {
+  const add = [...new Set(delta.add ?? [])];
+  const remove = [...new Set(delta.remove ?? [])];
+  if (add.length === 0 && remove.length === 0)
+    throw new AppError("没有要调整的后置任务");
+
+  const [pred] = await db
+    .select({ id: tasks.id, projectId: tasks.projectId, parentTaskId: tasks.parentTaskId })
+    .from(tasks)
+    .where(eq(tasks.id, predecessorId));
+  if (!pred) throw new AppError("任务不存在");
+  if (opts?.projectId && pred.projectId !== opts.projectId)
+    throw new AppError("任务不属于该项目");
+  await requireTaskWrite(actorId, pred.projectId);
+
+  const rows = await db
+    .select({
+      successorId: taskDependencies.successorId,
+      parentTaskId: tasks.parentTaskId,
+    })
+    .from(taskDependencies)
+    .innerJoin(tasks, eq(taskDependencies.successorId, tasks.id))
+    .where(eq(taskDependencies.predecessorId, predecessorId));
+
+  const currentSiblingIds = rows
+    .filter((r) => r.parentTaskId === pred.parentTaskId)
+    .map((r) => r.successorId);
+  const currentSiblingSet = new Set(currentSiblingIds);
+  const allSuccessorSet = new Set(rows.map((r) => r.successorId));
+
+  const crossLevelRemove = remove.filter(
+    (id) => allSuccessorSet.has(id) && !currentSiblingSet.has(id),
+  );
+  if (crossLevelRemove.length)
+    throw new AppError("跨层级后置任务不能通过此接口调整");
+
+  // add / remove 有交集时 remove 优先：用户明确要删的边不应被同一次请求加回来。
+  const actualRemove = remove.filter((id) => currentSiblingSet.has(id));
+  const actualAdd = add.filter(
+    (id) => !remove.includes(id) && !currentSiblingSet.has(id),
+  );
+  const next = [
+    ...currentSiblingIds.filter((id) => !actualRemove.includes(id)),
+    ...actualAdd,
+  ];
+
+  if (next.includes(predecessorId)) throw new AppError("后置任务不可构成循环");
+
+  await setTaskSuccessors(actorId, predecessorId, next, {
+    preserveCrossLevelIfSiblingSetUnchanged: true,
+  });
+
+  const { successors } = await listTaskLinks(actorId, predecessorId);
+  return { predecessorId, added: actualAdd, removed: actualRemove, successors };
 }
 
 // 工作台：跨全部项目列「分配给我的父任务」（子任务不上看板，经父卡片的子任务进度体现）。
