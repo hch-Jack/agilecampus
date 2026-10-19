@@ -10,6 +10,7 @@ import {
   deleteAttachment,
   ATTACHMENT_MAX_SIZE,
 } from "@/lib/attachment";
+import { createTaskComment, deleteTaskComment } from "@/lib/comment";
 import { AppError, ForbiddenError } from "@/lib/errors";
 
 export type FormState = { error: string } | null;
@@ -178,6 +179,62 @@ export async function deleteAttachmentAction(
     await deleteAttachment(session.user.id, attachmentId);
   } catch (e) {
     if (e instanceof ForbiddenError) return { error: "没有权限删除附件" };
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
+  revalidateTaskPaths(projectId, taskId);
+  return null;
+}
+
+const addCommentSchema = z.object({
+  projectId: z.uuid(),
+  taskId: z.uuid(),
+  content: z.string().trim().min(1, "留言内容不能为空").max(2000, "留言内容不能超过 2000 字符"),
+});
+
+export async function addCommentAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+
+  const parsed = addCommentSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+  const { projectId, taskId, content } = parsed.data;
+
+  try {
+    await createTaskComment(session.user.id, taskId, content);
+  } catch (e) {
+    if (e instanceof ForbiddenError) return { error: "没有权限发表留言" };
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
+  revalidateTaskPaths(projectId, taskId);
+  return null;
+}
+
+const deleteCommentSchema = z.object({
+  projectId: z.uuid(),
+  taskId: z.uuid(),
+  commentId: z.uuid(),
+});
+
+export async function deleteCommentAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+
+  const parsed = deleteCommentSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+  const { projectId, taskId, commentId } = parsed.data;
+
+  try {
+    await deleteTaskComment(session.user.id, commentId);
+  } catch (e) {
+    if (e instanceof ForbiddenError) return { error: "没有权限删除此留言" };
     if (e instanceof AppError) return { error: e.message };
     throw e;
   }
