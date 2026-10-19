@@ -840,6 +840,71 @@ function DraftCard({
     );
   }
 
+  if (draft.tool === "invite_to_group") {
+    const d = data as {
+      groupId?: string;
+      groupName?: string;
+      usernames?: string[];
+      invitees?: { id: string; name: string }[];
+      memberCount?: number;
+    };
+    const usernames = d.usernames ?? [];
+    const invitees = d.invitees ?? [];
+    const removeInvitee = (name: string) =>
+      setData({
+        ...d,
+        usernames: usernames.filter((n) => n.toLowerCase() !== name.toLowerCase()),
+        invitees: invitees.filter((i) => i.name.toLowerCase() !== name.toLowerCase()),
+      });
+    const invalid = firstProblem([
+      typeof d.groupId !== "string" || d.groupId === ""
+        ? "草案缺少群聊，请让助手重拟"
+        : null,
+      usernames.length === 0 ? "至少需要一位被邀请人" : null,
+    ]);
+    return (
+      <CardShell
+        title={`邀请进群（${d.groupName ?? "群聊"}）`}
+        onConfirm={() => save("invite_to_group", d)}
+        invalid={invalid}
+      >
+        <p className="text-xs text-ink-soft">
+          群聊：{d.groupName ?? `${(d.groupId ?? "").slice(0, 8)}…`}
+          {typeof d.memberCount === "number"
+            ? `（当前 ${d.memberCount} 人，邀请后 ${d.memberCount + usernames.length} 人）`
+            : ""}
+        </p>
+        <div className="flex flex-wrap items-center gap-1 text-xs">
+          <span className="text-ink-soft">被邀请人：</span>
+          {invitees.length === 0 && usernames.length === 0 && (
+            <span className="text-ink-faint">无</span>
+          )}
+          {(invitees.length > 0
+            ? invitees
+            : usernames.map((n) => ({ id: n, name: n }))
+          ).map((p) => (
+            <span
+              key={p.id}
+              className="flex items-center gap-1 rounded border border-line px-1 text-ink"
+            >
+              {p.name}
+              <button
+                type="button"
+                onClick={() => removeInvitee(p.name)}
+                className="text-high hover:underline"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+        <p className="text-xs text-high">
+          确认后发送邀请，对方接受后才会入群（不会直接拉人）；已邀请过或已在群里会如实报错。
+        </p>
+      </CardShell>
+    );
+  }
+
   if (draft.tool === "forward_message") {
     const d = data as {
       sourceType?: "dm" | "group";

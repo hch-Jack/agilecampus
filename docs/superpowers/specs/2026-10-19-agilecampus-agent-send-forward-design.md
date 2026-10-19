@@ -10,7 +10,7 @@
 1. 按用户名找联系人；
 2. 拟「发私信 / 发群消息」草案（含把**项目里的文件**发给个人或群聊）；
 3. 把已有消息（连同附件）**原样转发**给个人或群聊；
-4. 拟「组建群聊」草案；
+4. 拟「组建群聊」与「邀请别人进群」草案；
 5. 同时补齐对应的 `/api/agent/*` REST 端点。
 
 **两段式铁律不变**：所有发送/建群/转发只产草案，用户点确认后才真正落库；
@@ -49,10 +49,13 @@
 | `send_message` | `{ targetType, targetId, content?, fileSource?, attachmentId? }` | `targetName`、`content`、`fileSource`、`attachmentId`、`filename`、`mimeType`、`size` | `sendChatMessage` |
 | `forward_message` | `{ sourceType, sourceId, messageId, targetType, targetId }` | `sourceLabel`、`sourceSenderName`、`content`、附件元数据、`targetName` | `forwardChatMessage` |
 | `create_group_chat` | `{ name, memberIds }` | `name`、`memberIds`、`members`、`memberCount` | `createGroup` |
+| `invite_to_group` | `{ groupId, usernames }` | `groupName`、`memberCount`、`usernames`、`invitees` | `inviteToGroupMembers`（待接受，不是直接拉人） |
 
 - `fileSource` 与 `attachmentId` 必须**同时给出**；正文与附件至少其一。
 - `create_group_chat` 过滤自己、要求至少一位其他成员、群名 ≤30 字、成员 ≤50 人。
-- 常量 `SEND_MESSAGE_TOOL` / `FORWARD_MESSAGE_TOOL` / `CREATE_GROUP_TOOL`
+- `invite_to_group` 一次可邀请 1–20 个用户名；拟稿与落库共用 `resolveGroupInviteTargets`，
+  已在群里 / 已邀请过 / 群满 / 查无此人都在拟稿时拒绝；批量插入在一个事务里，任一条失败整批回滚。
+- 常量 `SEND_MESSAGE_TOOL` / `FORWARD_MESSAGE_TOOL` / `CREATE_GROUP_TOOL` / `INVITE_GROUP_TOOL`
   **只进 `COMMIT_TOOL_NAMES`，不进 `WRITE_TOOL_NAMES`**：项目页落库口天然拒收，
   `commitPersonalDraft` 在拆 `projectId` 之前分派。
 - `create_group_chat` 进「可续做」清单（新 groupId 可派生后续发消息）；
@@ -68,6 +71,7 @@
   - `send_message`：目标、可编辑正文、附件来源与大小、可移除附件；警告不可撤回。
   - `create_group_chat`：可编辑群名、成员 chip（可移除）、显示人数（含自己）；警告「直接拉入，无需同意」。
   - `forward_message`：只读展示来源、发送人、原文、附件、目标；警告「原样转发，无法撤回」。
+  - `invite_to_group`：显示群名与当前人数、被邀请人 chip（可移除）；警告「对方接受后才入群」。
 
 ## 六、REST 端点
 
@@ -78,6 +82,7 @@
 | POST | `/api/agent/messages` | 发私信/群消息；附件只按 id 引用已有任务/消息附件 |
 | GET | `/api/agent/groups` | 我加入的群聊与未读数 |
 | POST | `/api/agent/groups` | 建群（直接拉人，不是邀请待接受） |
+| POST | `/api/agent/groups/{groupId}/invites` | 邀请一至多人进群（待对方接受） |
 | POST | `/api/agent/messages/forward` | 转发已有私信/群消息 |
 | GET | `/api/agent/tasks/{taskId}/attachments` | 列任务附件 |
 | GET/DELETE | `/api/agent/attachments/{attachmentId}` | 下载 / 删除任务附件 |
@@ -91,16 +96,17 @@
 
 - 模糊搜索用户名（会变成全站用户名枚举接口）。
 - REST 二进制上传（附件只能用已有 id 引用；上传仍走网页表单）。
-- 消息删除/撤回/标已读、群成员管理（退群/踢人/邀请）。
+- 消息删除/撤回/标已读、群成员管理中的退群/踢人（邀请已提供）。
 - 编辑转发正文（转发即原样）。
 - 发送频率限制（与网页发送一致，滥用靠撤销令牌兜底）。
 
 ## 八、测试
 
 - `tests/agent-messaging-tools.test.ts`：找人、发送草案不落库、确认后落库、
-  任务附件/消息附件复制、转发权限、建群草案与落库重校。
-- `tests/agent-messaging-api.test.ts`：contacts、messages GET/POST、groups、
+  任务附件/消息附件复制、转发权限、建群/邀请草案与落库重校。
+- `tests/agent-messaging-api.test.ts`：contacts、messages GET/POST、groups、invites、
   forward、任务附件列表/下载/删除、消息附件下载、子任务删除的 200/400/401/403。
+- `tests/group-chat.test.ts`：批量邀请去重、任一失败整批不落。
 - `tests/agent-personal-tools.test.ts`：个人工具全集 23 件、项目工具不含发送类、
   `COMMIT_TOOL_NAMES` 纳入三件新常量。
 - `tests/agent-continuation.test.ts`：发送/转发/建群摘要与可续做清单。

@@ -153,36 +153,91 @@ export async function getGroupInfo(actorId: string, groupId: string): Promise<Gr
 
 // —— 邀请（行存在即待处理）——
 
-export async function inviteToGroup(actorId: string, groupId: string, rawName: string) {
+export type GroupInviteTarget = { id: string; name: string };
+
+/**
+ * 邀请前的只读校验：群成员身份、用户名存在且不是自己、未在群里、没有待处理邀请、群未满。
+ * 助手拟稿与真正落库共用，保证「卡片能确认」与「确认能成功」的口径一致。
+ */
+export async function resolveGroupInviteTargets(
+  actorId: string,
+  groupId: string,
+  rawNames: string[],
+): Promise<{ groupName: string; memberCount: number; invitees: GroupInviteTarget[] }> {
   await requireMembership(groupId, actorId);
-  const invitee = await findUserByUsername(actorId, rawName);
 
-  const [existingMember] = await db
-    .select({ userId: dmGroupMembers.userId })
-    .from(dmGroupMembers)
-    .where(and(eq(dmGroupMembers.groupId, groupId), eq(dmGroupMembers.userId, invitee.id)));
-  if (existingMember) throw new AppError("TA 已在群聊里");
+  const seen = new Set<string>();
+  const names = rawNames
+    .map((n) => n.trim())
+    .filter((n) => {
+      if (!n) return false;
+      const key = n.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  if (names.length === 0) throw new AppError("请输入要邀请的用户名");
 
-  const [pending] = await db
-    .select({ id: dmGroupInvites.id })
-    .from(dmGroupInvites)
-    .where(and(eq(dmGroupInvites.groupId, groupId), eq(dmGroupInvites.inviteeId, invitee.id)));
-  if (pending) throw new AppError("已邀请过，等待对方处理");
+  // 逐个走 findUserByUsername：保留「不存在 / 这是你自己」的既有文案
+  const byId = new Map<string, GroupInviteTarget>();
+  for (const name of names) {
+    const u = await findUserByUsername(actorId, name);
+    byId.set(u.id, { id: u.id, name: u.name });
+  }
+  const invitees = [...byId.values()];
+  const ids = invitees.map((i) => i.id);
 
-  const [{ count }] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(dmGroupMembers)
-    .where(eq(dmGroupMembers.groupId, groupId));
-  if (count >= GROUP_MEMBER_CAP) throw new AppError(`群成员已满（上限 ${GROUP_MEMBER_CAP} 人）`);
+  const [members, pending, group] = await Promise.all([
+    db
+      .select({ userId: dmGroupMembers.userId })
+      .from(dmGroupMembers)
+      .where(and(eq(dmGroupMembers.groupId, groupId), inArray(dmGroupMembers.userId, ids))),
+    db
+      .select({ inviteeId: dmGroupInvites.inviteeId })
+      .from(dmGroupInvites)
+      .where(and(eq(dmGroupInvites.groupId, groupId), inArray(dmGroupInvites.inviteeId, ids))),
+    db
+      .select({ name: dmGroups.name, memberCount: sql<number>`count(*)::int` })
+      .from(dmGroups)
+      .innerJoin(dmGroupMembers, eq(dmGroupMembers.groupId, dmGroups.id))
+      .where(eq(dmGroups.id, groupId))
+      .groupBy(dmGroups.name),
+  ]);
+  if (members.length > 0) throw new AppError("TA 已在群聊里");
+  if (pending.length > 0) throw new AppError("已邀请过，等待对方处理");
+  if (!group[0]) throw new AppError("群聊不存在或已解散");
+  if (group[0].memberCount + invitees.length > GROUP_MEMBER_CAP)
+    throw new AppError(`群成员已满（上限 ${GROUP_MEMBER_CAP} 人）`);
 
-  const [inserted] = await db
-    .insert(dmGroupInvites)
-    .values({ groupId, inviterId: actorId, inviteeId: invitee.id })
-    .onConflictDoNothing()
-    .returning({ id: dmGroupInvites.id });
-  // 并发兜底：唯一索引 (groupId, inviteeId) 挡下重复邀请
-  if (!inserted) throw new AppError("已邀请过，等待对方处理");
-  return { inviteeName: invitee.name };
+  return { groupName: group[0].name, memberCount: group[0].memberCount, invitees };
+}
+
+/** 邀请一个或多个人进群（行存在即待处理，对方接受后才真正入群）。 */
+export async function inviteToGroupMembers(
+  actorId: string,
+  groupId: string,
+  rawNames: string[],
+): Promise<{ groupName: string; invitees: GroupInviteTarget[] }> {
+  const { groupName, invitees } = await resolveGroupInviteTargets(actorId, groupId, rawNames);
+
+  await db.transaction(async (tx) => {
+    const inserted = await tx
+      .insert(dmGroupInvites)
+      .values(
+        invitees.map((i) => ({ groupId, inviterId: actorId, inviteeId: i.id })),
+      )
+      .onConflictDoNothing()
+      .returning({ id: dmGroupInvites.id });
+    // 并发兜底：唯一索引 (groupId, inviteeId) 挡下重复邀请；抛错会回滚整批
+    if (inserted.length !== invitees.length) throw new AppError("已邀请过，等待对方处理");
+  });
+
+  return { groupName, invitees };
+}
+
+export async function inviteToGroup(actorId: string, groupId: string, rawName: string) {
+  const { invitees } = await inviteToGroupMembers(actorId, groupId, [rawName]);
+  return { inviteeName: invitees[0].name };
 }
 
 export async function listMyGroupInvites(actorId: string): Promise<GroupInviteView[]> {

@@ -13,6 +13,7 @@ import {
   COMMIT_TOOL_NAMES,
   CREATE_GROUP_TOOL,
   FORWARD_MESSAGE_TOOL,
+  INVITE_GROUP_TOOL,
   RESPOND_INVITE_TOOL,
   SAVE_CONTEXT_TOOL,
   SEND_MESSAGE_TOOL,
@@ -59,6 +60,7 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
         "find_contact",
         "forward_message",
         "get_task_detail",
+        "invite_to_group",
         "list_dependencies",
         "list_members",
         "list_message_threads",
@@ -88,6 +90,7 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     expect(projectTools).not.toHaveProperty("send_message");
     expect(projectTools).not.toHaveProperty("forward_message");
     expect(projectTools).not.toHaveProperty("create_group_chat");
+    expect(projectTools).not.toHaveProperty("invite_to_group");
     // 个人模式反过来不重复项目内归档的读工具：项目页问「最近发生了什么」才查得到整套上下文
     expect(tools).not.toHaveProperty("list_project_activity");
     expect(tools).not.toHaveProperty("list_comments");
@@ -222,6 +225,7 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     expect(WRITE_TOOL_NAMES).not.toContain(SEND_MESSAGE_TOOL);
     expect(WRITE_TOOL_NAMES).not.toContain(FORWARD_MESSAGE_TOOL);
     expect(WRITE_TOOL_NAMES).not.toContain(CREATE_GROUP_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(INVITE_GROUP_TOOL);
     expect(COMMIT_TOOL_NAMES).toEqual([
       ...WRITE_TOOL_NAMES,
       SAVE_CONTEXT_TOOL,
@@ -230,6 +234,7 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
       SEND_MESSAGE_TOOL,
       FORWARD_MESSAGE_TOOL,
       CREATE_GROUP_TOOL,
+      INVITE_GROUP_TOOL,
     ]);
   });
 });

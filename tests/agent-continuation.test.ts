@@ -83,6 +83,18 @@ describe("summarizeDraft", () => {
         draft: { name: "讨论组", memberCount: 3 },
       }),
     ).toBe("组建群聊「讨论组」（3 人）");
+    expect(
+      summarizeDraft({
+        tool: "invite_to_group",
+        draft: { groupName: "讨论组", usernames: ["张三", "李四"] },
+      }),
+    ).toBe("邀请「张三、李四」进群「讨论组」");
+    expect(
+      summarizeDraft({
+        tool: "invite_to_group",
+        draft: { groupName: "讨论组", usernames: ["甲", "乙", "丙", "丁"] },
+      }),
+    ).toBe("邀请「甲、乙、丙等」进群「讨论组」");
   });
 
   it("群邀请摘要带群名与接受/拒绝", () => {
@@ -124,6 +136,7 @@ describe("isContinuableTool", () => {
     expect(isContinuableTool("attach_message_file_to_task")).toBe(false);
     expect(isContinuableTool("send_message")).toBe(false);
     expect(isContinuableTool("forward_message")).toBe(false);
+    expect(isContinuableTool("invite_to_group")).toBe(false);
   });
 });
 

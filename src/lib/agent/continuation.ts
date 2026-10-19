@@ -21,6 +21,7 @@ export const DRAFT_TOOL_LABELS: Record<string, string> = {
   send_message: "发送消息",
   forward_message: "转发消息",
   create_group_chat: "组建群聊",
+  invite_to_group: "邀请进群",
 };
 
 /**
@@ -136,6 +137,17 @@ export function summarizeDraft(d: DraftLike): string {
       return `组建群聊「${name ? clip(name, TITLE_LIMIT) : "新群"}」${
         count !== null ? `（${count} 人）` : ""
       }`;
+    }
+    case "invite_to_group": {
+      const group = text(body.groupName);
+      const names = list(body.usernames)
+        .map((n) => text(n))
+        .filter((n): n is string => n !== null);
+      const shown = names.slice(0, 3).map((n) => clip(n, TITLE_LIMIT));
+      const more = names.length > shown.length ? "等" : "";
+      return `邀请「${shown.length > 0 ? `${shown.join("、")}${more}` : "成员"}」进群「${
+        group ? clip(group, TITLE_LIMIT) : "群聊"
+      }」`;
     }
     case "save_personal_context":
       return `个人上下文（${list(body.entries).length} 条）`;

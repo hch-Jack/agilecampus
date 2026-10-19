@@ -378,6 +378,27 @@ curl -X DELETE "$AGILECAMPUS_URL/api/agent/tasks/<taskId>/subtasks/<subtaskId>" 
 
 父任务对不上 → `400`；非项目成员 → `403`。
 
+### 26. 邀请进群 — `POST /api/agent/groups/{groupId}/invites`
+
+邀请一至多人进群。与网页一致：邀请进入**待处理**列表，对方接受后才入群（**不是直接拉人**）。
+调用者须仍在群聊里；用户名精确匹配（大小写不敏感），可先用联系人接口查人。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `usernames` | string[] | 二选一 | 要邀请的用户名列表 |
+| `username` | string | 二选一 | 只邀请一人时的简写 |
+
+```bash
+curl -X POST "$AGILECAMPUS_URL/api/agent/groups/<groupId>/invites" \
+  -H "Authorization: Bearer $AGILECAMPUS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"usernames":["zhouyu","xiaoqiao"]}'
+# → {"invited":2,"groupName":"讨论组",
+#     "invitees":[{"userId":"...","name":"zhouyu"},{"userId":"...","name":"xiaoqiao"}]}
+```
+
+已在群里 / 已邀请过 / 群满 / 查无此人 → `400`；非群成员 → `403`；`groupId` 非 uuid、未给用户名或未登录 → `400`/`401`。
+
 ## 响应与错误
 
 - `200`：成功，返回创建/更新后的精简对象（含 `id`）。

@@ -6,6 +6,7 @@ import {
   createGroup,
   dissolveGroup,
   inviteToGroup,
+  inviteToGroupMembers,
   kickMember,
   leaveGroup,
   listGroupConversations,
@@ -129,6 +130,36 @@ describe("inviteToGroup / respondToGroupInvite", () => {
     await expect(inviteToGroup(owner.id, groupId, "乙")).rejects.toThrow("TA 已在群聊里");
     await expect(inviteToGroup(owner.id, groupId, "甲")).rejects.toThrow("这是你自己");
     await expect(inviteToGroup(owner.id, groupId, "不存在的人")).rejects.toThrow("用户不存在");
+  });
+
+  it("批量邀请：去重后一次落多条；任一校验失败则整批不落", async () => {
+    const { owner, groupId } = await seedGroup();
+    const d = await seedUser("丁", "d@example.com");
+    const e = await seedUser("戊", "e@example.com");
+    const f = await seedUser("己", "f@example.com");
+
+    const r = await inviteToGroupMembers(owner.id, groupId, ["丁", " 丁 ", "戊"]);
+    expect(r.groupName).toBe("项目讨论组");
+    expect(r.invitees.map((i) => i.name)).toEqual(["丁", "戊"]);
+    expect(await listMyGroupInvites(d.id)).toHaveLength(1);
+    expect(await listMyGroupInvites(e.id)).toHaveLength(1);
+
+    // 混进一个已在群里的成员：整批拒绝，己 不会先落一条
+    await expect(
+      inviteToGroupMembers(owner.id, groupId, ["己", "乙"]),
+    ).rejects.toThrow("TA 已在群聊里");
+    expect(await listMyGroupInvites(f.id)).toEqual([]);
+
+    // 混进一个不存在的用户名：同样整批不落
+    await expect(
+      inviteToGroupMembers(owner.id, groupId, ["己", "不存在的人"]),
+    ).rejects.toThrow("用户不存在");
+    expect(await listMyGroupInvites(f.id)).toEqual([]);
+
+    // 全是空白用户名
+    await expect(inviteToGroupMembers(owner.id, groupId, ["  "])).rejects.toThrow(
+      "请输入要邀请的用户名",
+    );
   });
 
   it("非成员不能邀请（ForbiddenError）", async () => {

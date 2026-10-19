@@ -26,6 +26,7 @@ import {
   listGroupConversations,
   listGroupMessagesReadOnly,
   listMyGroupInvites,
+  resolveGroupInviteTargets,
   resolveGroupMembers,
 } from "@/lib/group-chat";
 import { getChatAttachmentInfo, getForwardSource, resolveChatTarget } from "@/lib/chat-transfer";
@@ -742,6 +743,35 @@ export function buildPersonalTools(actorId: string) {
         });
       },
     }),
+    invite_to_group: tool({
+      description:
+        "拟一个邀请进群草案：把一至多个人邀请到某个群聊（对方需要接受，不是直接拉入）。" +
+        "groupId 取自 list_message_threads 的 groups[].groupId；usernames 是对方的用户名（不是昵称或邮箱），" +
+        "可先用 find_contact 核实。已在群里、已邀请过、群满都会在拟稿时报错。" +
+        "仅产草案，确认前绝不能声称已邀请。",
+      inputSchema: z.object({
+        groupId: z.uuid().describe("群聊 id，取自 list_message_threads"),
+        usernames: z
+          .array(z.string())
+          .min(1)
+          .max(20)
+          .describe("要邀请的用户名（全站唯一，大小写不敏感）"),
+      }),
+      execute: async ({ groupId, usernames }) => {
+        const { groupName, memberCount, invitees } = await resolveGroupInviteTargets(
+          actorId,
+          groupId,
+          usernames,
+        );
+        return draftEnvelope(INVITE_GROUP_TOOL, {
+          groupId,
+          groupName,
+          memberCount,
+          usernames: invitees.map((i) => i.name),
+          invitees,
+        });
+      },
+    }),
     attach_message_file_to_task: tool({
       description:
         "把消息里的文件添加为任务附件：拟一张草案，确认后**复制文件字节**新建任务附件" +
@@ -941,6 +971,7 @@ export const ATTACH_MESSAGE_TOOL = "attach_message_file_to_task" as const;
 export const SEND_MESSAGE_TOOL = "send_message" as const;
 export const FORWARD_MESSAGE_TOOL = "forward_message" as const;
 export const CREATE_GROUP_TOOL = "create_group_chat" as const;
+export const INVITE_GROUP_TOOL = "invite_to_group" as const;
 
 /** 需要人工确认才落库的工具全集 —— 两个 scope 的草案都走同一张确认卡 */
 export const COMMIT_TOOL_NAMES = [
@@ -951,6 +982,7 @@ export const COMMIT_TOOL_NAMES = [
   SEND_MESSAGE_TOOL,
   FORWARD_MESSAGE_TOOL,
   CREATE_GROUP_TOOL,
+  INVITE_GROUP_TOOL,
 ] as const;
 
 export type CommitToolName = (typeof COMMIT_TOOL_NAMES)[number];

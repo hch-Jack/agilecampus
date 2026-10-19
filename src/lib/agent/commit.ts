@@ -13,13 +13,14 @@ import {
 import { copyMessageAttachmentToTask, deleteAttachment } from "@/lib/attachment";
 import { createPersonalContext } from "@/lib/personal-context";
 import { notifyTaskAssigned, notifyTaskCompleted } from "@/lib/notify";
-import { createGroup, respondToGroupInvite } from "@/lib/group-chat";
+import { createGroup, inviteToGroupMembers, respondToGroupInvite } from "@/lib/group-chat";
 import { forwardChatMessage, sendChatMessage } from "@/lib/chat-transfer";
 import { AppError, ForbiddenError } from "@/lib/errors";
 import {
   ATTACH_MESSAGE_TOOL,
   CREATE_GROUP_TOOL,
   FORWARD_MESSAGE_TOOL,
+  INVITE_GROUP_TOOL,
   personalContextDraftSchema,
   RESPOND_INVITE_TOOL,
   SAVE_CONTEXT_TOOL,
@@ -149,6 +150,11 @@ const forwardMessageSchema = z.object({
 const createGroupChatSchema = z.object({
   name: z.string().min(1),
   memberIds: z.array(z.uuid()).min(1),
+});
+
+const inviteToGroupSchema = z.object({
+  groupId: z.uuid(),
+  usernames: z.array(z.string().min(1)).min(1),
 });
 
 function chatTargetOf(d: { targetType: "user" | "group"; targetId: string }) {
@@ -348,6 +354,17 @@ export async function commitCreateGroup(
   return { committed: 1, conflicts: [] };
 }
 
+// 邀请进群：草案里的 groupName / invitees 只用于展示；用户名在这里重新解析，
+// 群成员身份、已在群里、重复邀请、群满全部由 inviteToGroupMembers 重校。
+export async function commitInviteToGroup(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = inviteToGroupSchema.parse(draft);
+  await inviteToGroupMembers(actorId, d.groupId, d.usernames);
+  return { committed: 1, conflicts: [] };
+}
+
 // 与项目版的 createProjectSchema 共用字段定义：个人版只是多一个团队 id，
 // 免得两处各写一份、日后加字段时只改一边
 const personalCreateProjectSchema = createProjectSchema.extend({ teamId: z.uuid() });
@@ -376,6 +393,7 @@ export async function commitPersonalDraft(
   if (tool === SEND_MESSAGE_TOOL) return commitSendMessage(actorId, draft);
   if (tool === FORWARD_MESSAGE_TOOL) return commitForwardMessage(actorId, draft);
   if (tool === CREATE_GROUP_TOOL) return commitCreateGroup(actorId, draft);
+  if (tool === INVITE_GROUP_TOOL) return commitInviteToGroup(actorId, draft);
 
   if (tool === "create_project") {
     // teamId 是 uuid 形状，与下面那四类同理：缺了/填成了团队名就说清楚，别甩一句「草案格式无效」

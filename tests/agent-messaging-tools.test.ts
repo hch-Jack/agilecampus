@@ -15,12 +15,15 @@ import {
   getGroupInfo,
   listGroupConversations,
   listGroupMessagesReadOnly,
+  listMyGroupInvites,
+  respondToGroupInvite,
   sendGroupMessage,
 } from "@/lib/group-chat";
 import {
   buildPersonalTools,
   CREATE_GROUP_TOOL,
   FORWARD_MESSAGE_TOOL,
+  INVITE_GROUP_TOOL,
   SEND_MESSAGE_TOOL,
 } from "@/lib/agent/tools";
 import { commitPersonalDraft } from "@/lib/agent/commit";
@@ -428,5 +431,107 @@ describe("工作台助手：组建群聊", () => {
       }),
     ).rejects.toThrow("群聊至少要有另一位成员");
     expect(await listGroupConversations(student.id)).toEqual([]);
+  });
+});
+
+describe("工作台助手：邀请进群", () => {
+  beforeEach(resetDb);
+
+  it("草案不落邀请；确认后生成待处理邀请，对方接受才入群", async () => {
+    const { owner, student, third, outsider } = await scene();
+    const group = await createGroup(owner.id, "讨论组", [student.id]);
+    const tools = buildPersonalTools(owner.id);
+
+    const env = envelope(
+      await tools.invite_to_group.execute!(
+        { groupId: group.id, usernames: ["third", "OUTSIDER"] },
+        opts,
+      ),
+    );
+    expect(env).toMatchObject({
+      __draft: true,
+      tool: INVITE_GROUP_TOOL,
+      draft: {
+        groupId: group.id,
+        groupName: "讨论组",
+        memberCount: 2,
+        usernames: ["third", "outsider"],
+      },
+    });
+    expect(env.draft.invitees).toEqual(
+      expect.arrayContaining([
+        { id: third.id, name: "third" },
+        { id: outsider.id, name: "outsider" },
+      ]),
+    );
+    // 确认前谁都没收到邀请
+    expect(await listMyGroupInvites(third.id)).toEqual([]);
+    expect(await listMyGroupInvites(outsider.id)).toEqual([]);
+    expect((await getGroupInfo(owner.id, group.id)).memberCount).toBe(2);
+
+    await expect(
+      commitPersonalDraft(owner.id, INVITE_GROUP_TOOL, env.draft),
+    ).resolves.toEqual({ committed: 1, conflicts: [] });
+
+    const invites = await listMyGroupInvites(third.id);
+    expect(invites).toHaveLength(1);
+    expect(invites[0]).toMatchObject({ groupId: group.id, groupName: "讨论组", inviterName: "owner" });
+    expect(await listMyGroupInvites(outsider.id)).toHaveLength(1);
+    // 接受前仍不是成员
+    expect((await getGroupInfo(owner.id, group.id)).memberCount).toBe(2);
+
+    await respondToGroupInvite(third.id, invites[0].inviteId, true);
+    expect((await getGroupInfo(owner.id, group.id)).memberCount).toBe(3);
+    expect(await listMyGroupInvites(third.id)).toEqual([]);
+  });
+
+  it("已在群 / 自己 / 查无此人 / 重复邀请 / 空用户名都被拒", async () => {
+    const { owner, student } = await scene();
+    const group = await createGroup(owner.id, "讨论组", [student.id]);
+    const tools = buildPersonalTools(owner.id);
+
+    await expect(
+      tools.invite_to_group.execute!({ groupId: group.id, usernames: ["student"] }, opts),
+    ).rejects.toThrow("TA 已在群聊里");
+    await expect(
+      tools.invite_to_group.execute!({ groupId: group.id, usernames: ["owner"] }, opts),
+    ).rejects.toThrow("这是你自己");
+    await expect(
+      tools.invite_to_group.execute!({ groupId: group.id, usernames: ["ghost"] }, opts),
+    ).rejects.toThrow("用户不存在");
+    await expect(
+      tools.invite_to_group.execute!({ groupId: group.id, usernames: ["  "] }, opts),
+    ).rejects.toThrow("请输入要邀请的用户名");
+
+    const env = envelope(
+      await tools.invite_to_group.execute!(
+        { groupId: group.id, usernames: ["third"] },
+        opts,
+      ),
+    );
+    await commitPersonalDraft(owner.id, INVITE_GROUP_TOOL, env.draft);
+    await expect(
+      tools.invite_to_group.execute!({ groupId: group.id, usernames: ["THIRD"] }, opts),
+    ).rejects.toThrow("已邀请过，等待对方处理");
+  });
+
+  it("非群成员不能邀请；落库口重校群成员身份", async () => {
+    const { owner, student, outsider, third } = await scene();
+    const group = await createGroup(owner.id, "讨论组", [student.id]);
+
+    await expect(
+      buildPersonalTools(outsider.id).invite_to_group.execute!(
+        { groupId: group.id, usernames: ["third"] },
+        opts,
+      ),
+    ).rejects.toThrow("你已不在该群聊中");
+
+    await expect(
+      commitPersonalDraft(outsider.id, INVITE_GROUP_TOOL, {
+        groupId: group.id,
+        usernames: ["third"],
+      }),
+    ).rejects.toThrow("你已不在该群聊中");
+    expect(await listMyGroupInvites(third.id)).toEqual([]);
   });
 });

@@ -13,12 +13,15 @@ import {
 } from "@/lib/dm";
 import {
   createGroup,
+  getGroupInfo,
   listGroupMessagesReadOnly,
+  listMyGroupInvites,
   sendGroupMessage,
 } from "@/lib/group-chat";
 import { GET as contactsRoute } from "@/app/api/agent/contacts/route";
 import { GET as messagesRoute, POST as sendMessageRoute } from "@/app/api/agent/messages/route";
 import { GET as groupsRoute, POST as createGroupRoute } from "@/app/api/agent/groups/route";
+import { POST as inviteRoute } from "@/app/api/agent/groups/[groupId]/invites/route";
 import { POST as forwardRoute } from "@/app/api/agent/messages/forward/route";
 import { GET as listTaskAttachmentsRoute } from "@/app/api/agent/tasks/[taskId]/attachments/route";
 import {
@@ -61,6 +64,7 @@ const attachmentCtx = (attachmentId: string) => ({
   params: Promise.resolve({ attachmentId }),
 });
 const taskCtx = (taskId: string) => ({ params: Promise.resolve({ taskId }) });
+const groupCtx = (groupId: string) => ({ params: Promise.resolve({ groupId }) });
 const subtaskCtx = (taskId: string, subtaskId: string) => ({
   params: Promise.resolve({ taskId, subtaskId }),
 });
@@ -294,6 +298,93 @@ describe("GET/POST /api/agent/groups", () => {
     expect((await createGroupRoute(post({ name: "x", memberIds: [student.id] }))).status).toBe(
       401,
     );
+  });
+});
+
+describe("POST /api/agent/groups/:groupId/invites", () => {
+  beforeEach(resetDb);
+
+  it("邀请单个/多个用户名进入待处理列表（不直接入群）", async () => {
+    const { owner, student, outsider, ownerToken } = await scene();
+    const group = await createGroup(owner.id, "讨论组", [student.id]);
+    const newbie = await makeUser("newbie@example.com");
+
+    const multi = await inviteRoute(
+      post({ usernames: ["outsider", "newbie"] }, ownerToken),
+      groupCtx(group.id),
+    );
+    expect(multi.status).toBe(200);
+    expect(await multi.json()).toMatchObject({
+      invited: 2,
+      groupName: "讨论组",
+      invitees: expect.arrayContaining([
+        { userId: outsider.id, name: "outsider" },
+        { userId: newbie.id, name: "newbie" },
+      ]),
+    });
+    expect(await listMyGroupInvites(outsider.id)).toHaveLength(1);
+    expect(await listMyGroupInvites(newbie.id)).toHaveLength(1);
+
+    // 单人写法同样可用
+    const another = await makeUser("another@example.com");
+    const single = await inviteRoute(
+      post({ username: "another" }, ownerToken),
+      groupCtx(group.id),
+    );
+    expect(single.status).toBe(200);
+    expect((await single.json()).invitees).toEqual([
+      { userId: another.id, name: "another" },
+    ]);
+
+    // 待处理不算成员
+    expect((await getGroupInfo(owner.id, group.id)).memberCount).toBe(2);
+  });
+
+  it("已在群 / 重复邀请 / 空参数 / 无效 id / 未登录 / 非成员", async () => {
+    const { owner, student, ownerToken, outsiderToken } = await scene();
+    const group = await createGroup(owner.id, "讨论组", [student.id]);
+
+    expect(
+      (
+        await inviteRoute(
+          post({ usernames: ["student"] }, ownerToken),
+          groupCtx(group.id),
+        )
+      ).status,
+    ).toBe(400);
+
+    expect(
+      (
+        await inviteRoute(
+          post({ usernames: ["outsider"] }, ownerToken),
+          groupCtx(group.id),
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await inviteRoute(
+          post({ usernames: ["outsider"] }, ownerToken),
+          groupCtx(group.id),
+        )
+      ).status,
+    ).toBe(400);
+
+    expect((await inviteRoute(post({}, ownerToken), groupCtx(group.id))).status).toBe(400);
+    expect(
+      (await inviteRoute(post({ usernames: ["outsider"] }, ownerToken), groupCtx("bad"))).status,
+    ).toBe(400);
+    expect(
+      (await inviteRoute(post({ usernames: ["outsider"] }), groupCtx(group.id))).status,
+    ).toBe(401);
+    expect(
+      (
+        await inviteRoute(
+          post({ usernames: ["student"] }, outsiderToken),
+          groupCtx(group.id),
+        )
+      ).status,
+    ).toBe(403);
   });
 });
 
