@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateBearer, unauthorized, mapAgentError } from "@/lib/agent-auth";
+import { optionalDateInput } from "@/lib/agent/validation";
 import { createSubtask, listSubtasks } from "@/lib/task";
 
 type Ctx = { params: Promise<{ taskId: string }> };
@@ -31,8 +32,8 @@ const createSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
   assigneeId: z.uuid().optional(),
-  startDate: z.string().optional(),
-  dueDate: z.string().optional(),
+  startDate: optionalDateInput,
+  dueDate: optionalDateInput,
   milestoneId: z.uuid().optional(),
   priority: z.enum(["low", "medium", "high"]).optional(),
 });

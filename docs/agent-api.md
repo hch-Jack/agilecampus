@@ -32,6 +32,8 @@ Authorization: Bearer <token>
 | `milestoneId` | uuid | 否 | 里程碑（须属该项目） |
 | `priority` | `low`\|`medium`\|`high` | 否 | 默认 `medium` |
 
+日期可传 `null` 或空串，等价于「未设置」（不会进入 date 列，也不会 500）。本表同样适用于端点 9 / 11。
+
 ```bash
 curl -X POST "$AGILECAMPUS_URL/api/agent/tasks" \
   -H "Authorization: Bearer $AGILECAMPUS_TOKEN" \
@@ -148,11 +150,15 @@ curl -X POST "$AGILECAMPUS_URL/api/agent/projects/$PID/tasks" \
 
 ### 10. 任务详情 — `GET /api/agent/tasks/{taskId}`
 
+含依赖两端（`predecessors` / `successors`），每项带 `id/title/status/parentTaskId`。
+
 ```bash
 curl "$AGILECAMPUS_URL/api/agent/tasks/$TID" -H "Authorization: Bearer $AGILECAMPUS_TOKEN"
 # → {"id":"...","projectId":"...","title":"调研现有方案","status":"doing","priority":"medium",
 #     "startDate":null,"dueDate":"2026-09-01","milestoneId":"...","parentTaskId":null,
 #     "assigneeId":"...","assigneeName":"周瑜","completionNote":null,
+#     "predecessors":[{"id":"...","title":"立题","status":"done","parentTaskId":null}],
+#     "successors":[],
 #     "createdAt":"2026-07-25T09:42:20.351Z","updatedAt":"2026-07-25T09:42:20.351Z"}
 ```
 
@@ -174,6 +180,60 @@ curl -X POST "$AGILECAMPUS_URL/api/agent/tasks/$TID/subtasks" \
 ```bash
 curl "$AGILECAMPUS_URL/api/agent/tasks/$TID/subtasks" -H "Authorization: Bearer $AGILECAMPUS_TOKEN"
 # → {"parentTaskId":"...","subtasks":[{"id":"...","title":"子任务：设计接口","status":"todo", ...}]}
+```
+
+### 13. 改任务详情 — `PATCH /api/agent/tasks/{taskId}`
+
+至少提供一个字段。**`null` = 清空**，**空串 = 没给（不改）**。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `title` | string | 非空 |
+| `description` | string \| null | 描述 |
+| `assigneeId` | uuid \| null | 负责人；须为团队成员 |
+| `milestoneId` | uuid \| null | 里程碑；须属于该项目 |
+| `startDate` / `dueDate` | `YYYY-MM-DD` \| null | 须满足先后顺序与项目周期 |
+| `status` | `todo`\|`doing`\|`done` | |
+| `priority` | `low`\|`medium`\|`high` | |
+| `completionNote` | string \| null | 完成说明 |
+
+不收 `projectId` / `parentTaskId` / `createdById` / `sortOrder`。teacher 只读（403）。
+并发按 last-writer-wins，无版本号。
+
+```bash
+curl -X PATCH "$AGILECAMPUS_URL/api/agent/tasks/$TID" \
+  -H "Authorization: Bearer $AGILECAMPUS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"startDate":"2026-11-01","description":"补充调研范围"}'
+# → {"id":"...","startDate":"2026-11-01","description":"补充调研范围", ... ,"updatedAt":"..."}
+```
+
+### 14. 调后置任务（依赖边） — `POST /api/agent/tasks/{taskId}/successors`
+
+路径里的 id 是**前置任务**。语义是**增量**：`add` 只加、`remove` 只删，未提到的旧边原样保留。
+两者相交时 **remove 优先**。后置任务**须与前置任务同级**（同一个 `parentTaskId`；顶层任务彼此同级）。
+
+```bash
+curl -X POST "$AGILECAMPUS_URL/api/agent/tasks/$TID/successors" \
+  -H "Authorization: Bearer $AGILECAMPUS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"add":["<uuid>"],"remove":["<uuid>"]}'
+# → {"predecessorId":"...","added":["..."],"removed":["..."],
+#     "successors":[{"id":"...","title":"...","status":"todo","parentTaskId":null}]}
+```
+
+护栏：自环与直接/间接环 → 400；跨项目后置 → 400；跨层级历史边**只读**，`remove` 它会
+明确报 `跨层级后置任务不能通过此接口调整`（不是静默无效）。并发按 last-writer-wins。
+
+### 15. 项目依赖图 — `GET /api/agent/projects/{projectId}/dependencies`
+
+列出项目内全部依赖边，带两端标题、状态与 `crossLevel`（兼容早期跨层级数据）。
+
+```bash
+curl "$AGILECAMPUS_URL/api/agent/projects/$PID/dependencies" \
+  -H "Authorization: Bearer $AGILECAMPUS_TOKEN"
+# → {"projectId":"...","dependencies":[
+#     {"predecessorId":"...","predecessorTitle":"立题","predecessorStatus":"done",
+#      "predecessorParentTaskId":null,"successorId":"...","successorTitle":"调研",
+#      "successorStatus":"todo","successorParentTaskId":null,"crossLevel":false}]}
 ```
 
 ## 响应与错误
