@@ -238,7 +238,7 @@ export function ParticleMorph() {
     let lastNow = 0; // 上一帧时间戳，用于流星速度
     let t = 0; // 动画累计时间：dt 封顶后累加，后台恢复时不回放
     // 流星：偶发划过，短暂点缀，不抢中间粒子主体
-    let meteors: Array<{ x: number; y: number; vx: number; vy: number; life: number; maxLife: number }> = [];
+    const meteors: Array<{ x: number; y: number; vx: number; vy: number; life: number; maxLife: number }> = [];
     let nextMeteor = 2500;
     const frame = (now: number) => {
       // dt 封顶：切后台/标签页时 rAF 会暂停，恢复瞬间 now 大跳，
