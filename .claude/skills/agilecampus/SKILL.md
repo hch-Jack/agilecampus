@@ -49,9 +49,19 @@ curl -sS "$AGILECAMPUS_URL/api/agent/projects/<projectId>/tasks?status=todo" \
 
 ### 任务详情 / 子任务清单
 
+任务详情含描述、起止日、完成说明、负责人，以及 `predecessors` / `successors`（紧邻的前置/后置任务）。
+
 ```bash
 curl -sS "$AGILECAMPUS_URL/api/agent/tasks/<taskId>" -H "Authorization: Bearer $AGILECAMPUS_TOKEN"
 curl -sS "$AGILECAMPUS_URL/api/agent/tasks/<taskId>/subtasks" -H "Authorization: Bearer $AGILECAMPUS_TOKEN"
+```
+
+### 看依赖图（关系图 / 流程图）
+
+```bash
+curl -sS "$AGILECAMPUS_URL/api/agent/projects/<projectId>/dependencies" \
+  -H "Authorization: Bearer $AGILECAMPUS_TOKEN"
+# → {"dependencies":[{predecessorId, predecessorTitle, successorId, successorTitle, crossLevel, ...}]}
 ```
 
 ## 写入
@@ -108,6 +118,34 @@ curl -sS -X POST "$AGILECAMPUS_URL/api/agent/tasks" \
   -H "Content-Type: application/json" \
   -d '{"projectId":"<uuid>","title":"<标题>","priority":"medium"}'
 ```
+
+### 改任务详情
+
+至少给一个字段。`null` = 清空，空串 = 没给（不改）。teacher 只读。
+
+```bash
+curl -sS -X PATCH "$AGILECAMPUS_URL/api/agent/tasks/<taskId>" \
+  -H "Authorization: Bearer $AGILECAMPUS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"description":"新描述","startDate":"2026-11-01","status":"doing"}'
+```
+
+可改：`title`、`description`、`assigneeId`、`milestoneId`、`startDate`、`dueDate`、
+`status`、`priority`、`completionNote`。
+
+### 调后置任务（依赖）
+
+**增量**语义：`add` 只加、`remove` 只删，没提到的旧后置原样保留；相交时 remove 优先。
+路径里的 id 是**前置任务**。后置任务**须与前置任务同级**（同一个父任务，或同为顶层）。
+先 `GET /tasks/<id>` 看清现有前后置再动手。
+
+```bash
+curl -sS -X POST "$AGILECAMPUS_URL/api/agent/tasks/<predecessorId>/successors" \
+  -H "Authorization: Bearer $AGILECAMPUS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"add":["<uuid>"],"remove":["<uuid>"]}'
+```
+
+护栏：自环/成环、跨项目、跨层级一律 400；历史跨层级边只读，`remove` 它会明确报错。
+不确定边界时先问用户，别硬试。
 
 ### 填写完成情况（标记完成）
 

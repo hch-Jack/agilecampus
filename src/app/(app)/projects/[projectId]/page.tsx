@@ -173,6 +173,11 @@ export default async function ProjectPage({
           [projectId]: {
             members: members.map((m) => ({ id: m.id, name: m.name })),
             milestones: projectMilestones.map((m) => ({ id: m.id, name: m.title })),
+            tasks: projectTasks.map((t) => ({
+              id: t.id,
+              name: t.title,
+              parentTaskId: t.parentTaskId,
+            })),
           },
         }}
       />

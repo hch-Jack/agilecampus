@@ -25,7 +25,7 @@ export async function POST(req: Request) {
 
   const { scope, projectId, tool, draft } = parsed.data;
   if (scope === "project" && (!projectId || !WRITE_TOOL_NAMES.includes(tool as never))) {
-    // 项目页只有五个写工具，个人上下文不经项目页落库
+    // 项目页只认 WRITE_TOOL_NAMES 里的写工具，个人上下文不经项目页落库
     return NextResponse.json({ error: "草案格式无效" }, { status: 400 });
   }
 

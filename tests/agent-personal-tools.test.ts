@@ -48,6 +48,9 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
         "create_milestone",
         "create_project",
         "decompose_tasks",
+        "edit_task_links",
+        "get_task_detail",
+        "list_dependencies",
         "list_members",
         "list_milestones",
         "list_projects",
@@ -177,7 +180,7 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
   });
 
   it("save_personal_context 不并进 WRITE_TOOL_NAMES，但进可落库清单", () => {
-    expect(WRITE_TOOL_NAMES).toHaveLength(5);
+    expect(WRITE_TOOL_NAMES).toHaveLength(6);
     expect(WRITE_TOOL_NAMES).not.toContain(SAVE_CONTEXT_TOOL);
     expect(COMMIT_TOOL_NAMES).toEqual([...WRITE_TOOL_NAMES, SAVE_CONTEXT_TOOL]);
   });
@@ -190,10 +193,11 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
 describe("个人写工具的草案，落库口都吃得下", () => {
   beforeEach(resetDb);
 
-  it("五件写工具的草案都自带 projectId / teamId，且能原样落库", async () => {
+  it("六件写工具的草案都自带 projectId / teamId，且能原样落库", async () => {
     const { owner, student, project } = await scene();
     // owner 是 admin：建里程碑、改别人任务这类动作都归他
     const task = await createTask(owner.id, project.id, { title: "写开题报告" });
+    const successor = await createTask(owner.id, project.id, { title: "答辩排练" });
     const milestone = await createMilestone(owner.id, project.id, { title: "中期答辩" });
     const tools = buildPersonalTools(owner.id);
 
@@ -208,6 +212,10 @@ describe("个人写工具的草案，落库口都吃得下", () => {
       ),
       await tools.update_tasks.execute!(
         { projectId: project.id, updates: [{ taskId: task.id, patch: { assigneeId: student.id } }] },
+        opts,
+      ),
+      await tools.edit_task_links.execute!(
+        { projectId: project.id, predecessorId: task.id, add: [successor.id] },
         opts,
       ),
       await tools.plan_sprint.execute!(

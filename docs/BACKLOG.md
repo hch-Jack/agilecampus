@@ -52,7 +52,7 @@
 - update_tasks 中不属本项目的 taskId 被误报为"版本冲突/他人改动"（实为无效 id）——纯提示文案，无安全影响
 
 ## 图四（任务增强+总览）简化备案
-- 后置任务仅防直接成环（A↔B），未做间接环（A→B→C→A）检测——简单关联，不强制阻断执行
+- ~~后置任务仅防直接成环（A↔B），未做间接环（A→B→C→A）检测~~ **[已偿]** `setTaskSuccessors` 沿反向边求祖先集，直接/间接环一律拒绝（见 `tests/task-detail.test.ts`）
 - 完成情况(completionNote)仅编辑态填写，未做「拖入已完成时弹窗提示补充」的引导交互
 - 跨项目总览为列表+任务统计，未含管理员整体看板泳道/甘特图（留后续「图五·管理视图」）
 - listMyProjects 对 admin/teacher/student 一视同仁（无项目级成员表，沿图二备案）
@@ -472,16 +472,39 @@ PG 的唯一索引视**多个 NULL 互异**，所以项目会话（`ownerId` 为
 「assigneeId 只能用快照『成员』段落里的 id」—— 个人快照里**没有**成员段（那是项目助手的常驻段）。
 已在个人 scope 的说明里点破，别让模型满世界找它。
 
-### 一处刻意没做（要开先验）
+### 一处当时刻意没做、后来按需求开了（仍需真模型先验）
 
-**没让「助手自己清空日期」。** 要表达「清掉截止日」，工具 schema 得从 `z.string().optional()`
-变成 `.nullable()`，转成 JSON Schema 就是 `anyOf:[string,null]`。**本机 `DEEPSEEK_API_KEY` 是空串，
-真实模型回合验不了** —— 万一 provider 对这个 schema 挑食，坏的是整个助手而不是一条边角。
-故只放开「用户在卡片上清空」这条（落库口已收 null），模型侧维持原样：它若送空串，语义是「不改」
-（无害），不是静默清空。要开这条，得先在有 key 的环境里验一轮。
+**当时没让「助手自己清空日期」。** 要表达「清掉截止日」，工具 schema 得从 `z.string().optional()`
+变成 `.nullable()`，转成 JSON Schema 就是 `anyOf:[string,null]`。当时因本机无法跑真实模型而收手。
+
+**[2026-10-19 更新]** 「管理任务详情」需求要求助手能清空描述/起始日/完成说明，故
+`update_tasks.patch` 的 `description` / `startDate` / `completionNote` 已改为 `.nullable()`，
+军规 10 说明「传 null = 清空」。**风险照旧**：真实模型回合仍未在本机验证过；若部署后
+provider 对 `anyOf:[string,null]` 挑食，先把这三处退回 `z.string().optional()`（用户仍可在卡片上清空）。
+`dueDate` 保持不变（仍是 `z.string().optional()`）。
 
 ### 另一件系统性的：路由不再只说「草案格式无效」
 
 `/api/chat/commit` 收到 ZodError 时改回 **`草案格式无效（字段路径）：具体原因`**。
 上一轮的漏 projectId、这一轮的 teamId 形状，最终都撞在同一句话上；带上路径后，
 下一个人（或下一次的助手）一眼能看到是哪个字段、差在哪。
+
+## 助手：任务起始日 + 任务详情 + 后置任务（2026-10-19）
+
+### 决策
+- 依赖边维持「后置须与前置同级（同 `parentTaskId`）」，不改 lib 校验。
+- 助手写依赖用**增量** `add` / `remove`，不做全量替换：模型漏列旧边不会误删。
+- 对外 REST 同步开放：`PATCH /tasks/{id}`、`POST /tasks/{id}/successors`、`GET /projects/{id}/dependencies`。
+
+### 简化备案
+- **历史跨层级依赖边只读。** `applyTaskSuccessorDelta` 对「remove 跨层级边」明确报错，
+  不给模型「返回成功但边还在」的假象（`setTaskSuccessors` 的 preserve 选项会让删除静默无效）。
+- `setTaskSuccessors` 仍是全量替换：只要同级集合变化，该前置任务的旧边会先删再插（含历史跨层级边）。
+  助手侧靠 delta 只动提到的边，但底层语义没变。
+- 依赖边无版本字段，增量接口按 last-writer-wins；**不要**拿 `task.updatedAt` 冒充边版本。
+- `PATCH /tasks/{id}` 不加乐观锁（与 `PATCH /projects/{id}` 口径一致）。
+- `GET /tasks/{id}` 只追加 `predecessors` / `successors`，不塞 `subtasks`（另有端点 12）。
+- `edit_task_links` 的草案带展示字段（前置标题、现有后置）；落库 schema **不加** `.strict()`，
+  展示字段由 zod 自动剥离。
+- 真实模型回合（选工具、传 `null` 清空）本机无 key，未验；见上文「需真模型先验」。
+- 跨层级依赖的**新建**仍然做不到（同级规则）；助手被要求如实说明，不要硬调工具换一个含糊报错。
