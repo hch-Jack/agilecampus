@@ -163,10 +163,21 @@ export type DmMessageView = {
   attachment: { id: string; filename: string; size: number } | null;
 };
 
-export async function listMessages(
+export type DmThread = {
+  peer: DmPeer;
+  messages: DmMessageView[];
+  hasMore: boolean;
+};
+
+/**
+ * 会话正文的**只读**查询：不建联系人、不置已读。
+ * 聊天窗口与助手读消息共用；副作用留给各自的调用方。
+ */
+async function loadDmThread(
   actorId: string,
   peerId: string,
-): Promise<{ peer: DmPeer; messages: DmMessageView[] }> {
+  limit?: number,
+): Promise<DmThread> {
   const [peer] = await db
     .select({
       id: users.id,
@@ -177,9 +188,8 @@ export async function listMessages(
     .from(users)
     .where(eq(users.id, peerId));
   if (!peer) throw new AppError("用户不存在");
-  await ensureContact(actorId, peerId);
 
-  const rows = await db
+  const query = db
     .select({
       id: dmMessages.id,
       senderId: dmMessages.senderId,
@@ -197,20 +207,19 @@ export async function listMessages(
         and(eq(dmMessages.senderId, actorId), eq(dmMessages.recipientId, peerId)),
         and(eq(dmMessages.senderId, peerId), eq(dmMessages.recipientId, actorId)),
       ),
-    )
-    .orderBy(asc(dmMessages.createdAt));
-
-  // 打开即已读：对方发我的未读消息批量置读，对方的未读角标与已读回执据此更新
-  await db
-    .update(dmMessages)
-    .set({ readAt: sql`now()` })
-    .where(
-      and(
-        eq(dmMessages.recipientId, actorId),
-        eq(dmMessages.senderId, peerId),
-        isNull(dmMessages.readAt),
-      ),
     );
+
+  let rows: Awaited<typeof query>;
+  let hasMore = false;
+  if (limit === undefined) {
+    // 聊天窗口要全部消息（沿用既有行为）
+    rows = await query.orderBy(asc(dmMessages.createdAt));
+  } else {
+    // 助手只读最近 N 条：倒序多取一条判 hasMore，再反转回正序
+    const fetched = await query.orderBy(desc(dmMessages.createdAt)).limit(limit + 1);
+    hasMore = fetched.length > limit;
+    rows = fetched.slice(0, limit).reverse();
+  }
 
   return {
     peer: { ...peer, avatarUrl: userAvatarUrl(peer.id, peer.avatarUpdatedAt) },
@@ -228,7 +237,42 @@ export async function listMessages(
           }
         : null,
     })),
+    hasMore,
   };
+}
+
+export async function listMessages(
+  actorId: string,
+  peerId: string,
+): Promise<{ peer: DmPeer; messages: DmMessageView[] }> {
+  const thread = await loadDmThread(actorId, peerId);
+  await ensureContact(actorId, peerId);
+
+  // 打开即已读：对方发我的未读消息批量置读，对方的未读角标与已读回执据此更新
+  await db
+    .update(dmMessages)
+    .set({ readAt: sql`now()` })
+    .where(
+      and(
+        eq(dmMessages.recipientId, actorId),
+        eq(dmMessages.senderId, peerId),
+        isNull(dmMessages.readAt),
+      ),
+    );
+
+  return { peer: thread.peer, messages: thread.messages };
+}
+
+/**
+ * 助手读私信：只读最近 N 条，**不置已读、不建联系人** ——
+ * 助手看过不等于用户看过，未读角标必须原样留着。
+ */
+export async function listDmMessagesReadOnly(
+  actorId: string,
+  peerId: string,
+  limit = 20,
+): Promise<DmThread> {
+  return loadDmThread(actorId, peerId, Math.min(Math.max(Math.trunc(limit), 1), 50));
 }
 
 // —— 发送 ——

@@ -59,35 +59,49 @@ export function AgentChat({
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, pending]);
 
-  async function send() {
-    const text = input.trim();
-    if (!text || pending) return;
-    setInput("");
+  /**
+   * 发送一句话。抽出来是为了让「继续处理后续动作」按钮也能走同一条链路 ——
+   * 返回是否成功，卡片据此决定要不要恢复按钮。
+   */
+  async function sendText(text: string): Promise<boolean> {
+    const trimmed = text.trim();
+    if (!trimmed || pending) return false;
     setError(null);
-    setMessages((m) => [...m, { role: "user", content: text }]);
+    setMessages((m) => [...m, { role: "user", content: trimmed }]);
     setPending(true);
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
-          scope === "personal" ? { scope, userText: text } : { scope, projectId, userText: text },
+          scope === "personal"
+            ? { scope, userText: trimmed }
+            : { scope, projectId, userText: trimmed },
         ),
       });
       const data = await res.json();
       if (!res.ok) {
         setError(data.error ?? "对话失败");
-        return;
+        return false;
       }
       setMessages((m) => [
         ...m,
         { role: "assistant", content: data.text, drafts: data.drafts, options: data.options },
       ]);
+      return true;
     } catch {
       setError("网络异常，请重试");
+      return false;
     } finally {
       setPending(false);
     }
+  }
+
+  function send() {
+    const text = input.trim();
+    if (!text || pending) return;
+    setInput("");
+    void sendText(text);
   }
 
   return (
@@ -131,6 +145,12 @@ export function AgentChat({
                 options={m.options ?? defaultOptions ?? {}}
                 defaultProjectId={projectId}
                 scope={scope}
+                // 「继续」要复述用户最初那句话；助手消息前一条正是它
+                originalText={
+                  i > 0 && messages[i - 1].role === "user" ? messages[i - 1].content : ""
+                }
+                busy={pending}
+                onContinue={sendText}
               />
             )}
           </div>

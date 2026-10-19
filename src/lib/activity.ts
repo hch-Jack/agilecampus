@@ -134,6 +134,7 @@ export async function listProjectActivities(
   actorId: string,
   projectId: string,
   limit = 20,
+  taskId?: string,
 ): Promise<TaskActivityRow[]> {
   const access = await getProjectForUser(actorId, projectId);
   if (!access) throw new ForbiddenError();
@@ -148,6 +149,8 @@ export async function listProjectActivities(
     .where(
       and(
         eq(tasks.projectId, projectId),
+        // 助手按任务追问时只取该任务；项目页/任务页的既有调用不传
+        ...(taskId ? [eq(taskActivities.taskId, taskId)] : []),
         // 「清除记录」后的旧动态对本人隐藏（见 clearFeed），他人查询不受影响
         ...(clearedAfter ? [clearedAfter] : []),
       ),

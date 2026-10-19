@@ -9,9 +9,11 @@ import {
 } from "@/lib/task";
 import { createPersonalContext } from "@/lib/personal-context";
 import { notifyTaskAssigned, notifyTaskCompleted } from "@/lib/notify";
+import { respondToGroupInvite } from "@/lib/group-chat";
 import { AppError, ForbiddenError } from "@/lib/errors";
 import {
   personalContextDraftSchema,
+  RESPOND_INVITE_TOOL,
   SAVE_CONTEXT_TOOL,
   type CommitToolName,
   type WriteToolName,
@@ -190,6 +192,22 @@ export async function commitPersonalContext(
   return { committed, conflicts: [] };
 }
 
+// 群邀请：卡片上的 groupName / inviterName 只用于展示，zod 自动剥离；
+// 真正的归属校验在 respondToGroupInvite 的事务内（DELETE ... WHERE invitee_id = actorId）。
+const inviteResponseSchema = z.object({
+  inviteId: z.uuid(),
+  accept: z.boolean(),
+});
+
+export async function commitGroupInviteResponse(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = inviteResponseSchema.parse(draft);
+  await respondToGroupInvite(actorId, d.inviteId, d.accept);
+  return { committed: 1, conflicts: [] };
+}
+
 // 与项目版的 createProjectSchema 共用字段定义：个人版只是多一个团队 id，
 // 免得两处各写一份、日后加字段时只改一边
 const personalCreateProjectSchema = createProjectSchema.extend({ teamId: z.uuid() });
@@ -213,6 +231,7 @@ export async function commitPersonalDraft(
   draft: unknown,
 ): Promise<CommitResult> {
   if (tool === SAVE_CONTEXT_TOOL) return commitPersonalContext(actorId, draft);
+  if (tool === RESPOND_INVITE_TOOL) return commitGroupInviteResponse(actorId, draft);
 
   if (tool === "create_project") {
     // teamId 是 uuid 形状，与下面那四类同理：缺了/填成了团队名就说清楚，别甩一句「草案格式无效」

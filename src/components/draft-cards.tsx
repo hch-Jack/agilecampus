@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { buildContinuationText, isContinuableTool } from "@/lib/agent/continuation";
 
 /**
  * 草案卡片：助手拟的一切改动都先落在这些卡片上，用户改完点「确认落库」才生效。
@@ -114,23 +115,70 @@ export function DraftCards({
   options,
   defaultProjectId,
   scope,
+  originalText = "",
+  busy = false,
+  onContinue,
 }: {
   drafts: Draft[];
   options: OptionMap;
   defaultProjectId?: string;
   scope: ChatScope;
+  /** 这一轮用户的原始请求，续做时复述给模型 */
+  originalText?: string;
+  /** 对话是否正在进行（续做按钮据此禁用） */
+  busy?: boolean;
+  /** 发送一条新消息；返回是否成功 */
+  onContinue?: (text: string) => Promise<boolean>;
 }) {
+  // 已落库的卡片按序号记下**当前编辑后**的数据，供续做提示词复述
+  const [committed, setCommitted] = useState<Map<number, Draft>>(new Map());
+  const [continued, setContinued] = useState(false);
+
+  const handleCommitted = (index: number, d: Draft) => {
+    setCommitted((prev) => new Map(prev).set(index, d));
+    // 之后再落库一张卡，就值得再问一次「还有后续吗」
+    setContinued(false);
+  };
+
+  const canContinue =
+    !!onContinue && [...committed.values()].some((d) => isContinuableTool(d.tool));
+
   return (
     <div className="mt-2 space-y-2">
       {drafts.map((d, i) => (
         <DraftCard
           key={i}
+          index={i}
           draft={d}
           options={options}
           defaultProjectId={defaultProjectId}
           scope={scope}
+          onCommitted={handleCommitted}
         />
       ))}
+      {canContinue && !continued && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={async () => {
+            if (!onContinue) return;
+            setContinued(true);
+            const remaining = drafts.filter((_, i) => !committed.has(i));
+            const ok = await onContinue(
+              buildContinuationText({
+                originalText,
+                committed: [...committed.values()],
+                remaining,
+              }),
+            );
+            // 失败（网络/接口）才把按钮放回来；成功就等新一屏草案
+            if (!ok) setContinued(false);
+          }}
+          className="ac-btn-ghost px-2 py-1 text-xs"
+        >
+          继续处理后续动作
+        </button>
+      )}
     </div>
   );
 }
@@ -252,22 +300,32 @@ function PatchField({
 }
 
 function DraftCard({
+  index,
   draft,
   options,
   defaultProjectId,
   scope,
+  onCommitted,
 }: {
+  index: number;
   draft: Draft;
   options: OptionMap;
   defaultProjectId?: string;
   scope: ChatScope;
+  /** 落库成功后回调**当前编辑后**的数据，供「继续处理后续动作」复述 */
+  onCommitted?: (index: number, d: Draft) => void;
 }) {
   const [data, setData] = useState<Record<string, unknown>>(draft.draft as Record<string, unknown>);
 
   // 个人 scope 的草案自带 projectId；项目页的草案没有，用页面那个兜底
   const pid = typeof data.projectId === "string" ? data.projectId : defaultProjectId;
   const opts = (pid ? options[pid] : undefined) ?? NO_OPTIONS;
-  const save = (tool: string, payload: unknown) => commit(scope, defaultProjectId, tool, payload);
+  const save = async (tool: string, payload: unknown) => {
+    const err = await commit(scope, defaultProjectId, tool, payload);
+    // 回调放在这里而不是 CardShell：拿到的才是用户改过之后的 payload
+    if (!err) onCommitted?.(index, { tool, draft: payload });
+    return err;
+  };
 
   if (draft.tool === "save_personal_context") {
     const d = data as { entries: { content: string; visibility?: string }[] };
@@ -606,6 +664,58 @@ function DraftCard({
           <input type="date" value={d.dueDate} onChange={(e) => setData({ ...d, dueDate: e.target.value })} className="ac-field w-auto text-xs" />
           <span className="text-ink-soft">{d.taskIds.length} 个任务</span>
         </div>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "respond_group_invite") {
+    const d = data as {
+      inviteId?: string;
+      accept?: boolean;
+      groupName?: string;
+      inviterName?: string;
+    };
+    const groupName = d.groupName?.trim() || "群聊";
+    // 展示字段（群名/邀请人）只用来写标题，落库时被 zod 剥掉 —— 一切以邀请 id 为准
+    const invalid = firstProblem([
+      typeof d.inviteId !== "string" || d.inviteId === ""
+        ? "草案缺少邀请 id，请让助手重拟"
+        : null,
+      typeof d.accept !== "boolean" ? "请选择接受或拒绝" : null,
+    ]);
+    return (
+      <CardShell
+        title={`群邀请（${groupName}）`}
+        onConfirm={() => save("respond_group_invite", d)}
+        invalid={invalid}
+      >
+        <p className="text-xs text-ink-soft">
+          {groupName}
+          {d.inviterName ? ` · ${d.inviterName} 邀请你进群` : " 的入群邀请"}
+        </p>
+        <div className="flex gap-1">
+          {[
+            { value: true, label: "接受" },
+            { value: false, label: "拒绝" },
+          ].map((opt) => (
+            <button
+              key={opt.label}
+              type="button"
+              aria-pressed={d.accept === opt.value}
+              onClick={() => setData({ ...d, accept: opt.value })}
+              className={`rounded border px-2 py-0.5 text-xs ${
+                d.accept === opt.value
+                  ? "border-primary bg-primary-soft text-primary"
+                  : "border-line text-ink-soft"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-ink-faint">
+          确认后才真正处理。群已满等原因失败会如实报错，此时可改选「拒绝」再确认。
+        </p>
       </CardShell>
     );
   }

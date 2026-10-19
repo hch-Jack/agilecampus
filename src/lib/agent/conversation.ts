@@ -192,3 +192,59 @@ export async function listPersonalChatHistory(actorId: string): Promise<ChatHist
   const conv = await findPersonalConversation(actorId);
   return conv ? historyOf(conv.id) : [];
 }
+
+export type ChatHistoryEntry = {
+  role: "user" | "assistant";
+  content: string;
+  at: string; // ISO
+};
+
+/**
+ * 助手工具用的「翻更早的对话」：与自动上文不同，这里由用户显式要，故不受
+ * `ai_history_limit` 约束（工具层钳 1..50）。取最近 limit 条后反转成时间正序；
+ * 保留切片开头的 assistant —— 这是**读历史**，不是喂给模型的 messages。
+ */
+export async function listProjectChatHistoryForTool(
+  actorId: string,
+  projectId: string,
+  limit = 20,
+): Promise<ChatHistoryEntry[]> {
+  const access = await getProjectForUser(actorId, projectId);
+  if (!access) throw new ForbiddenError();
+
+  const capped = Math.min(Math.max(Math.trunc(limit), 1), 50);
+
+  const [latest] = await db
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(and(eq(conversations.kind, "project"), eq(conversations.projectId, projectId)))
+    .orderBy(desc(conversations.createdAt))
+    .limit(1);
+  if (!latest) return [];
+
+  const rows = await db
+    .select({
+      role: messages.role,
+      content: messages.content,
+      createdAt: messages.createdAt,
+    })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.conversationId, latest.id),
+        inArray(messages.role, ["user", "assistant"]),
+      ),
+    )
+    // 同一轮问答时间戳相同：答在下、问在上（与 recentMessagesForModel 同一讲究）
+    .orderBy(
+      desc(messages.createdAt),
+      desc(sql`case when ${messages.role} = 'assistant' then 1 else 0 end`),
+    )
+    .limit(capped);
+
+  return rows.reverse().map((r) => ({
+    role: r.role as "user" | "assistant",
+    content: r.content.length > 1000 ? `${r.content.slice(0, 1000)}…` : r.content,
+    at: r.createdAt.toISOString(),
+  }));
+}

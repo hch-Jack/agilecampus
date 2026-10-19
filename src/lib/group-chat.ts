@@ -357,12 +357,18 @@ export async function countPendingGroupInvites(actorId: string): Promise<number>
 
 // —— 会话内消息 ——
 
-export async function openGroupConversation(
+/**
+ * 群消息的**只读**查询：成员校验照做，但不推进 `lastReadAt`。
+ * 聊天窗口与助手读消息共用；已读基线由调用方决定是否推进。
+ */
+async function loadGroupMessages(
   actorId: string,
   groupId: string,
-): Promise<{ group: GroupInfo; messages: GroupMessageView[] }> {
+  limit: number,
+): Promise<{ group: GroupInfo; messages: GroupMessageView[]; hasMore: boolean }> {
   const group = await getGroupInfo(actorId, groupId);
 
+  // 倒序多取一条判 hasMore，再反转回正序（asc + 大偏移才是贵的取法）
   const rows = await db
     .select({
       id: dmGroupMessages.id,
@@ -379,7 +385,38 @@ export async function openGroupConversation(
     .leftJoin(dmAttachments, eq(dmGroupMessages.attachmentId, dmAttachments.id))
     .where(eq(dmGroupMessages.groupId, groupId))
     .orderBy(desc(dmGroupMessages.createdAt))
-    .limit(GROUP_MESSAGE_FETCH_LIMIT);
+    .limit(limit + 1);
+
+  const hasMore = rows.length > limit;
+  return {
+    group,
+    messages: rows
+      .slice(0, limit)
+      .reverse()
+      .map((r) => ({
+        id: r.id,
+        senderId: r.senderId,
+        senderName: r.senderName,
+        mine: r.senderId === actorId,
+        content: r.content,
+        createdAt: r.createdAt.toISOString(),
+        attachment: r.attachmentId
+          ? {
+              id: r.attachmentId,
+              filename: r.attachmentFilename ?? "未命名文件",
+              size: r.attachmentSize ?? 0,
+            }
+          : null,
+      })),
+    hasMore,
+  };
+}
+
+export async function openGroupConversation(
+  actorId: string,
+  groupId: string,
+): Promise<{ group: GroupInfo; messages: GroupMessageView[] }> {
+  const thread = await loadGroupMessages(actorId, groupId, GROUP_MESSAGE_FETCH_LIMIT);
 
   // 打开即已读：未读基线推到 DB 当前时刻（幂等，谁打开谁推自己的）
   await db
@@ -387,24 +424,24 @@ export async function openGroupConversation(
     .set({ lastReadAt: sql`now()` })
     .where(and(eq(dmGroupMembers.groupId, groupId), eq(dmGroupMembers.userId, actorId)));
 
+  return { group: thread.group, messages: thread.messages };
+}
+
+/**
+ * 助手读群聊：只读最近 N 条，**不推进 lastReadAt** ——
+ * 助手看过不等于用户看过，群未读角标必须原样留着。
+ */
+export async function listGroupMessagesReadOnly(
+  actorId: string,
+  groupId: string,
+  limit = 20,
+): Promise<{ group: { id: string; name: string }; messages: GroupMessageView[]; hasMore: boolean }> {
+  const capped = Math.min(Math.max(Math.trunc(limit), 1), 50);
+  const thread = await loadGroupMessages(actorId, groupId, capped);
   return {
-    group,
-    // 倒序取最近 200 条再反转回正序（asc + 大偏移才是贵的取法）
-    messages: rows.reverse().map((r) => ({
-      id: r.id,
-      senderId: r.senderId,
-      senderName: r.senderName,
-      mine: r.senderId === actorId,
-      content: r.content,
-      createdAt: r.createdAt.toISOString(),
-      attachment: r.attachmentId
-        ? {
-            id: r.attachmentId,
-            filename: r.attachmentFilename ?? "未命名文件",
-            size: r.attachmentSize ?? 0,
-          }
-        : null,
-    })),
+    group: { id: thread.group.id, name: thread.group.name },
+    messages: thread.messages,
+    hasMore: thread.hasMore,
   };
 }
 
