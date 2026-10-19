@@ -360,3 +360,11 @@ body.proj-cosmic .nav-unread-badge {
     animation: none;
   }
 }
+
+/* —— 11. 关系图：粘性任务列 —— */
+/* 横向滚动时左侧任务列必须挡住下方内容，故用不透明底；
+   深色主题下若用 --color-canvas 会在玻璃卡片里出现一条纯黑边带，
+   这里改用与卡片同色系的近不透明深蓝。 */
+body.proj-cosmic .graph-sticky {
+  background-color: rgba(14, 19, 34, 0.96);
+}

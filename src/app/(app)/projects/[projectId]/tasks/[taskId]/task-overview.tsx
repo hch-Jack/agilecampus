@@ -18,6 +18,7 @@ export type TaskOverviewData = {
   assigneeId: string | null;
   assigneeName: string | null;
   milestoneId: string | null;
+  parentTaskId: string | null;
   labels: { id: string; name: string; color: string }[];
 };
 
@@ -40,11 +41,11 @@ export function TaskOverview({
   task: TaskOverviewData;
   canWrite: boolean;
   milestoneTitle: string | null;
-  successors: { id: string; title: string }[];
+  successors: { id: string; title: string; parentTaskId: string | null }[];
   members: { id: string; name: string }[];
   milestones: { id: string; name: string }[];
   allLabels: { id: string; name: string }[];
-  allTasks: { id: string; title: string }[];
+  allTasks: { id: string; title: string; parentTaskId: string | null }[];
   projectStart: string | null;
   projectEnd: string | null;
 }) {
@@ -123,13 +124,18 @@ export function TaskOverview({
                 ) : (
                   <ul className="mt-1 space-y-0.5">
                     {successors.map((s) => (
-                      <li key={s.id}>
+                      <li key={s.id} className="flex items-center gap-1.5">
                         <Link
                           href={`/projects/${projectId}/tasks/${s.id}`}
                           className="text-sm text-primary underline"
                         >
                           {s.title}
                         </Link>
+                        {s.parentTaskId !== task.parentTaskId && (
+                          <span className="ac-badge bg-high-soft text-high">
+                            跨层级
+                          </span>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -179,11 +185,11 @@ function EditTaskForm({
 }: {
   projectId: string;
   task: TaskOverviewData;
-  successors: { id: string; title: string }[];
+  successors: { id: string; title: string; parentTaskId: string | null }[];
   members: { id: string; name: string }[];
   milestones: { id: string; name: string }[];
   allLabels: { id: string; name: string }[];
-  allTasks: { id: string; title: string }[];
+  allTasks: { id: string; title: string; parentTaskId: string | null }[];
   projectStart: string | null;
   projectEnd: string | null;
   onDone: () => void;
@@ -211,7 +217,13 @@ function EditTaskForm({
   // 全不勾 = 提交空数组，服务端即清空，语义与 select multiple 相同
   const labelIdSet = new Set(task.labels.map((l) => l.id));
   const successorIdSet = new Set(successors.map((s) => s.id));
-  const successorCandidates = allTasks.filter((t) => t.id !== task.id);
+  // 依赖只允许同级：同一父任务下的兄弟（顶层任务彼此同级）
+  const successorCandidates = allTasks.filter(
+    (t) => t.id !== task.id && t.parentTaskId === task.parentTaskId,
+  );
+  const crossLevelSuccessors = successors.filter(
+    (s) => s.parentTaskId !== task.parentTaskId,
+  );
 
   return (
     <section className="ac-card p-5">
@@ -307,9 +319,19 @@ function EditTaskForm({
           </Field>
         )}
 
-        <Field label="后置任务（可多选）">
+        <Field label="后置任务（仅同级，可多选）">
+          <p className="text-[11px] text-ink-faint">
+            只能选择与当前任务属于同一父任务的任务；顶层任务彼此同级。
+          </p>
+          {crossLevelSuccessors.length > 0 && (
+            <p className="rounded border border-high/40 bg-high-soft px-2 py-1 text-xs text-high">
+              检测到 {crossLevelSuccessors.length} 个历史跨层级后置任务：
+              {crossLevelSuccessors.map((s) => s.title).join("、")}。
+              它们不在下方候选中；新增或取消同级后置并保存后会被移除，只改其他字段不受影响。
+            </p>
+          )}
           {successorCandidates.length === 0 ? (
-            <p className="text-sm text-ink-faint">项目中暂无其他任务</p>
+            <p className="text-sm text-ink-faint">暂无可选的同级任务</p>
           ) : (
             <div className="flex flex-wrap gap-x-3 gap-y-1.5">
               {successorCandidates.map((t) => (

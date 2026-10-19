@@ -78,12 +78,16 @@ export default async function TaskDetailPage({
     ? new Map(
         (
           await db
-            .select({ id: tasksTable.id, title: tasksTable.title })
+            .select({
+              id: tasksTable.id,
+              title: tasksTable.title,
+              parentTaskId: tasksTable.parentTaskId,
+            })
             .from(tasksTable)
             .where(inArray(tasksTable.id, titleIds))
-        ).map((r) => [r.id, r.title]),
+        ).map((r) => [r.id, r]),
       )
-    : new Map<string, string>();
+    : new Map<string, { title: string; parentTaskId: string | null }>();
 
   const milestoneTitle = task.milestoneId
     ? (milestones.find((m) => m.id === task.milestoneId)?.title ?? null)
@@ -94,7 +98,11 @@ export default async function TaskDetailPage({
     ? await Promise.all([
         listTeamLabels(session.user.id, access.project.teamId),
         db
-          .select({ id: tasksTable.id, title: tasksTable.title })
+          .select({
+            id: tasksTable.id,
+            title: tasksTable.title,
+            parentTaskId: tasksTable.parentTaskId,
+          })
           .from(tasksTable)
           .where(eq(tasksTable.projectId, projectId))
           .orderBy(tasksTable.sortOrder),
@@ -102,7 +110,8 @@ export default async function TaskDetailPage({
     : [[], []];
   const successors = successorIds.map((sid) => ({
     id: sid,
-    title: titleMap.get(sid) ?? "未知任务",
+    title: titleMap.get(sid)?.title ?? "未知任务",
+    parentTaskId: titleMap.get(sid)?.parentTaskId ?? null,
   }));
 
   const subtaskRows: SubtaskRowData[] = subtasks.map((s) => ({
@@ -138,7 +147,7 @@ export default async function TaskDetailPage({
               href={`/projects/${projectId}/tasks/${task.parentTaskId}`}
               className="text-primary underline"
             >
-              {titleMap.get(task.parentTaskId) ?? "未知任务"}
+              {titleMap.get(task.parentTaskId)?.title ?? "未知任务"}
             </Link>
           </p>
         )}
@@ -176,6 +185,7 @@ export default async function TaskDetailPage({
           assigneeId: task.assigneeId,
           assigneeName: task.assigneeName,
           milestoneId: task.milestoneId,
+          parentTaskId: task.parentTaskId,
           labels: task.labels,
         }}
         canWrite={canWrite}

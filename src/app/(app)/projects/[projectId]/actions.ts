@@ -175,7 +175,11 @@ export async function updateTaskAction(
       priority: patch.priority,
       completionNote: patch.completionNote ?? null,
     });
-    await setTaskSuccessors(session.user.id, taskId, successorIds);
+    // 历史跨层级后置边不在编辑候选里。若本次提交的同级集合与库中一致，
+    // 说明用户没有改动后置任务，跳过整表替换，避免只改标题/日期时误删历史边。
+    await setTaskSuccessors(session.user.id, taskId, successorIds, {
+      preserveCrossLevelIfSiblingSetUnchanged: true,
+    });
     await setTaskLabels(session.user.id, taskId, labelIds);
   } catch (e) {
     if (e instanceof ForbiddenError) return { error: "没有权限修改任务" };

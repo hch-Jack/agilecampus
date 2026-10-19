@@ -438,42 +438,106 @@ export async function getTaskDetail(actorId: string, taskId: string) {
   return { ...row, labels: byTask.get(row.id) ?? [] };
 }
 
-// 设置 predecessor 的后置任务（先删旧再插新）。简单关联：仅防直接成环，不强制阻断执行。
+function sameIdSet(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every((id) => set.has(id));
+}
+
+// 设置 predecessor 的后置任务（先删旧再插新）。
+// 后置任务须与前置任务同级（同一父任务；顶层任务彼此同级）；
+// 自环与直接/间接环一律拒绝，避免流程图里出现新的环。
 export async function setTaskSuccessors(
   actorId: string,
   predecessorId: string,
   successorIds: string[],
+  opts?: { preserveCrossLevelIfSiblingSetUnchanged?: boolean },
 ) {
   const [pred] = await db.select().from(tasks).where(eq(tasks.id, predecessorId));
   if (!pred) throw new AppError("任务不存在");
   await requireTaskWrite(actorId, pred.projectId);
 
-  for (const sid of successorIds) {
-    if (sid === predecessorId) throw new AppError("后置任务不可构成循环");
-    const [s] = await db
-      .select({ projectId: tasks.projectId })
-      .from(tasks)
-      .where(eq(tasks.id, sid));
-    if (!s || s.projectId !== pred.projectId)
-      throw new AppError("后置任务不属于该项目");
-    const [back] = await db
-      .select({ id: taskDependencies.id })
+  const uniqueIds = [...new Set(successorIds)];
+
+  // 历史跨层级后置边不在编辑候选列表里。若本次提交的同级集合与库中一致，
+  // 说明用户没有改动后置任务，跳过整表替换，避免只改标题/日期时误删历史边。
+  if (opts?.preserveCrossLevelIfSiblingSetUnchanged) {
+    const current = await db
+      .select({
+        successorId: taskDependencies.successorId,
+        parentTaskId: tasks.parentTaskId,
+      })
       .from(taskDependencies)
-      .where(
-        and(
-          eq(taskDependencies.predecessorId, sid),
-          eq(taskDependencies.successorId, predecessorId),
-        ),
-      );
-    if (back) throw new AppError("后置任务不可构成循环");
+      .innerJoin(tasks, eq(taskDependencies.successorId, tasks.id))
+      .where(eq(taskDependencies.predecessorId, predecessorId));
+    const currentSiblingIds = current
+      .filter((row) => row.parentTaskId === pred.parentTaskId)
+      .map((row) => row.successorId);
+    if (sameIdSet(currentSiblingIds, uniqueIds)) return;
+  }
+
+  if (uniqueIds.includes(predecessorId))
+    throw new AppError("后置任务不可构成循环");
+
+  const successors = uniqueIds.length
+    ? await db
+        .select({
+          id: tasks.id,
+          projectId: tasks.projectId,
+          parentTaskId: tasks.parentTaskId,
+        })
+        .from(tasks)
+        .where(inArray(tasks.id, uniqueIds))
+    : [];
+
+  if (
+    successors.length !== uniqueIds.length ||
+    successors.some((s) => s.projectId !== pred.projectId)
+  )
+    throw new AppError("后置任务不属于该项目");
+
+  if (successors.some((s) => s.parentTaskId !== pred.parentTaskId))
+    throw new AppError("后置任务须与当前任务同级");
+
+  if (uniqueIds.length > 0) {
+    // 间接环：沿反向边找出所有能到达前置的任务；待设后置若在其中，加边即环。
+    const projectEdges = await db
+      .select({
+        predecessorId: taskDependencies.predecessorId,
+        successorId: taskDependencies.successorId,
+      })
+      .from(taskDependencies)
+      .innerJoin(tasks, eq(taskDependencies.predecessorId, tasks.id))
+      .where(eq(tasks.projectId, pred.projectId));
+
+    const incoming = new Map<string, string[]>();
+    for (const edge of projectEdges) {
+      const list = incoming.get(edge.successorId) ?? [];
+      list.push(edge.predecessorId);
+      incoming.set(edge.successorId, list);
+    }
+
+    const ancestors = new Set<string>([predecessorId]);
+    const stack = [predecessorId];
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      for (const parent of incoming.get(current) ?? []) {
+        if (ancestors.has(parent)) continue;
+        ancestors.add(parent);
+        stack.push(parent);
+      }
+    }
+
+    if (uniqueIds.some((id) => ancestors.has(id)))
+      throw new AppError("后置任务不可构成循环");
   }
 
   await db.transaction(async (tx) => {
     await tx.delete(taskDependencies).where(eq(taskDependencies.predecessorId, predecessorId));
-    if (successorIds.length > 0) {
+    if (uniqueIds.length > 0) {
       await tx
         .insert(taskDependencies)
-        .values(successorIds.map((sid) => ({ predecessorId, successorId: sid })));
+        .values(uniqueIds.map((sid) => ({ predecessorId, successorId: sid })));
     }
   });
 }
