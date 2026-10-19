@@ -890,14 +890,18 @@ export function MessagesClient({ timeZone }: { timeZone: string }) {
                 <Avatar name={group?.name ?? "?"} className="h-8 w-8" />
                 <span className="text-sm font-semibold text-ink">{group?.name ?? "…"}</span>
                 {group && (
-                  <button
-                    type="button"
-                    onClick={() => setMembersOpen((v) => !v)}
-                    className="text-xs text-ink-faint hover:text-primary"
-                    title="查看成员"
-                  >
-                    {group.memberCount} 人
-                  </button>
+                  <>
+                    <span className="text-xs text-ink-faint">{group.memberCount} 人</span>
+                    {/* 群管理（邀请/踢人/退群/解散）入口：给个明确的按键，别让人靠猜「N 人」找入口 */}
+                    <button
+                      type="button"
+                      onClick={() => setMembersOpen((v) => !v)}
+                      className={`ac-btn-ghost px-2.5 py-1 text-xs ${membersOpen ? "border-primary text-primary" : ""}`}
+                      title="成员与群管理"
+                    >
+                      群管理
+                    </button>
+                  </>
                 )}
                 <span className="ml-auto text-xs text-ink-faint">消息自动留存</span>
               </header>
