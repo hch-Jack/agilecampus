@@ -3,15 +3,20 @@ import { db } from "@/db";
 import { createMilestone, createProject, getProjectForUser } from "@/lib/project";
 import {
   applyTaskSuccessorDelta,
+  createSubtask,
   createTask,
+  deleteTask,
+  getTaskDetailBundle,
   listProjectTasks,
   updateTask,
 } from "@/lib/task";
+import { copyMessageAttachmentToTask, deleteAttachment } from "@/lib/attachment";
 import { createPersonalContext } from "@/lib/personal-context";
 import { notifyTaskAssigned, notifyTaskCompleted } from "@/lib/notify";
 import { respondToGroupInvite } from "@/lib/group-chat";
 import { AppError, ForbiddenError } from "@/lib/errors";
 import {
+  ATTACH_MESSAGE_TOOL,
   personalContextDraftSchema,
   RESPOND_INVITE_TOOL,
   SAVE_CONTEXT_TOOL,
@@ -96,6 +101,22 @@ const createMilestoneSchema = z.object({
   targetDate: optionalDate,
 });
 
+// 子任务草案：卡片展示字段（parentTitle/projectId）会被 zod 剥离，只取落库要用的。
+const createSubtaskSchema = z.object({
+  parentTaskId: z.uuid(),
+  title: z.string().min(1),
+  description: z.string().optional(),
+  assigneeId: z.string().optional(),
+  startDate: optionalDate,
+  dueDate: optionalDate,
+  milestoneId: z.string().optional(),
+  priority: z.enum(["low", "medium", "high"]).optional(),
+});
+
+const deleteSubtaskSchema = z.object({ taskId: z.uuid() });
+const deleteAttachmentSchema = z.object({ attachmentId: z.uuid() });
+const attachMessageFileSchema = z.object({ attachmentId: z.uuid(), taskId: z.uuid() });
+
 export type CommitResult = { committed: number; conflicts: string[] };
 
 // 落库：绝不信 Agent 输出——入口重校访问权，每类先施 Zod，再走图二 lib（lib 内建权限/归属校验）
@@ -176,6 +197,29 @@ export async function commitDraft(
       await createMilestone(actorId, projectId, d);
       return { committed: 1, conflicts: [] };
     }
+    case "create_subtask": {
+      const d = createSubtaskSchema.parse(draft);
+      // 父任务必须属于当前项目：否则带 A 项目的落库口能往 B 项目挂子任务
+      await getTaskDetailBundle(actorId, d.parentTaskId, { projectId });
+      const { parentTaskId, ...input } = d;
+      await createSubtask(actorId, parentTaskId, input);
+      return { committed: 1, conflicts: [] };
+    }
+    case "delete_subtask": {
+      const d = deleteSubtaskSchema.parse(draft);
+      const detail = await getTaskDetailBundle(actorId, d.taskId, { projectId });
+      // 落库口再验一次层级：卡片上的「只删子任务」不能只靠工具层相信
+      if (!detail.parentTaskId)
+        throw new AppError("只能删除子任务；删除主任务请到任务详情页操作");
+      await deleteTask(actorId, d.taskId);
+      return { committed: 1, conflicts: [] };
+    }
+    case "delete_attachment": {
+      const d = deleteAttachmentSchema.parse(draft);
+      // deleteAttachment 带 projectId 时自行比对归属，并重校任务写权限
+      await deleteAttachment(actorId, d.attachmentId, { projectId });
+      return { committed: 1, conflicts: [] };
+    }
   }
 }
 
@@ -208,6 +252,17 @@ export async function commitGroupInviteResponse(
   return { committed: 1, conflicts: [] };
 }
 
+// 消息文件 → 任务附件：只属于工作台助手，草案不带 projectId（复制函数按任务实际
+// 所属项目重校写权限），故在拆 projectId 之前分派。
+export async function commitMessageAttachment(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = attachMessageFileSchema.parse(draft);
+  await copyMessageAttachmentToTask(actorId, d.attachmentId, d.taskId);
+  return { committed: 1, conflicts: [] };
+}
+
 // 与项目版的 createProjectSchema 共用字段定义：个人版只是多一个团队 id，
 // 免得两处各写一份、日后加字段时只改一边
 const personalCreateProjectSchema = createProjectSchema.extend({ teamId: z.uuid() });
@@ -232,6 +287,7 @@ export async function commitPersonalDraft(
 ): Promise<CommitResult> {
   if (tool === SAVE_CONTEXT_TOOL) return commitPersonalContext(actorId, draft);
   if (tool === RESPOND_INVITE_TOOL) return commitGroupInviteResponse(actorId, draft);
+  if (tool === ATTACH_MESSAGE_TOOL) return commitMessageAttachment(actorId, draft);
 
   if (tool === "create_project") {
     // teamId 是 uuid 形状，与下面那四类同理：缺了/填成了团队名就说清楚，别甩一句「草案格式无效」

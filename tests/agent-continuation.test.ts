@@ -46,6 +46,24 @@ describe("summarizeDraft", () => {
     ).toBe("个人上下文（1 条）");
   });
 
+  it("子任务与附件摘要带标题/文件名，消息附件带目标任务", () => {
+    expect(
+      summarizeDraft({ tool: "create_subtask", draft: { title: "画原型图" } }),
+    ).toBe("新增子任务「画原型图」");
+    expect(
+      summarizeDraft({ tool: "delete_subtask", draft: { title: "画原型图" } }),
+    ).toBe("删除子任务「画原型图」");
+    expect(
+      summarizeDraft({ tool: "delete_attachment", draft: { filename: "开题报告.pdf" } }),
+    ).toBe("删除附件「开题报告.pdf」");
+    expect(
+      summarizeDraft({
+        tool: "attach_message_file_to_task",
+        draft: { filename: "设计稿.png", taskTitle: "改首页" },
+      }),
+    ).toBe("消息附件「设计稿.png」→ 任务「改首页」");
+  });
+
   it("群邀请摘要带群名与接受/拒绝", () => {
     expect(
       summarizeDraft({
@@ -72,12 +90,16 @@ describe("isContinuableTool", () => {
       "edit_task_links",
       "plan_sprint",
       "create_milestone",
+      "create_subtask",
     ]) {
       expect(isContinuableTool(t), t).toBe(true);
     }
-    // 这两件不派生「依赖新 id」的动作
+    // 这些不派生「依赖新 id」的动作
     expect(isContinuableTool("save_personal_context")).toBe(false);
     expect(isContinuableTool("respond_group_invite")).toBe(false);
+    expect(isContinuableTool("delete_subtask")).toBe(false);
+    expect(isContinuableTool("delete_attachment")).toBe(false);
+    expect(isContinuableTool("attach_message_file_to_task")).toBe(false);
   });
 });
 

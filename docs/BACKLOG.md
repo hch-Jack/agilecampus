@@ -531,3 +531,28 @@ provider 对 `anyOf:[string,null]` 挑食，先把这三处退回 `z.string().op
 - 项目助手未加「代发留言」，工作台助手未加「代发私信/群消息」——均按用户口径不做。
 - 本机无 `DEEPSEEK_API_KEY`，真实模型的工具选择未验；靠 prompt 断言 + mock 编排覆盖，
   部署后需在有 key 的环境验：一轮多卡、继续补做、读历史/留言、读消息并拟草案、处理群邀请。
+
+## 助手：消息文件进任务附件 + 子任务与附件管理（2026-10-19）
+
+### 决策
+- 消息附件 → 任务附件采用**复制字节**，不共享行、不新增引用列：
+  `dm_attachments` 与 `task_attachments` 无外键，复制让消息删除与任务附件生命周期互不牵连；
+  代价是同一文件存两份（单文件 ≤10MB）。本次无 schema 变更。
+- 子任务的新增/删除各开一个项目写工具（`create_subtask` / `delete_subtask`）；**修改复用 `update_tasks`**
+  （子任务就是任务，没必要再造一件只差校验的工具）。
+- 附件管理只做项目助手侧的「查看 + 删除」；上传仍需网页表单，助手不接收二进制。
+- `read_messages` 的 `attachment` 补 `attachmentId`（原先只回文件名/大小），模型才有可传的 id。
+- `create_subtask` 进「可续做」清单（新子任务会派生新 id）；删除类与消息附件复制不进。
+- 新增写工具进 `WRITE_TOOL_NAMES`，项目页落库口直接可用；`attach_message_file_to_task` 只进
+  `COMMIT_TOOL_NAMES`，由 `commitPersonalDraft` 分派。
+
+### 简化备案
+- **没有 bin 级去重**：同一消息文件可被多次复制成同名任务附件；未做「已存在则复用」判断。
+- **不能重命名附件**：lib 与网页都无重命名能力，本次不新增（管理 = 查看/删除/复制）。
+- **不开放 REST**：本次只补助手工具面；`/api/agent/*` 仍无附件端点，子任务端点维持原 GET/POST。
+- **删除子任务会级联**：沿用 `deleteTask` 的既有语义（连同其下级子任务与依赖），卡片与工具描述都明确警告。
+- **助手仍不能上传新文件**：没有二进制输入通道；「把消息文件加到任务」是唯一的助手侧新增附件路径。
+- **个人 scope 只加一件工具**（消息附件复制），未把 `list_attachments` / `delete_attachment` / 子任务工具
+  复制到工作台助手，避免工具集继续膨胀（个人 19 件、项目 19 件）。
+- 本机无 `DEEPSEEK_API_KEY`，真实模型能否正确串起
+  「read_messages → 取 attachmentId → attach_message_file_to_task」未验；部署后需在有 key 的环境补验。

@@ -205,6 +205,12 @@ const PATCH_FIELDS: Record<
 const STATUS_TEXT: Record<string, string> = { todo: "待办", doing: "进行中", done: "已完成" };
 const PRIORITY_TEXT: Record<string, string> = { low: "低", medium: "中", high: "高" };
 
+function fmtSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 // 选项来自响应里的 options（按草案的 projectId 查）——查不到就只显示 id，
 // 不给一个空下拉：那样看着像「未分配」，确认下去却仍是原来那个人。
 function IdOrSelect({
@@ -715,6 +721,163 @@ function DraftCard({
         </div>
         <p className="text-xs text-ink-faint">
           确认后才真正处理。群已满等原因失败会如实报错，此时可改选「拒绝」再确认。
+        </p>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "create_subtask") {
+    const d = data as {
+      parentTaskId?: string;
+      parentTitle?: string;
+      title?: string;
+      description?: string;
+      assigneeId?: string;
+      priority?: string;
+      startDate?: string;
+      dueDate?: string;
+      milestoneId?: string;
+    };
+    const invalid = firstProblem([
+      typeof d.parentTaskId !== "string" || d.parentTaskId === ""
+        ? "草案缺少父任务，请让助手重拟"
+        : null,
+      (d.title ?? "").trim() === "" ? "子任务标题不能为空" : null,
+    ]);
+    return (
+      <CardShell
+        title={`新增子任务（${d.parentTitle ?? "父任务"}）`}
+        onConfirm={() => save("create_subtask", d)}
+        invalid={invalid}
+      >
+        <p className="text-xs text-ink-soft">
+          父任务：{d.parentTitle ?? `${(d.parentTaskId ?? "").slice(0, 8)}…`}
+        </p>
+        <input
+          value={d.title ?? ""}
+          onChange={(e) => setData({ ...d, title: e.target.value })}
+          placeholder="子任务标题"
+          className="ac-field text-xs"
+        />
+        <textarea
+          value={d.description ?? ""}
+          onChange={(e) => setData({ ...d, description: e.target.value || undefined })}
+          placeholder="描述（可选）"
+          className="ac-field text-xs"
+          rows={2}
+        />
+        <div className="flex flex-wrap gap-1">
+          <select
+            value={d.assigneeId ?? ""}
+            onChange={(e) => setData({ ...d, assigneeId: e.target.value || undefined })}
+            className="ac-field w-auto text-xs"
+          >
+            <option value="">未分配</option>
+            {opts.members.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+          <select
+            value={d.priority ?? "medium"}
+            onChange={(e) => setData({ ...d, priority: e.target.value })}
+            className="ac-field w-auto text-xs"
+          >
+            {Object.entries(PRIORITY_TEXT).map(([k, t]) => (
+              <option key={k} value={k}>
+                {t}
+              </option>
+            ))}
+          </select>
+          <input
+            type="date"
+            aria-label="起始日"
+            title="起始日"
+            value={d.startDate ?? ""}
+            onChange={(e) => setData({ ...d, startDate: e.target.value || undefined })}
+            className="ac-field w-auto text-xs"
+          />
+          <input
+            type="date"
+            aria-label="截止日"
+            title="截止日"
+            value={d.dueDate ?? ""}
+            onChange={(e) => setData({ ...d, dueDate: e.target.value || undefined })}
+            className="ac-field w-auto text-xs"
+          />
+        </div>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "delete_subtask") {
+    const d = data as { taskId?: string; title?: string; parentTitle?: string };
+    return (
+      <CardShell
+        title="删除子任务"
+        onConfirm={() => save("delete_subtask", d)}
+        invalid={
+          typeof d.taskId !== "string" || d.taskId === ""
+            ? "草案缺少任务 id，请让助手重拟"
+            : undefined
+        }
+      >
+        <p className="text-xs text-ink-soft">
+          将删除子任务「{d.title ?? `${(d.taskId ?? "").slice(0, 8)}…`}」
+          {d.parentTitle ? `（父任务：${d.parentTitle}）` : ""}。
+        </p>
+        <p className="text-xs text-high">它下面的所有子任务与依赖会一并删除，且不可恢复。</p>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "delete_attachment") {
+    const d = data as { attachmentId?: string; filename?: string; taskTitle?: string };
+    return (
+      <CardShell
+        title="删除附件"
+        onConfirm={() => save("delete_attachment", d)}
+        invalid={
+          typeof d.attachmentId !== "string" || d.attachmentId === ""
+            ? "草案缺少附件 id，请让助手重拟"
+            : undefined
+        }
+      >
+        <p className="text-xs text-ink-soft">
+          将删除任务{d.taskTitle ? `「${d.taskTitle}」` : ""}的附件「
+          {d.filename ?? "未命名文件"}」，文件不可恢复。
+        </p>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "attach_message_file_to_task") {
+    const d = data as {
+      attachmentId?: string;
+      taskId?: string;
+      filename?: string;
+      size?: number;
+      taskTitle?: string;
+    };
+    const missingIds =
+      typeof d.attachmentId !== "string" ||
+      d.attachmentId === "" ||
+      typeof d.taskId !== "string" ||
+      d.taskId === "";
+    return (
+      <CardShell
+        title="消息文件添加为任务附件"
+        onConfirm={() => save("attach_message_file_to_task", d)}
+        invalid={missingIds ? "草案缺少文件或任务 id，请让助手重拟" : undefined}
+      >
+        <p className="text-xs text-ink-soft">
+          文件「{d.filename ?? "未命名文件"}」
+          {typeof d.size === "number" ? `（${fmtSize(d.size)}）` : ""} → 任务
+          {d.taskTitle ? `「${d.taskTitle}」` : "附件"}。
+        </p>
+        <p className="text-xs text-ink-faint">
+          确认后会复制一份文件到任务附件；之后删除消息不会影响它。
         </p>
       </CardShell>
     );

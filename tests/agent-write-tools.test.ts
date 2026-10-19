@@ -28,7 +28,7 @@ const opts = {} as never;
 describe("写工具产草案不落库", () => {
   beforeEach(resetDb);
 
-  it("WRITE_TOOL_NAMES 含六写工具", () => {
+  it("WRITE_TOOL_NAMES 含项目写工具（含子任务与附件管理）", () => {
     expect(WRITE_TOOL_NAMES).toEqual([
       "create_project",
       "decompose_tasks",
@@ -36,6 +36,9 @@ describe("写工具产草案不落库", () => {
       "edit_task_links",
       "plan_sprint",
       "create_milestone",
+      "create_subtask",
+      "delete_subtask",
+      "delete_attachment",
     ]);
   });
 

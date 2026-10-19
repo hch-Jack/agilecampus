@@ -12,8 +12,12 @@ export const DRAFT_TOOL_LABELS: Record<string, string> = {
   edit_task_links: "依赖调整",
   plan_sprint: "排期",
   create_milestone: "里程碑",
+  create_subtask: "新增子任务",
+  delete_subtask: "删除子任务",
+  delete_attachment: "删除附件",
   save_personal_context: "个人上下文",
   respond_group_invite: "群邀请处理",
+  attach_message_file_to_task: "消息附件",
 };
 
 /**
@@ -28,6 +32,8 @@ const CONTINUABLE_TOOLS = new Set([
   "edit_task_links",
   "plan_sprint",
   "create_milestone",
+  // 新建子任务也是新 id：用户可能还想给它加后置/附件
+  "create_subtask",
 ]);
 
 export function isContinuableTool(tool: string): boolean {
@@ -89,6 +95,25 @@ export function summarizeDraft(d: DraftLike): string {
     }
     case "plan_sprint":
       return `排期（${list(body.taskIds).length} 个任务）`;
+    case "create_subtask": {
+      const title = text(body.title);
+      return title ? `新增子任务「${clip(title, TITLE_LIMIT)}」` : "新增子任务";
+    }
+    case "delete_subtask": {
+      const title = text(body.title);
+      return title ? `删除子任务「${clip(title, TITLE_LIMIT)}」` : "删除子任务";
+    }
+    case "delete_attachment": {
+      const name = text(body.filename);
+      return name ? `删除附件「${clip(name, TITLE_LIMIT)}」` : "删除附件";
+    }
+    case "attach_message_file_to_task": {
+      const name = text(body.filename);
+      const task = text(body.taskTitle);
+      return `消息附件「${name ? clip(name, TITLE_LIMIT) : "文件"}」→ ${
+        task ? `任务「${clip(task, TITLE_LIMIT)}」` : "任务附件"
+      }`;
+    }
     case "save_personal_context":
       return `个人上下文（${list(body.entries).length} 条）`;
     case "respond_group_invite": {

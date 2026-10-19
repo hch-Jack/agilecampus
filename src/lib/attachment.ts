@@ -5,6 +5,7 @@ import { AppError, ForbiddenError } from "./errors";
 import { getProjectForUser } from "./project";
 import { requireTaskWrite } from "./task";
 import { recordTaskActivity } from "./activity";
+import { getDmAttachmentForDownload } from "./dm";
 
 // 单文件大小上限：10MB。上传走 server action，体积限制须与 next.config 的
 // experimental.serverActions.bodySizeLimit（12mb，含 multipart 开销余量）配套。
@@ -92,7 +93,39 @@ export async function getAttachmentForDownload(actorId: string, attachmentId: st
   return row;
 }
 
-export async function deleteAttachment(actorId: string, attachmentId: string) {
+/**
+ * 附件元数据（不含 blob）：供助手拟草案时校验归属、在卡片上展示文件名。
+ * 读权限是项目成员；写权限由调用方（删除/复制）另行收口。
+ */
+export async function getAttachmentMeta(actorId: string, attachmentId: string) {
+  const [row] = await db
+    .select({
+      id: taskAttachments.id,
+      taskId: taskAttachments.taskId,
+      taskTitle: tasks.title,
+      filename: taskAttachments.filename,
+      mimeType: taskAttachments.mimeType,
+      size: taskAttachments.size,
+      createdAt: taskAttachments.createdAt,
+      uploaderName: users.name,
+      projectId: tasks.projectId,
+    })
+    .from(taskAttachments)
+    .innerJoin(tasks, eq(taskAttachments.taskId, tasks.id))
+    .leftJoin(users, eq(taskAttachments.uploaderId, users.id))
+    .where(eq(taskAttachments.id, attachmentId));
+  if (!row) throw new AppError("附件不存在");
+  await requireProjectAccess(actorId, row.projectId);
+  return row;
+}
+
+// `projectId` 可选：助手落库口带着「当前项目」进来，跨项目附件在这里就拒掉，
+// 不靠调用方各自记得比对。
+export async function deleteAttachment(
+  actorId: string,
+  attachmentId: string,
+  opts?: { projectId?: string },
+) {
   const [row] = await db
     .select({
       id: taskAttachments.id,
@@ -104,10 +137,36 @@ export async function deleteAttachment(actorId: string, attachmentId: string) {
     .innerJoin(tasks, eq(taskAttachments.taskId, tasks.id))
     .where(eq(taskAttachments.id, attachmentId));
   if (!row) throw new AppError("附件不存在");
+  if (opts?.projectId && row.projectId !== opts.projectId)
+    throw new AppError("附件不属于该项目");
   await requireTaskWrite(actorId, row.projectId);
 
   await db.delete(taskAttachments).where(eq(taskAttachments.id, attachmentId));
   await recordTaskActivity(db, [
     { taskId: row.taskId, actorId, type: "attachment_deleted", newValue: row.filename },
   ]);
+}
+
+/**
+ * 把消息里的文件复制成任务附件。
+ *
+ * `dm_attachments` 与 `task_attachments` 是两张互不关联的表（都能存 blob），
+ * 故这里**复制字节**新建一行，而不是引用共享同一行：消息删除/附件清理不会连带
+ * 弄丢任务附件，任务附件删除也不影响聊天记录。代价是同一文件存两份 —— 单文件
+ * 上限 10MB，可接受。
+ */
+export async function copyMessageAttachmentToTask(
+  actorId: string,
+  messageAttachmentId: string,
+  taskId: string,
+) {
+  // 先验消息附件权限（私信收发双方 / 群成员），再让 uploadAttachment 验任务写权限
+  const source = await getDmAttachmentForDownload(actorId, messageAttachmentId);
+  const row = await uploadAttachment(actorId, taskId, {
+    filename: source.filename,
+    mimeType: source.mimeType,
+    size: source.size,
+    data: Buffer.from(source.data),
+  });
+  return { id: row.id, filename: source.filename };
 }

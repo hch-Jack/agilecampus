@@ -341,33 +341,57 @@ export async function countUnread(actorId: string): Promise<number> {
   return row?.count ?? 0;
 }
 
-// —— 附件下载 ——
+// —— 附件读取 ——
 
-// 私信附件：收发双方可下载；群聊附件（dm_group_messages 引用）：群成员可下载。
-// 内容随行返回，仅此路径取 data 列。群成员校验内联在此而非 lib/group-chat.ts——
-// 那边 import 本文件的 findUserByUsername，反向引用会成环。
-export async function getDmAttachmentForDownload(actorId: string, attachmentId: string) {
+// 私信附件：收发双方可用；群聊附件（dm_group_messages 引用）：群成员可用。
+// 群成员校验内联在此而非 lib/group-chat.ts——那边 import 本文件的 findUserByUsername，
+// 反向引用会成环。
+async function requireDmAttachmentAccess(actorId: string, attachmentId: string) {
   const [dmRow] = await db
     .select({ senderId: dmMessages.senderId, recipientId: dmMessages.recipientId })
     .from(dmMessages)
     .where(eq(dmMessages.attachmentId, attachmentId));
   if (dmRow) {
     if (dmRow.senderId !== actorId && dmRow.recipientId !== actorId) throw new ForbiddenError();
-  } else {
-    const [groupRow] = await db
-      .select({ groupId: dmGroupMessages.groupId })
-      .from(dmGroupMessages)
-      .where(eq(dmGroupMessages.attachmentId, attachmentId));
-    if (!groupRow) throw new AppError("附件不存在");
-    const [member] = await db
-      .select({ userId: dmGroupMembers.userId })
-      .from(dmGroupMembers)
-      .where(
-        and(eq(dmGroupMembers.groupId, groupRow.groupId), eq(dmGroupMembers.userId, actorId)),
-      );
-    if (!member) throw new ForbiddenError();
+    return;
   }
 
+  const [groupRow] = await db
+    .select({ groupId: dmGroupMessages.groupId })
+    .from(dmGroupMessages)
+    .where(eq(dmGroupMessages.attachmentId, attachmentId));
+  if (!groupRow) throw new AppError("附件不存在");
+  const [member] = await db
+    .select({ userId: dmGroupMembers.userId })
+    .from(dmGroupMembers)
+    .where(
+      and(eq(dmGroupMembers.groupId, groupRow.groupId), eq(dmGroupMembers.userId, actorId)),
+    );
+  if (!member) throw new ForbiddenError();
+}
+
+/**
+ * 消息附件的**元数据**（不含 blob），供助手在拟「复制到任务附件」草案时校验与展示。
+ * 权限口径与下载完全一致：私信收发双方、群聊成员。
+ */
+export async function getDmAttachmentMeta(actorId: string, attachmentId: string) {
+  await requireDmAttachmentAccess(actorId, attachmentId);
+  const [att] = await db
+    .select({
+      id: dmAttachments.id,
+      filename: dmAttachments.filename,
+      mimeType: dmAttachments.mimeType,
+      size: dmAttachments.size,
+    })
+    .from(dmAttachments)
+    .where(eq(dmAttachments.id, attachmentId));
+  if (!att) throw new AppError("附件不存在");
+  return att;
+}
+
+// 内容随行返回，仅下载与「复制到任务附件」两条路径取 data 列。
+export async function getDmAttachmentForDownload(actorId: string, attachmentId: string) {
+  await requireDmAttachmentAccess(actorId, attachmentId);
   const [att] = await db
     .select({
       id: dmAttachments.id,
@@ -379,5 +403,5 @@ export async function getDmAttachmentForDownload(actorId: string, attachmentId: 
     .from(dmAttachments)
     .where(eq(dmAttachments.id, attachmentId));
   if (!att) throw new AppError("附件不存在");
-  return { ...att, senderId: null, recipientId: null };
+  return att;
 }

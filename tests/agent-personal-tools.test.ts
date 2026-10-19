@@ -7,6 +7,7 @@ import { createProject, createMilestone } from "@/lib/project";
 import { createTask, listProjectTasks } from "@/lib/task";
 import { commitPersonalDraft } from "@/lib/agent/commit";
 import {
+  ATTACH_MESSAGE_TOOL,
   buildPersonalTools,
   buildTools,
   COMMIT_TOOL_NAMES,
@@ -46,6 +47,7 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     const tools = buildPersonalTools(student.id);
     expect(Object.keys(tools).sort()).toEqual(
       [
+        "attach_message_file_to_task",
         "create_milestone",
         "create_project",
         "decompose_tasks",
@@ -73,10 +75,16 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     expect(projectTools).not.toHaveProperty("list_message_threads");
     expect(projectTools).not.toHaveProperty("read_messages");
     expect(projectTools).not.toHaveProperty("respond_group_invite");
+    expect(projectTools).not.toHaveProperty("attach_message_file_to_task");
     // 个人模式反过来不重复项目内归档的读工具：项目页问「最近发生了什么」才查得到整套上下文
     expect(tools).not.toHaveProperty("list_project_activity");
     expect(tools).not.toHaveProperty("list_comments");
     expect(tools).not.toHaveProperty("list_chat_history");
+    // 子任务与附件管理是项目助手的工具面；工作台只多了「消息文件 → 任务附件」
+    expect(tools).not.toHaveProperty("create_subtask");
+    expect(tools).not.toHaveProperty("delete_subtask");
+    expect(tools).not.toHaveProperty("list_attachments");
+    expect(tools).not.toHaveProperty("delete_attachment");
   });
 
   it("list_projects 只列我参与的项目", async () => {
@@ -191,15 +199,18 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     expect(out.draft.updates[0].updatedAt).toBe(task.updatedAt.toISOString());
   });
 
-  it("save_personal_context 与群邀请不并进 WRITE_TOOL_NAMES，但进可落库清单", () => {
-    expect(WRITE_TOOL_NAMES).toHaveLength(6);
+  it("个人专属工具不并进 WRITE_TOOL_NAMES，但进可落库清单", () => {
+    expect(WRITE_TOOL_NAMES).toHaveLength(9);
     expect(WRITE_TOOL_NAMES).not.toContain(SAVE_CONTEXT_TOOL);
     // 邀请处理只属于个人 scope：塞进 WRITE_TOOL_NAMES 会让项目页也能提交它
     expect(WRITE_TOOL_NAMES).not.toContain(RESPOND_INVITE_TOOL);
+    // 消息附件复制同理：只有工作台助手能读消息
+    expect(WRITE_TOOL_NAMES).not.toContain(ATTACH_MESSAGE_TOOL);
     expect(COMMIT_TOOL_NAMES).toEqual([
       ...WRITE_TOOL_NAMES,
       SAVE_CONTEXT_TOOL,
       RESPOND_INVITE_TOOL,
+      ATTACH_MESSAGE_TOOL,
     ]);
   });
 });
