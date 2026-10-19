@@ -16,11 +16,16 @@ import { useRouter } from "next/navigation";
  */
 
 export type Draft = { tool: string; draft: unknown };
-type Option = { id: string; name: string };
-export type OptionMap = Record<string, { members: Option[]; milestones: Option[] }>;
+// parentTaskId 只给依赖卡用：后置候选必须与前置任务同级
+type Option = { id: string; name: string; parentTaskId?: string | null };
+export type OptionMap = Record<string, { members: Option[]; milestones: Option[]; tasks: Option[] }>;
 export type ChatScope = "project" | "personal";
 
-const NO_OPTIONS = { members: [] as Option[], milestones: [] as Option[] };
+const NO_OPTIONS = {
+  members: [] as Option[],
+  milestones: [] as Option[],
+  tasks: [] as Option[],
+};
 
 async function commit(
   scope: ChatScope,
@@ -131,10 +136,19 @@ export function DraftCards({
 }
 
 // 批量变更卡片认得出来的字段。认不出的（模型将来加的新字段）照原样显示，不假装能改。
-const PATCH_FIELDS: Record<string, { label: string; kind: "text" | "status" | "priority" | "member" | "milestone" | "date" }> = {
+const PATCH_FIELDS: Record<
+  string,
+  {
+    label: string;
+    kind: "text" | "textarea" | "status" | "priority" | "member" | "milestone" | "date";
+  }
+> = {
   title: { label: "标题", kind: "text" },
+  description: { label: "描述", kind: "textarea" },
+  completionNote: { label: "完成说明", kind: "textarea" },
   status: { label: "状态", kind: "status" },
   assigneeId: { label: "负责人", kind: "member" },
+  startDate: { label: "起始日", kind: "date" },
   dueDate: { label: "截止日", kind: "date" },
   milestoneId: { label: "里程碑", kind: "milestone" },
   priority: { label: "优先级", kind: "priority" },
@@ -189,6 +203,15 @@ function PatchField({
       <span className="text-ink-soft">{spec.label}</span>
       {spec.kind === "text" && (
         <input value={v} onChange={(e) => onChange(e.target.value)} className="ac-field w-auto text-xs" />
+      )}
+      {spec.kind === "textarea" && (
+        // 清空 = 送 null（落库层把 null 当「清空」、空串当「没给」）
+        <textarea
+          value={v}
+          onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
+          className="ac-field w-auto text-xs"
+          rows={2}
+        />
       )}
       {spec.kind === "date" && (
         // 清空 = 把这个日期**清掉**（送 null），不是「不改」：模型提的日期被用户删掉，
@@ -350,7 +373,14 @@ function DraftCard({
 
   if (draft.tool === "decompose_tasks") {
     const d = data as {
-      tasks: { title: string; assigneeId?: string; priority?: string; dueDate?: string; milestoneId?: string }[];
+      tasks: {
+        title: string;
+        assigneeId?: string;
+        priority?: string;
+        startDate?: string;
+        dueDate?: string;
+        milestoneId?: string;
+      }[];
     };
     const setTask = (idx: number, patch: object) =>
       setData({ ...d, tasks: d.tasks.map((t, i) => (i === idx ? { ...t, ...patch } : t)) });
@@ -380,7 +410,22 @@ function DraftCard({
               <option value="medium">中</option>
               <option value="high">高</option>
             </select>
-            <input type="date" value={t.dueDate ?? ""} onChange={(e) => setTask(idx, { dueDate: e.target.value || undefined })} className="ac-field w-auto text-xs" />
+            <input
+              type="date"
+              aria-label="起始日"
+              title="起始日"
+              value={t.startDate ?? ""}
+              onChange={(e) => setTask(idx, { startDate: e.target.value || undefined })}
+              className="ac-field w-auto text-xs"
+            />
+            <input
+              type="date"
+              aria-label="截止日"
+              title="截止日"
+              value={t.dueDate ?? ""}
+              onChange={(e) => setTask(idx, { dueDate: e.target.value || undefined })}
+              className="ac-field w-auto text-xs"
+            />
             <button type="button" onClick={() => setData({ ...d, tasks: d.tasks.filter((_, i) => i !== idx) })} className="text-xs text-high hover:underline">
               删
             </button>
@@ -424,6 +469,117 @@ function DraftCard({
             ))}
           </div>
         ))}
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "edit_task_links") {
+    type Succ = { id: string; title: string; status: string; parentTaskId: string | null };
+    const d = data as {
+      predecessorId: string;
+      predecessorTitle?: string;
+      predecessorParentTaskId?: string | null;
+      currentSuccessors?: Succ[];
+      add?: string[];
+      remove?: string[];
+    };
+    const current = d.currentSuccessors ?? [];
+    const add = d.add ?? [];
+    const remove = d.remove ?? [];
+    const sameLevel = d.predecessorParentTaskId ?? null;
+    const levelOf = (id: string) =>
+      opts.tasks.find((t) => t.id === id)?.parentTaskId ?? null;
+    const toggle = (key: "add" | "remove", id: string) => {
+      const list = key === "add" ? add : remove;
+      const next = list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
+      setData({ ...d, [key]: next });
+    };
+    // 候选：同级的项目任务，排除前置自身，排除已经是后置的（除非正被移除）
+    const candidate = opts.tasks.filter(
+      (t) =>
+        t.id !== d.predecessorId &&
+        (t.parentTaskId ?? null) === sameLevel &&
+        !current.some((s) => s.id === t.id) &&
+        !add.includes(t.id),
+    );
+    const nameOf = (id: string) =>
+      opts.tasks.find((t) => t.id === id)?.name ??
+      current.find((s) => s.id === id)?.title ??
+      `${id.slice(0, 8)}…`;
+    // 有选项才校验同级：个人 scope 的选项可能没算出来，此时别把可用的草案误判为无效
+    const levelKnown = opts.tasks.length > 0;
+    const invalid = firstProblem([
+      add.length + remove.length === 0 ? "请至少新增或移除一个后置任务" : null,
+      add.some((id) => remove.includes(id)) ? "同一任务不能既新增又移除" : null,
+      levelKnown && add.some((id) => levelOf(id) !== sameLevel)
+        ? "只能连接与前置任务同级的任务"
+        : null,
+    ]);
+    return (
+      <CardShell
+        title={`调整后置任务（${d.predecessorTitle ?? "前置任务"}）`}
+        onConfirm={() => save("edit_task_links", d)}
+        invalid={invalid}
+      >
+        <p className="text-xs text-ink-soft">
+          前置任务：{d.predecessorTitle ?? `${d.predecessorId.slice(0, 8)}…`}
+          。确认后按当前库里的最新状态增删，未提到的旧后置不会被动。
+        </p>
+
+        <div className="flex flex-wrap items-center gap-1 text-xs">
+          <span className="text-ink-soft">现有后置：</span>
+          {current.length === 0 && <span className="text-ink-faint">无</span>}
+          {current.map((s) => {
+            const crossLevel = (s.parentTaskId ?? null) !== sameLevel;
+            const removed = remove.includes(s.id);
+            return (
+              <span key={s.id} className="flex items-center gap-1 rounded border border-line px-1">
+                <span className={removed ? "text-ink-faint line-through" : "text-ink"}>{s.title}</span>
+                {/* 历史跨层级边只读：删它会静默无效，故不给按钮，标出来即可 */}
+                {crossLevel ? (
+                  <span className="text-ink-faint" title="历史跨层级依赖，当前不可调整">
+                    跨层级·只读
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => toggle("remove", s.id)}
+                    className="text-xs text-high hover:underline"
+                  >
+                    {removed ? "撤销" : "移除"}
+                  </button>
+                )}
+              </span>
+            );
+          })}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1 text-xs">
+          <span className="text-ink-soft">新增后置：</span>
+          {/* 已选的新增一律列成可撤销的 chip —— 包括模型给的非同级 id，
+              否则同级校验会禁用确认，用户却找不到地方把它去掉 */}
+          {add.length === 0 && candidate.length === 0 && (
+            <span className="text-ink-faint">没有可选同级任务</span>
+          )}
+          {add.map((id) => (
+            <span key={id} className="flex items-center gap-1 rounded border border-primary bg-primary-soft px-1 text-primary">
+              {nameOf(id)}
+              <button type="button" onClick={() => toggle("add", id)} className="text-high hover:underline">
+                ×
+              </button>
+            </span>
+          ))}
+          {candidate.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => toggle("add", t.id)}
+              className="rounded border border-line px-1 text-ink"
+            >
+              {t.name}
+            </button>
+          ))}
+        </div>
       </CardShell>
     );
   }

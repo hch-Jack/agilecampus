@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { tasks, projects, milestones } from "@/db/schema";
+import { tasks, projects, milestones, taskDependencies } from "@/db/schema";
 import { createUser } from "@/lib/user";
 import { createTeam, joinTeam } from "@/lib/team";
 import { createProject } from "@/lib/project";
@@ -28,11 +28,12 @@ const opts = {} as never;
 describe("写工具产草案不落库", () => {
   beforeEach(resetDb);
 
-  it("WRITE_TOOL_NAMES 含五写工具", () => {
+  it("WRITE_TOOL_NAMES 含六写工具", () => {
     expect(WRITE_TOOL_NAMES).toEqual([
       "create_project",
       "decompose_tasks",
       "update_tasks",
+      "edit_task_links",
       "plan_sprint",
       "create_milestone",
     ]);
@@ -81,6 +82,37 @@ describe("写工具产草案不落库", () => {
     expect(out).toMatchObject({ __draft: true, tool: "create_project", draft: { name: "新项目" } });
     const after = await db.select().from(projects);
     expect(after).toHaveLength(before.length);
+  });
+
+  it("edit_task_links 产草案并带上卡片展示数据，且依赖表无新行", async () => {
+    const { student, project } = await scene();
+    const a = await createTask(student.id, project.id, { title: "前置" });
+    const b = await createTask(student.id, project.id, { title: "后置" });
+    const tools = buildTools(student.id, project.id);
+
+    const out = await tools.edit_task_links.execute!(
+      { predecessorId: a.id, add: [b.id] },
+      opts,
+    );
+    expect(out).toMatchObject({
+      __draft: true,
+      tool: "edit_task_links",
+      draft: {
+        projectId: project.id,
+        predecessorId: a.id,
+        predecessorTitle: "前置",
+        predecessorParentTaskId: null,
+        currentSuccessors: [],
+        add: [b.id],
+        remove: [],
+      },
+    });
+    expect(await db.select().from(taskDependencies)).toHaveLength(0);
+
+    // 什么都不改就拟草案没有意义：在工具这层就说清楚，别让用户点确认才炸
+    await expect(tools.edit_task_links.execute!({ predecessorId: a.id }, opts)).rejects.toThrow(
+      "请至少给出要新增或移除的后置任务",
+    );
   });
 
   it("update_tasks 产草案，为每个 update 填入当前 updatedAt", async () => {

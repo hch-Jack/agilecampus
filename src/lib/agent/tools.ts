@@ -1,9 +1,13 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { getProjectForUser, listMyProjects, listProjectMilestones } from "@/lib/project";
-import { listProjectTasks } from "@/lib/task";
+import {
+  getTaskDetailBundle,
+  listProjectDependenciesDetailed,
+  listProjectTasks,
+} from "@/lib/task";
 import { listTeamMembers } from "@/lib/team";
-import { ForbiddenError } from "@/lib/errors";
+import { AppError, ForbiddenError } from "@/lib/errors";
 import type { TaskStatus } from "@/db/schema";
 
 // 读工具纯函数：权限经底层 lib（listProjectMilestones/listProjectTasks 内部各调 getProjectForUser）
@@ -41,6 +45,7 @@ export async function listTasksFiltered(
     title: t.title,
     status: t.status,
     priority: t.priority,
+    startDate: t.startDate,
     dueDate: t.dueDate,
     assigneeName: t.assigneeName,
   }));
@@ -70,6 +75,38 @@ export async function listMilestonesBrief(actorId: string, projectId: string) {
   }));
 }
 
+/**
+ * `edit_task_links` 的草案。除增量参数外还带上「现在长什么样」：
+ * 确认卡片要把现有后置列出来供核对，并按 `parentTaskId` 滤出同级候选 ——
+ * 这些信息模型没义务复述，且让它复述只会多一处可编造的地方。
+ *
+ * 顺带在**拟草案时**就校验任务归属：否则用户点确认才炸，还得自己猜是哪一步不对。
+ * projectId 恒写进草案（个人 scope 落库口靠它重校权限；项目 scope 用页面那个，值相同）。
+ */
+async function editLinksDraft(
+  actorId: string,
+  projectId: string,
+  input: { predecessorId: string; add?: string[]; remove?: string[] },
+) {
+  if (!input.add?.length && !input.remove?.length)
+    throw new AppError("请至少给出要新增或移除的后置任务");
+  const detail = await getTaskDetailBundle(actorId, input.predecessorId, { projectId });
+  return draftEnvelope("edit_task_links", {
+    projectId,
+    predecessorId: input.predecessorId,
+    predecessorTitle: detail.title,
+    predecessorParentTaskId: detail.parentTaskId,
+    currentSuccessors: detail.successors.map((s) => ({
+      id: s.id,
+      title: s.title,
+      status: s.status,
+      parentTaskId: s.parentTaskId,
+    })),
+    add: [...new Set(input.add ?? [])],
+    remove: [...new Set(input.remove ?? [])],
+  });
+}
+
 // AI SDK 工具装配：绑定 actorId/projectId，execute 委托纯函数
 export function buildTools(actorId: string, projectId: string) {
   return {
@@ -87,6 +124,23 @@ export function buildTools(actorId: string, projectId: string) {
         dueBefore: z.string().optional().describe("截止日不晚于此日期（YYYY-MM-DD）"),
       }),
       execute: async (filters) => listTasksFiltered(actorId, projectId, filters),
+    }),
+    get_task_detail: tool({
+      description:
+        "读取单个任务的完整详情：描述、起止日、状态/优先级、负责人、里程碑、父任务、标签、子任务、前置/后置任务。" +
+        "改任务详情或调整依赖前先读它——只需要 taskId。",
+      inputSchema: z.object({
+        taskId: z.string().describe("取自 list_tasks 或快照"),
+      }),
+      // 项目 scope 额外校验任务属于当前项目：模型拿错 id 时直接报错，别把别处任务带出来
+      execute: async ({ taskId }) => getTaskDetailBundle(actorId, taskId, { projectId }),
+    }),
+    list_dependencies: tool({
+      description:
+        "列出该项目全部依赖边（前置任务 → 后置任务），带两端标题/状态/是否跨层级。" +
+        "用户问关系图、流程图、谁挡着谁、任务先后顺序时用。无需参数。",
+      inputSchema: z.object({}),
+      execute: async () => listProjectDependenciesDetailed(actorId, projectId),
     }),
     list_projects: tool({
       description:
@@ -117,7 +171,8 @@ export function buildTools(actorId: string, projectId: string) {
             title: z.string(),
             description: z.string().optional(),
             assigneeId: z.string().optional(),
-            dueDate: z.string().optional(),
+            startDate: z.string().optional().describe("起始日 YYYY-MM-DD"),
+            dueDate: z.string().optional().describe("截止日 YYYY-MM-DD"),
             milestoneId: z.string().optional(),
             priority: z.enum(["low", "medium", "high"]).optional(),
           }),
@@ -126,18 +181,22 @@ export function buildTools(actorId: string, projectId: string) {
       execute: async (input) => draftEnvelope("decompose_tasks", input),
     }),
     update_tasks: tool({
-      description: "拟批量任务变更草案（状态/负责人/截止日/里程碑/优先级/标题）。仅产草案，需人工确认。",
+      description:
+        "拟批量任务变更草案（标题/描述/状态/负责人/起止日/里程碑/优先级/完成说明）。仅产草案，需人工确认。",
       inputSchema: z.object({
         updates: z.array(
           z.object({
             taskId: z.string(),
             patch: z.object({
               title: z.string().optional(),
+              description: z.string().nullable().optional().describe("新描述；传 null 表示清空"),
               status: z.enum(["todo", "doing", "done"]).optional(),
               assigneeId: z.string().optional(),
-              dueDate: z.string().optional(),
+              startDate: z.string().nullable().optional().describe("起始日 YYYY-MM-DD；传 null 表示清空"),
+              dueDate: z.string().optional().describe("截止日 YYYY-MM-DD"),
               milestoneId: z.string().optional(),
               priority: z.enum(["low", "medium", "high"]).optional(),
+              completionNote: z.string().nullable().optional().describe("完成说明；传 null 表示清空"),
             }),
           }),
         ),
@@ -153,6 +212,18 @@ export function buildTools(actorId: string, projectId: string) {
         }));
         return draftEnvelope("update_tasks", { updates });
       },
+    }),
+    edit_task_links: tool({
+      description:
+        "拟一份「后置任务」调整草案（增量：add 新增、remove 移除，其余旧边不动）。" +
+        "predecessorId 是前置任务；后置任务须与它同级（同一个父任务）。" +
+        "要调整依赖前先 get_task_detail 看清现有前后置。仅产草案，需人工确认。",
+      inputSchema: z.object({
+        predecessorId: z.string().describe("前置任务 id（要给它加/删后置）"),
+        add: z.array(z.string()).optional().describe("要新增的后置任务 id（须与前置任务同级）"),
+        remove: z.array(z.string()).optional().describe("要移除的后置任务 id（只限同级）"),
+      }),
+      execute: async (input) => editLinksDraft(actorId, projectId, input),
     }),
     plan_sprint: tool({
       description: "把选定任务排入某里程碑并批量设截止日。仅产草案，需人工确认。",
@@ -210,6 +281,25 @@ export function buildPersonalTools(actorId: string) {
       }),
       execute: async ({ projectId, ...filters }) => listTasksFiltered(actorId, projectId, filters),
     }),
+    get_task_detail: tool({
+      description:
+        "读取单个任务的完整详情：描述、起止日、状态/优先级、负责人、里程碑、父任务、标签、子任务、前置/后置任务。" +
+        "taskId 在全局唯一，只需给 taskId；想调依赖时要从中取项目的前后置 id。改详情或依赖前先读它。",
+      inputSchema: z.object({
+        taskId: z.string().describe("取自 list_tasks 或快照"),
+      }),
+      // 个人 scope 无「当前项目」：详情自带 projectId，权限由 lib 按任务实际所属项目校验
+      execute: async ({ taskId }) => getTaskDetailBundle(actorId, taskId),
+    }),
+    list_dependencies: tool({
+      description:
+        "列出指定项目全部依赖边（前置任务 → 后置任务），带两端标题/状态/是否跨层级。" +
+        "用户问关系图、流程图、谁挡着谁、任务先后顺序时用。必须给 projectId。",
+      inputSchema: z.object({
+        projectId: z.string().describe("取自快照「我参与的项目」或 list_projects"),
+      }),
+      execute: async ({ projectId }) => listProjectDependenciesDetailed(actorId, projectId),
+    }),
     list_milestones: tool({
       description: "列出指定项目的全部里程碑，返回含 milestoneId。",
       inputSchema: z.object({
@@ -251,7 +341,8 @@ export function buildPersonalTools(actorId: string) {
             title: z.string(),
             description: z.string().optional(),
             assigneeId: z.string().optional(),
-            dueDate: z.string().optional(),
+            startDate: z.string().optional().describe("起始日 YYYY-MM-DD"),
+            dueDate: z.string().optional().describe("截止日 YYYY-MM-DD"),
             milestoneId: z.string().optional(),
             priority: z.enum(["low", "medium", "high"]).optional(),
           }),
@@ -260,7 +351,8 @@ export function buildPersonalTools(actorId: string) {
       execute: async (input) => draftEnvelope("decompose_tasks", input),
     }),
     update_tasks: tool({
-      description: "拟某项目的批量任务变更草案（状态/负责人/截止日/里程碑/优先级/标题）。必须给 projectId。仅产草案。",
+      description:
+        "拟某项目的批量任务变更草案（标题/描述/状态/负责人/起止日/里程碑/优先级/完成说明）。必须给 projectId。仅产草案。",
       inputSchema: z.object({
         projectId: z.uuid().describe("取自快照「我参与的项目」或 list_projects"),
         updates: z.array(
@@ -268,11 +360,14 @@ export function buildPersonalTools(actorId: string) {
             taskId: z.string(),
             patch: z.object({
               title: z.string().optional(),
+              description: z.string().nullable().optional().describe("新描述；传 null 表示清空"),
               status: z.enum(["todo", "doing", "done"]).optional(),
               assigneeId: z.string().optional(),
-              dueDate: z.string().optional(),
+              startDate: z.string().nullable().optional().describe("起始日 YYYY-MM-DD；传 null 表示清空"),
+              dueDate: z.string().optional().describe("截止日 YYYY-MM-DD"),
               milestoneId: z.string().optional(),
               priority: z.enum(["low", "medium", "high"]).optional(),
+              completionNote: z.string().nullable().optional().describe("完成说明；传 null 表示清空"),
             }),
           }),
         ),
@@ -292,6 +387,20 @@ export function buildPersonalTools(actorId: string) {
           })),
         });
       },
+    }),
+    edit_task_links: tool({
+      description:
+        "拟一份「后置任务」调整草案（增量：add 新增、remove 移除，其余旧边不动）。必须给 projectId。" +
+        "predecessorId 是前置任务；后置任务须与它同级（同一个父任务）。" +
+        "要调整依赖前先 get_task_detail 看清现有前后置。仅产草案，需人工确认。",
+      inputSchema: z.object({
+        projectId: z.uuid().describe("取自快照「我参与的项目」或 list_projects"),
+        predecessorId: z.string().describe("前置任务 id（要给它加/删后置）"),
+        add: z.array(z.string()).optional().describe("要新增的后置任务 id（须与前置任务同级）"),
+        remove: z.array(z.string()).optional().describe("要移除的后置任务 id（只限同级）"),
+      }),
+      // projectId 一并进草案；editLinksDraft 顺带校验前置任务确属该项目
+      execute: async ({ projectId, ...input }) => editLinksDraft(actorId, projectId, input),
     }),
     plan_sprint: tool({
       description: "把某项目的一组任务排入某里程碑并统一设截止日。必须给 projectId。仅产草案。",
@@ -327,6 +436,7 @@ export const WRITE_TOOL_NAMES = [
   "create_project",
   "decompose_tasks",
   "update_tasks",
+  "edit_task_links",
   "plan_sprint",
   "create_milestone",
 ] as const;

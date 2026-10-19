@@ -1,4 +1,5 @@
 import { getProjectForUser, listProjectMilestones } from "@/lib/project";
+import { listProjectTasks } from "@/lib/task";
 import { listTeamMembers } from "@/lib/team";
 import type { DraftEnvelope } from "./tools";
 
@@ -12,8 +13,13 @@ import type { DraftEnvelope } from "./tools";
  * 只是下拉里空着；落库时那道 `getProjectForUser` 重校才是真正的关卡。
  */
 
-export type DraftOption = { id: string; name: string };
-export type DraftOptions = { members: DraftOption[]; milestones: DraftOption[] };
+export type DraftOption = { id: string; name: string; parentTaskId?: string | null };
+export type DraftOptions = {
+  members: DraftOption[];
+  milestones: DraftOption[];
+  // 依赖卡要按 parentTaskId 只列「同级」候选；任务名沿用 title
+  tasks: DraftOption[];
+};
 
 export async function collectDraftOptions(
   actorId: string,
@@ -32,13 +38,15 @@ export async function collectDraftOptions(
     projectIds.map(async (projectId) => {
       const access = await getProjectForUser(actorId, projectId);
       if (!access) return;
-      const [members, milestones] = await Promise.all([
+      const [members, milestones, tasks] = await Promise.all([
         listTeamMembers(access.project.teamId),
         listProjectMilestones(actorId, projectId),
+        listProjectTasks(actorId, projectId),
       ]);
       out[projectId] = {
         members: members.map((m) => ({ id: m.id, name: m.name })),
         milestones: milestones.map((m) => ({ id: m.id, name: m.title })),
+        tasks: tasks.map((t) => ({ id: t.id, name: t.title, parentTaskId: t.parentTaskId })),
       };
     }),
   );

@@ -5,7 +5,12 @@ import { tasks, projects } from "@/db/schema";
 import { createUser } from "@/lib/user";
 import { createTeam, joinTeam, updateMemberRole } from "@/lib/team";
 import { createProject, createMilestone, listProjectMilestones } from "@/lib/project";
-import { createTask, listProjectTasks, updateTask } from "@/lib/task";
+import {
+  createTask,
+  listProjectDependencies,
+  listProjectTasks,
+  updateTask,
+} from "@/lib/task";
 import { commitDraft, commitPersonalDraft } from "@/lib/agent/commit";
 import { listMyPersonalContext } from "@/lib/personal-context";
 import { resetDb } from "./helpers";
@@ -196,6 +201,139 @@ describe("commitPersonalDraft（控制台助手的落库口）", () => {
 // 卡片上把日期框**清空**，浏览器交出的是空串。它一路骗过 z.string() 与 lib 里 `if (d && …)` 的
 // 真值判断，最后撞在 PG 的 date 列上（invalid input syntax for type date: ""）→ 用户看到 500
 // 「落库失败，请重试」。这组用例把「空串」在这道门上的语义钉死。
+describe("commitDraft — 任务详情字段与依赖增量", () => {
+  beforeEach(resetDb);
+
+  it("decompose_tasks 落起始日；空串视为没给而不是撞 date 列", async () => {
+    const { student, project } = await scene();
+    await commitDraft(student.id, project.id, "decompose_tasks", {
+      tasks: [
+        { title: "甲", startDate: "2026-10-01", dueDate: "2026-10-20" },
+        { title: "乙", startDate: "" },
+      ],
+    });
+    const rows = await listProjectTasks(student.id, project.id);
+    expect(rows.find((t) => t.title === "甲")).toMatchObject({
+      startDate: "2026-10-01",
+      dueDate: "2026-10-20",
+    });
+    expect(rows.find((t) => t.title === "乙")?.startDate).toBeNull();
+  });
+
+  it("update_tasks：可改描述/起始日/完成说明；null 清空、空串不动", async () => {
+    const { student, project } = await scene();
+    const t = await createTask(student.id, project.id, {
+      title: "甲",
+      description: "旧描述",
+      startDate: "2026-10-01",
+    });
+
+    await commitDraft(student.id, project.id, "update_tasks", {
+      updates: [
+        {
+          taskId: t.id,
+          updatedAt: t.updatedAt.toISOString(),
+          patch: {
+            description: "新描述",
+            startDate: "2026-10-05",
+            completionNote: "新完成说明",
+          },
+        },
+      ],
+    });
+    let row = (await listProjectTasks(student.id, project.id))[0];
+    expect(row).toMatchObject({
+      description: "新描述",
+      startDate: "2026-10-05",
+      completionNote: "新完成说明",
+    });
+
+    await commitDraft(student.id, project.id, "update_tasks", {
+      updates: [
+        {
+          taskId: t.id,
+          updatedAt: row.updatedAt.toISOString(),
+          patch: { description: null, startDate: null, completionNote: null },
+        },
+      ],
+    });
+    row = (await listProjectTasks(student.id, project.id))[0];
+    expect(row).toMatchObject({ description: null, startDate: null, completionNote: null });
+
+    // 空串 = 没给：先把值放回去，再确认空串不会把它清掉
+    const back = (
+      await updateTask(student.id, t.id, {
+        description: "留着",
+        startDate: "2026-10-02",
+        completionNote: "留着",
+      })
+    ).updatedAt;
+    await commitDraft(student.id, project.id, "update_tasks", {
+      updates: [
+        {
+          taskId: t.id,
+          updatedAt: back.toISOString(),
+          patch: { description: "", startDate: "", completionNote: "" },
+        },
+      ],
+    });
+    expect((await listProjectTasks(student.id, project.id))[0]).toMatchObject({
+      description: "留着",
+      startDate: "2026-10-02",
+      completionNote: "留着",
+    });
+  });
+
+  it("edit_task_links 增量落库：只加/删提到的边，旧边保留", async () => {
+    const { student, project } = await scene();
+    const a = await createTask(student.id, project.id, { title: "甲" });
+    const b = await createTask(student.id, project.id, { title: "乙" });
+    const c = await createTask(student.id, project.id, { title: "丙" });
+    await commitDraft(student.id, project.id, "edit_task_links", {
+      predecessorId: a.id,
+      add: [b.id],
+    });
+    const r = await commitDraft(student.id, project.id, "edit_task_links", {
+      predecessorId: a.id,
+      add: [c.id],
+      remove: [b.id],
+    });
+    expect(r).toEqual({ committed: 2, conflicts: [] });
+    const deps = await listProjectDependencies(student.id, project.id);
+    expect(deps).toEqual([{ predecessorId: a.id, successorId: c.id }]);
+  });
+
+  it("卡片展示字段被 zod 剥掉也不影响落库（不得 strict）", async () => {
+    const { student, project } = await scene();
+    const a = await createTask(student.id, project.id, { title: "甲" });
+    const b = await createTask(student.id, project.id, { title: "乙" });
+    const r = await commitDraft(student.id, project.id, "edit_task_links", {
+      predecessorId: a.id,
+      predecessorTitle: "甲",
+      predecessorParentTaskId: null,
+      currentSuccessors: [],
+      add: [b.id],
+      remove: [],
+      projectId: project.id,
+    });
+    expect(r.committed).toBe(1);
+  });
+
+  it("个人版：草案里的 projectId 与前置任务实际归属不一致 → 明确报错", async () => {
+    const { owner, team, student, project } = await scene();
+    const other = await createProject(owner.id, team.id, { name: "另一项目" });
+    const a = await createTask(student.id, project.id, { title: "甲" });
+    const b = await createTask(student.id, project.id, { title: "乙" });
+    await expect(
+      commitPersonalDraft(student.id, "edit_task_links", {
+        projectId: other.id,
+        predecessorId: a.id,
+        add: [b.id],
+      }),
+    ).rejects.toThrow("任务不属于该项目");
+  });
+});
+
 describe("commitPersonalDraft — 日期字段的空串与 null", () => {
   beforeEach(resetDb);
 

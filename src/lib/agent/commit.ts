@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { db } from "@/db";
 import { createMilestone, createProject, getProjectForUser } from "@/lib/project";
-import { createTask, listProjectTasks, updateTask } from "@/lib/task";
+import {
+  applyTaskSuccessorDelta,
+  createTask,
+  listProjectTasks,
+  updateTask,
+} from "@/lib/task";
 import { createPersonalContext } from "@/lib/personal-context";
 import { notifyTaskAssigned, notifyTaskCompleted } from "@/lib/notify";
 import { AppError, ForbiddenError } from "@/lib/errors";
@@ -27,6 +32,7 @@ const taskDraftSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
   assigneeId: z.string().optional(),
+  startDate: optionalDate,
   dueDate: optionalDate,
   milestoneId: z.string().optional(),
   priority: z.enum(["low", "medium", "high"]).optional(),
@@ -41,24 +47,39 @@ const createProjectSchema = z.object({
 
 const decomposeSchema = z.object({ tasks: z.array(taskDraftSchema).min(1) });
 
-const patchSchema = z.object({
-  title: z.string().optional(),
-  status: z.enum(["todo", "doing", "done"]).optional(),
-  assigneeId: z.string().optional(),
-  // 与上面几处不同，这里 null 是有意义的：把已有截止日**清掉**
-  dueDate: z
-    .string()
+// PATCH 语义：`""` = 没给（不改），`null` = 清空。空串若直通 date 列会 500，
+// 直通文本列则会被当成「改成了空描述」——两者都不是用户点确认时的本意。
+const nullablePatch = <T extends z.ZodType>(inner: T) =>
+  inner
     .nullable()
     .optional()
-    .transform((v) => (v === "" ? undefined : v)),
+    .transform((v) => (v === "" ? undefined : v));
+
+const patchSchema = z.object({
+  title: z.string().optional(),
+  description: nullablePatch(z.string()),
+  status: z.enum(["todo", "doing", "done"]).optional(),
+  assigneeId: z.string().optional(),
+  startDate: nullablePatch(z.string()),
+  // 与上面几处不同，这里 null 是有意义的：把已有截止日**清掉**
+  dueDate: nullablePatch(z.string()),
   milestoneId: z.string().optional(),
   priority: z.enum(["low", "medium", "high"]).optional(),
+  completionNote: nullablePatch(z.string()),
 });
 
 const updateTasksSchema = z.object({
   updates: z
     .array(z.object({ taskId: z.string(), updatedAt: z.string(), patch: patchSchema }))
     .min(1),
+});
+
+// 依赖调整草案：只取落库要用的三个字段。卡片展示字段（标题、现有后置…）会被 zod
+// 自动剥离 —— 别加 `.strict()`，否则草案一转手就报「草案格式无效」。
+const linkDraftSchema = z.object({
+  predecessorId: z.uuid(),
+  add: z.array(z.uuid()).optional(),
+  remove: z.array(z.uuid()).optional(),
 });
 
 const planSprintSchema = z.object({
@@ -128,6 +149,16 @@ export async function commitDraft(
           void notifyTaskCompleted(t, actorId);
       }
       return { committed: updatedRows.length, conflicts };
+    }
+    case "edit_task_links": {
+      const d = linkDraftSchema.parse(draft);
+      const r = await applyTaskSuccessorDelta(
+        actorId,
+        d.predecessorId,
+        { add: d.add, remove: d.remove },
+        { projectId },
+      );
+      return { committed: r.added.length + r.removed.length, conflicts: [] };
     }
     case "plan_sprint": {
       const d = planSprintSchema.parse(draft);
