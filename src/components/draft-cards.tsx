@@ -726,6 +726,178 @@ function DraftCard({
     );
   }
 
+  if (draft.tool === "send_message") {
+    const d = data as {
+      targetType?: "user" | "group";
+      targetId?: string;
+      targetName?: string;
+      content?: string;
+      fileSource?: "task" | "message" | null;
+      attachmentId?: string | null;
+      filename?: string | null;
+      size?: number | null;
+    };
+    const hasAttachment = typeof d.attachmentId === "string" && d.attachmentId !== "";
+    const invalid = firstProblem([
+      typeof d.targetId !== "string" || d.targetId === ""
+        ? "草案缺少发送对象，请让助手重拟"
+        : null,
+      (d.content ?? "").trim() === "" && !hasAttachment ? "消息内容和附件至少要有一个" : null,
+    ]);
+    return (
+      <CardShell
+        title={`发送消息（${d.targetName ?? "对方"}）`}
+        onConfirm={() => save("send_message", d)}
+        invalid={invalid}
+      >
+        <p className="text-xs text-ink-soft">
+          发送给：{d.targetName ?? `${(d.targetId ?? "").slice(0, 8)}…`}
+          （{d.targetType === "group" ? "群聊" : "私信"}）
+        </p>
+        <textarea
+          value={d.content ?? ""}
+          onChange={(e) => setData({ ...d, content: e.target.value })}
+          placeholder="消息内容"
+          className="ac-field text-xs"
+          rows={3}
+        />
+        {hasAttachment && (
+          <div className="flex flex-wrap items-center gap-1 text-xs text-ink-soft">
+            <span>
+              附件「{d.filename ?? "未命名文件"}」
+              {typeof d.size === "number" ? `（${fmtSize(d.size)}）` : ""} · 来源：
+              {d.fileSource === "task" ? "项目任务附件" : "消息附件"}
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                setData({ ...d, fileSource: null, attachmentId: null, filename: null, size: null })
+              }
+              className="text-high hover:underline"
+            >
+              移除
+            </button>
+          </div>
+        )}
+        <p className="text-xs text-high">确认后立即发送，无法撤回。</p>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "create_group_chat") {
+    const d = data as {
+      name?: string;
+      memberIds?: string[];
+      members?: { id: string; name: string }[];
+    };
+    const members = d.members ?? [];
+    const memberCount = (d.memberIds ?? []).length + 1; // 包含群主自己
+    const removeMember = (id: string) =>
+      setData({
+        ...d,
+        memberIds: (d.memberIds ?? []).filter((x) => x !== id),
+        members: members.filter((m) => m.id !== id),
+      });
+    const invalid = firstProblem([
+      (d.name ?? "").trim() === "" ? "群名称不能为空" : null,
+      (d.memberIds ?? []).length === 0 ? "至少需要一位成员" : null,
+    ]);
+    return (
+      <CardShell
+        title={`组建群聊（${d.name?.trim() || "新群"}）`}
+        onConfirm={() => save("create_group_chat", d)}
+        invalid={invalid}
+      >
+        <input
+          value={d.name ?? ""}
+          onChange={(e) => setData({ ...d, name: e.target.value })}
+          placeholder="群聊名称"
+          className="ac-field text-xs"
+        />
+        <div className="flex flex-wrap items-center gap-1 text-xs">
+          <span className="text-ink-soft">成员（{memberCount} 人，含你）：</span>
+          {members.length === 0 && <span className="text-ink-faint">无</span>}
+          {members.map((m) => (
+            <span
+              key={m.id}
+              className="flex items-center gap-1 rounded border border-line px-1 text-ink"
+            >
+              {m.name}
+              <button
+                type="button"
+                onClick={() => removeMember(m.id)}
+                className="text-high hover:underline"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+        <p className="text-xs text-high">
+          确认后立即建群，成员会被直接拉进群，无需对方同意；之后可在消息页继续邀请。
+        </p>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "forward_message") {
+    const d = data as {
+      sourceType?: "dm" | "group";
+      sourceId?: string;
+      messageId?: string;
+      sourceLabel?: string;
+      sourceSenderName?: string;
+      content?: string;
+      attachmentId?: string | null;
+      filename?: string | null;
+      size?: number | null;
+      targetType?: "user" | "group";
+      targetId?: string;
+      targetName?: string;
+    };
+    const hasAttachment = typeof d.attachmentId === "string" && d.attachmentId !== "";
+    const invalid = firstProblem([
+      typeof d.sourceId !== "string" || d.sourceId === ""
+        ? "草案缺少源会话，请让助手重拟"
+        : null,
+      typeof d.messageId !== "string" || d.messageId === ""
+        ? "草案缺少源消息，请让助手重拟"
+        : null,
+      typeof d.targetId !== "string" || d.targetId === ""
+        ? "草案缺少转发对象，请让助手重拟"
+        : null,
+      (d.content ?? "").trim() === "" && !hasAttachment ? "源消息没有可转发的内容" : null,
+    ]);
+    return (
+      <CardShell
+        title={`转发消息（${d.targetName ?? "对方"}）`}
+        onConfirm={() => save("forward_message", d)}
+        invalid={invalid}
+      >
+        <p className="text-xs text-ink-soft">
+          来源：{d.sourceLabel ?? (d.sourceType === "group" ? "群聊" : "私信")}
+          {d.sourceSenderName ? ` · ${d.sourceSenderName}` : ""}
+        </p>
+        {(d.content ?? "").trim() !== "" && (
+          <p className="whitespace-pre-wrap break-words rounded border border-line bg-surface p-1 text-xs text-ink">
+            {d.content}
+          </p>
+        )}
+        {hasAttachment && (
+          <p className="text-xs text-ink-soft">
+            附件「{d.filename ?? "未命名文件"}」
+            {typeof d.size === "number" ? `（${fmtSize(d.size)}）` : ""}
+          </p>
+        )}
+        <p className="text-xs text-ink-soft">
+          转发给：{d.targetName ?? `${(d.targetId ?? "").slice(0, 8)}…`}
+          （{d.targetType === "group" ? "群聊" : "私信"}）
+        </p>
+        <p className="text-xs text-high">确认后会把原文与附件原样转发，无法撤回。</p>
+      </CardShell>
+    );
+  }
+
   if (draft.tool === "create_subtask") {
     const d = data as {
       parentTaskId?: string;

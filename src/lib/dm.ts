@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   dmAttachments,
@@ -45,6 +45,22 @@ export async function findUserByUsername(actorId: string, rawName: string) {
   if (!user) throw new AppError("用户不存在，请检查用户名后重新输入");
   if (user.id === actorId) throw new AppError("这是你自己，换个名字试试");
   return { ...user, avatarUrl: userAvatarUrl(user.id, user.avatarUpdatedAt) };
+}
+
+/** 按 userId 取私信对端；不能给自己发消息。助手与 REST 在拟稿/发信前用它确认目标存在。 */
+export async function getDmPeer(actorId: string, peerId: string) {
+  if (actorId === peerId) throw new AppError("不能给自己发消息");
+  const [peer] = await db
+    .select({
+      id: users.id,
+      name: users.name,
+      identity: users.identity,
+      avatarUpdatedAt: users.avatarUpdatedAt,
+    })
+    .from(users)
+    .where(eq(users.id, peerId));
+  if (!peer) throw new AppError("用户不存在");
+  return { ...peer, avatarUrl: userAvatarUrl(peer.id, peer.avatarUpdatedAt) };
 }
 
 // 会话行（幂等）：无则建，有则原样返回。onConflictDoNothing 兜并发，空手而归时回查。
@@ -273,6 +289,74 @@ export async function listDmMessagesReadOnly(
   limit = 20,
 ): Promise<DmThread> {
   return loadDmThread(actorId, peerId, Math.min(Math.max(Math.trunc(limit), 1), 50));
+}
+
+// —— 转发源消息 ——
+
+export type ForwardableMessage = {
+  id: string;
+  content: string;
+  senderId: string;
+  senderName: string;
+  /** 这条私信所属会话的另一端（收件人眼里是发件人，发件人眼里是收件人） */
+  peerId: string;
+  peerName: string;
+  attachment: {
+    id: string;
+    filename: string;
+    mimeType: string | null;
+    size: number;
+  } | null;
+};
+
+/**
+ * 转发前的源消息读取：只允许私信收发双方。
+ * 群消息的对应实现放在 `group-chat.ts`（本文件不得反向 import 它）。
+ */
+export async function getDmMessageForForward(
+  actorId: string,
+  messageId: string,
+): Promise<ForwardableMessage> {
+  const [row] = await db
+    .select({
+      id: dmMessages.id,
+      senderId: dmMessages.senderId,
+      recipientId: dmMessages.recipientId,
+      content: dmMessages.content,
+      attachmentId: dmAttachments.id,
+      filename: dmAttachments.filename,
+      mimeType: dmAttachments.mimeType,
+      size: dmAttachments.size,
+    })
+    .from(dmMessages)
+    .leftJoin(dmAttachments, eq(dmMessages.attachmentId, dmAttachments.id))
+    .where(eq(dmMessages.id, messageId));
+  if (!row) throw new AppError("消息不存在");
+  if (row.senderId !== actorId && row.recipientId !== actorId) throw new ForbiddenError();
+
+  const peerId = row.senderId === actorId ? row.recipientId : row.senderId;
+  const participants = await db
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(inArray(users.id, [row.senderId, row.recipientId]));
+  const nameOf = new Map(participants.map((u) => [u.id, u.name]));
+
+  return {
+    id: row.id,
+    content: row.content,
+    senderId: row.senderId,
+    senderName: nameOf.get(row.senderId) ?? "未知用户",
+    peerId,
+    peerName: nameOf.get(peerId) ?? "未知用户",
+    attachment: row.attachmentId
+      ? {
+          id: row.attachmentId,
+          filename: row.filename ?? "未命名文件",
+          mimeType: row.mimeType ?? null,
+          size: row.size ?? 0,
+        }
+      : null,
+  };
 }
 
 // —— 发送 ——

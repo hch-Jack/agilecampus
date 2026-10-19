@@ -18,6 +18,9 @@ export const DRAFT_TOOL_LABELS: Record<string, string> = {
   save_personal_context: "个人上下文",
   respond_group_invite: "群邀请处理",
   attach_message_file_to_task: "消息附件",
+  send_message: "发送消息",
+  forward_message: "转发消息",
+  create_group_chat: "组建群聊",
 };
 
 /**
@@ -34,6 +37,8 @@ const CONTINUABLE_TOOLS = new Set([
   "create_milestone",
   // 新建子任务也是新 id：用户可能还想给它加后置/附件
   "create_subtask",
+  // 新建群聊会产生 groupId：用户可能紧接着想往这个群发消息
+  "create_group_chat",
 ]);
 
 export function isContinuableTool(tool: string): boolean {
@@ -112,6 +117,24 @@ export function summarizeDraft(d: DraftLike): string {
       const task = text(body.taskTitle);
       return `消息附件「${name ? clip(name, TITLE_LIMIT) : "文件"}」→ ${
         task ? `任务「${clip(task, TITLE_LIMIT)}」` : "任务附件"
+      }`;
+    }
+    case "send_message": {
+      const target = text(body.targetName);
+      const filename = text(body.filename);
+      return `发送消息给「${target ? clip(target, TITLE_LIMIT) : "对方"}」${
+        filename ? `（附件 ${clip(filename, TITLE_LIMIT)}）` : ""
+      }`;
+    }
+    case "forward_message": {
+      const target = text(body.targetName);
+      return `转发消息给「${target ? clip(target, TITLE_LIMIT) : "对方"}」`;
+    }
+    case "create_group_chat": {
+      const name = text(body.name);
+      const count = typeof body.memberCount === "number" ? body.memberCount : null;
+      return `组建群聊「${name ? clip(name, TITLE_LIMIT) : "新群"}」${
+        count !== null ? `（${count} 人）` : ""
       }`;
     }
     case "save_personal_context":

@@ -445,6 +445,84 @@ export async function listGroupMessagesReadOnly(
   };
 }
 
+// —— 转发源消息 / 建群成员校验 ——
+
+export type ForwardableGroupMessage = {
+  id: string;
+  content: string;
+  senderId: string;
+  senderName: string;
+  groupId: string;
+  groupName: string;
+  attachment: {
+    id: string;
+    filename: string;
+    mimeType: string | null;
+    size: number;
+  } | null;
+};
+
+/** 转发前的群消息读取：先验证群成员身份，再限定消息确属该群。 */
+export async function getGroupMessageForForward(
+  actorId: string,
+  groupId: string,
+  messageId: string,
+): Promise<ForwardableGroupMessage> {
+  await requireMembership(groupId, actorId);
+  const [row] = await db
+    .select({
+      id: dmGroupMessages.id,
+      senderId: dmGroupMessages.senderId,
+      senderName: users.name,
+      content: dmGroupMessages.content,
+      groupName: dmGroups.name,
+      attachmentId: dmAttachments.id,
+      filename: dmAttachments.filename,
+      mimeType: dmAttachments.mimeType,
+      size: dmAttachments.size,
+    })
+    .from(dmGroupMessages)
+    .innerJoin(users, eq(dmGroupMessages.senderId, users.id))
+    .innerJoin(dmGroups, eq(dmGroupMessages.groupId, dmGroups.id))
+    .leftJoin(dmAttachments, eq(dmGroupMessages.attachmentId, dmAttachments.id))
+    .where(and(eq(dmGroupMessages.id, messageId), eq(dmGroupMessages.groupId, groupId)));
+  if (!row) throw new AppError("消息不存在");
+
+  return {
+    id: row.id,
+    content: row.content,
+    senderId: row.senderId,
+    senderName: row.senderName,
+    groupId,
+    groupName: row.groupName,
+    attachment: row.attachmentId
+      ? {
+          id: row.attachmentId,
+          filename: row.filename ?? "未命名文件",
+          mimeType: row.mimeType ?? null,
+          size: row.size ?? 0,
+        }
+      : null,
+  };
+}
+
+/**
+ * 建群草案用：按 id 查成员并返回展示名。与 createGroup 一样把「有人不存在」当作整体失败，
+ * 避免草案卡上列出半数成员、确认时才发现缺人。
+ */
+export async function resolveGroupMembers(
+  memberIds: string[],
+): Promise<{ id: string; name: string }[]> {
+  const ids = [...new Set(memberIds)];
+  if (ids.length === 0) return [];
+  const rows = await db
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(inArray(users.id, ids));
+  if (rows.length !== ids.length) throw new AppError("邀请的成员不存在");
+  return rows;
+}
+
 // —— 发送 ——
 
 // 发群消息（文本与文件至少其一），校验口径与 sendDm 完全一致：附件复用 dm_attachments

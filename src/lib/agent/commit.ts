@@ -13,13 +13,17 @@ import {
 import { copyMessageAttachmentToTask, deleteAttachment } from "@/lib/attachment";
 import { createPersonalContext } from "@/lib/personal-context";
 import { notifyTaskAssigned, notifyTaskCompleted } from "@/lib/notify";
-import { respondToGroupInvite } from "@/lib/group-chat";
+import { createGroup, respondToGroupInvite } from "@/lib/group-chat";
+import { forwardChatMessage, sendChatMessage } from "@/lib/chat-transfer";
 import { AppError, ForbiddenError } from "@/lib/errors";
 import {
   ATTACH_MESSAGE_TOOL,
+  CREATE_GROUP_TOOL,
+  FORWARD_MESSAGE_TOOL,
   personalContextDraftSchema,
   RESPOND_INVITE_TOOL,
   SAVE_CONTEXT_TOOL,
+  SEND_MESSAGE_TOOL,
   type CommitToolName,
   type WriteToolName,
 } from "./tools";
@@ -116,6 +120,42 @@ const createSubtaskSchema = z.object({
 const deleteSubtaskSchema = z.object({ taskId: z.uuid() });
 const deleteAttachmentSchema = z.object({ attachmentId: z.uuid() });
 const attachMessageFileSchema = z.object({ attachmentId: z.uuid(), taskId: z.uuid() });
+
+const chatTargetTypeSchema = z.enum(["user", "group"]);
+
+// 卡片上的 targetName/filename 等展示字段由 zod 自动剥离；落库只认 id 与内容。
+const sendMessageSchema = z
+  .object({
+    targetType: chatTargetTypeSchema,
+    targetId: z.uuid(),
+    content: z.string().optional(),
+    // null 与 undefined 都表示「没带附件」；卡片清空附件字段时会送 null
+    fileSource: z.enum(["task", "message"]).nullable().optional(),
+    attachmentId: z.uuid().nullable().optional(),
+  })
+  .refine((d) => (d.fileSource == null) === (d.attachmentId == null), {
+    message: "附件来源与附件 id 必须同时给出",
+    path: ["attachmentId"],
+  });
+
+const forwardMessageSchema = z.object({
+  sourceType: z.enum(["dm", "group"]),
+  sourceId: z.uuid(),
+  messageId: z.uuid(),
+  targetType: chatTargetTypeSchema,
+  targetId: z.uuid(),
+});
+
+const createGroupChatSchema = z.object({
+  name: z.string().min(1),
+  memberIds: z.array(z.uuid()).min(1),
+});
+
+function chatTargetOf(d: { targetType: "user" | "group"; targetId: string }) {
+  return d.targetType === "user"
+    ? ({ kind: "user", id: d.targetId } as const)
+    : ({ kind: "group", id: d.targetId } as const);
+}
 
 export type CommitResult = { committed: number; conflicts: string[] };
 
@@ -263,6 +303,51 @@ export async function commitMessageAttachment(
   return { committed: 1, conflicts: [] };
 }
 
+// 发送消息：卡片确认后才真正落库。目标权限、附件可读性与 10MB 上限都由
+// chat-transfer → sendDm/sendGroupMessage 重校；这里只负责把卡片数据还原成来源对象。
+export async function commitSendMessage(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = sendMessageSchema.parse(draft);
+  const attachment =
+    d.fileSource && d.attachmentId
+      ? { source: d.fileSource, attachmentId: d.attachmentId }
+      : null;
+  await sendChatMessage(actorId, chatTargetOf(d), {
+    content: d.content ?? "",
+    attachment,
+  });
+  return { committed: 1, conflicts: [] };
+}
+
+// 转发消息：重新读取源消息（收发双方/群成员）并复制附件字节，不信任草案里的正文。
+export async function commitForwardMessage(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = forwardMessageSchema.parse(draft);
+  await forwardChatMessage(
+    actorId,
+    { sourceType: d.sourceType, sourceId: d.sourceId, messageId: d.messageId },
+    chatTargetOf(d),
+  );
+  return { committed: 1, conflicts: [] };
+}
+
+// 建群：createGroup 已校验成员存在、群名长度与人数上限；这里补一条「不能只有自己」，
+// 与工具层口径保持一致（否则伪造草案能建出一个单人空群）。
+export async function commitCreateGroup(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = createGroupChatSchema.parse(draft);
+  const memberIds = d.memberIds.filter((id) => id !== actorId);
+  if (memberIds.length === 0) throw new AppError("群聊至少要有另一位成员");
+  await createGroup(actorId, d.name, memberIds);
+  return { committed: 1, conflicts: [] };
+}
+
 // 与项目版的 createProjectSchema 共用字段定义：个人版只是多一个团队 id，
 // 免得两处各写一份、日后加字段时只改一边
 const personalCreateProjectSchema = createProjectSchema.extend({ teamId: z.uuid() });
@@ -288,6 +373,9 @@ export async function commitPersonalDraft(
   if (tool === SAVE_CONTEXT_TOOL) return commitPersonalContext(actorId, draft);
   if (tool === RESPOND_INVITE_TOOL) return commitGroupInviteResponse(actorId, draft);
   if (tool === ATTACH_MESSAGE_TOOL) return commitMessageAttachment(actorId, draft);
+  if (tool === SEND_MESSAGE_TOOL) return commitSendMessage(actorId, draft);
+  if (tool === FORWARD_MESSAGE_TOOL) return commitForwardMessage(actorId, draft);
+  if (tool === CREATE_GROUP_TOOL) return commitCreateGroup(actorId, draft);
 
   if (tool === "create_project") {
     // teamId 是 uuid 形状，与下面那四类同理：缺了/填成了团队名就说清楚，别甩一句「草案格式无效」

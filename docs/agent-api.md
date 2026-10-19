@@ -236,6 +236,148 @@ curl "$AGILECAMPUS_URL/api/agent/projects/$PID/dependencies" \
 #      "successorStatus":"todo","successorParentTaskId":null,"crossLevel":false}]}
 ```
 
+### 16. 联系人 — `GET /api/agent/contacts`
+
+- 不带参数：列出我的私信联系人（含未读数、最近一条预览与方向）。
+- `?username=foo`：按用户名**精确**查人（大小写不敏感），返回 `userId` 供发消息使用；不建会话、不改变未读。
+
+```bash
+curl "$AGILECAMPUS_URL/api/agent/contacts" -H "Authorization: Bearer $AGILECAMPUS_TOKEN"
+# → {"contacts":[{"peerId":"...","name":"周瑜","unread":0,"lastAt":"...","preview":"...","lastMine":false}]}
+
+curl "$AGILECAMPUS_URL/api/agent/contacts?username=zhouyu" -H "Authorization: Bearer $AGILECAMPUS_TOKEN"
+# → {"user":{"id":"...","name":"zhouyu"}}
+```
+
+查无此人、查自己、空用户名 → `400`。
+
+### 17. 读私信/群消息（只读） — `GET /api/agent/messages`
+
+`peerId` 与 `groupId` **二选一**；`limit` 1–50（默认 20）。只读最近消息：
+**不标已读、不推 `last_read_at`、不建联系人**。
+
+```bash
+curl "$AGILECAMPUS_URL/api/agent/messages?peerId=<userId>&limit=20" \
+  -H "Authorization: Bearer $AGILECAMPUS_TOKEN"
+# → {"kind":"dm","peer":{"id":"...","name":"周瑜"},"hasMore":false,
+#     "messages":[{"id":"...","mine":false,"content":"...","at":"...",
+#                  "attachment":{"attachmentId":"...","filename":"设计稿.png","size":1024}}]}
+
+curl "$AGILECAMPUS_URL/api/agent/messages?groupId=<groupId>" \
+  -H "Authorization: Bearer $AGILECAMPUS_TOKEN"
+# → {"kind":"group","group":{"id":"...","name":"讨论组"},"messages":[...],"hasMore":false}
+```
+
+非群成员 → `403`；参数缺失或两者同时给出 → `400`。
+
+### 18. 发私信/群消息 — `POST /api/agent/messages`
+
+`toUserId` 与 `toGroupId` **二选一**；正文与附件至少其一。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `toUserId` | uuid | 二选一 | 私信收件人（不能是自己） |
+| `toGroupId` | uuid | 二选一 | 群聊（须为成员） |
+| `content` | string | 否 | 正文 |
+| `attachment.source` | `task`\|`message` | 否 | `task`=任务附件（项目文件）；`message`=消息附件（转发文件） |
+| `attachment.attachmentId` | uuid | 否 | 已有附件 id（**不接受二进制上传**，上传仍走网页） |
+
+```bash
+curl -X POST "$AGILECAMPUS_URL/api/agent/messages" \
+  -H "Authorization: Bearer $AGILECAMPUS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"toUserId":"<uuid>","content":"项目文件给你","attachment":{"source":"task","attachmentId":"<uuid>"}}'
+# → {"sent":1,"targetType":"user","targetName":"周瑜"}
+```
+
+附件按 id 读字节后**复制**进 `dm_attachments`（跨表无外键），单文件 ≤10MB。
+越权读附件或目标 → `403`；空消息 / 目标二选一不成立 → `400`。
+
+### 19. 列我的群聊 — `GET /api/agent/groups`
+
+```bash
+curl "$AGILECAMPUS_URL/api/agent/groups" -H "Authorization: Bearer $AGILECAMPUS_TOKEN"
+# → {"groups":[{"groupId":"...","name":"讨论组","memberCount":3,"unread":0,
+#               "lastAt":"...","preview":"...","lastSenderName":"周瑜"}]}
+```
+
+### 20. 建群 — `POST /api/agent/groups`
+
+与网页建群一致：成员被**直接拉进群**（不是发邀请待接受）。`memberIds` 里的自己会被忽略；
+至少要有另一位成员；群名 ≤30 字，成员 ≤50 人。
+
+```bash
+curl -X POST "$AGILECAMPUS_URL/api/agent/groups" \
+  -H "Authorization: Bearer $AGILECAMPUS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"讨论组","memberIds":["<uuid>","<uuid>"]}'
+# → {"id":"...","name":"讨论组","ownerId":"...","memberCount":3,
+#     "members":[{"userId":"...","name":"周瑜"}]}
+```
+
+### 21. 转发消息 — `POST /api/agent/messages/forward`
+
+把一条已有私信/群消息连同附件原样转发。源消息只允许收发双方/群成员读取；
+`sourceId` 必须与消息实际所属会话一致（私信填对端 `userId`，群聊填 `groupId`）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `sourceType` | `dm`\|`group` | 是 | 源会话类型 |
+| `sourceId` | uuid | 是 | 私信对端 userId / 群聊 groupId |
+| `messageId` | uuid | 是 | 源消息 |
+| `toUserId` / `toGroupId` | uuid | 二选一 | 转发目标 |
+
+```bash
+curl -X POST "$AGILECAMPUS_URL/api/agent/messages/forward" \
+  -H "Authorization: Bearer $AGILECAMPUS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"sourceType":"dm","sourceId":"<对端 userId>","messageId":"<uuid>","toGroupId":"<uuid>"}'
+# → {"forwarded":1,"sourceType":"dm","sourceLabel":"与 周瑜 的私信",
+#     "targetType":"group","targetName":"讨论组"}
+```
+
+非源消息参与者 → `403`；来源会话对不上 / 源消息为空 → `400`。
+
+### 22. 任务附件 — `GET /api/agent/tasks/{taskId}/attachments`
+
+列出任务的附件元数据（所有项目成员可读）。
+
+```bash
+curl "$AGILECAMPUS_URL/api/agent/tasks/<taskId>/attachments" \
+  -H "Authorization: Bearer $AGILECAMPUS_TOKEN"
+# → {"taskId":"...","attachments":[{"id":"...","filename":"设计稿.png","mimeType":"image/png",
+#     "size":1024,"createdAt":"...","uploaderName":"周瑜"}]}
+```
+
+### 23. 任务附件下载 / 删除 — `/api/agent/attachments/{attachmentId}`
+
+```bash
+curl -OJ "$AGILECAMPUS_URL/api/agent/attachments/<attachmentId>" \
+  -H "Authorization: Bearer $AGILECAMPUS_TOKEN"      # 200，二进制 + Content-Disposition
+
+curl -X DELETE "$AGILECAMPUS_URL/api/agent/attachments/<attachmentId>" \
+  -H "Authorization: Bearer $AGILECAMPUS_TOKEN"      # → {"deleted":"<attachmentId>"}
+```
+
+下载权限同网页（项目成员）；删除需任务写权限。非成员 → `403`；不存在 → `404`（删除为 `400`）。
+
+### 24. 消息附件下载 — `GET /api/agent/message-attachments/{attachmentId}`
+
+私信收发双方、群聊成员可下载；回应为二进制文件（`Content-Disposition: attachment`）。
+权限口径与网页消息附件一致。非参与者 → `403`。
+
+### 25. 删除子任务 — `DELETE /api/agent/tasks/{taskId}/subtasks/{subtaskId}`
+
+只删子任务；`taskId` 必须与该子任务实际的 `parentTaskId` 一致。删除会级联删掉它的下级子任务与依赖，不可恢复。
+
+```bash
+curl -X DELETE "$AGILECAMPUS_URL/api/agent/tasks/<taskId>/subtasks/<subtaskId>" \
+  -H "Authorization: Bearer $AGILECAMPUS_TOKEN"
+# → {"deleted":"<subtaskId>","parentTaskId":"<taskId>"}
+```
+
+父任务对不上 → `400`；非项目成员 → `403`。
+
 ## 响应与错误
 
 - `200`：成功，返回创建/更新后的精简对象（含 `id`）。

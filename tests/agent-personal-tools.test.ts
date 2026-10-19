@@ -11,8 +11,11 @@ import {
   buildPersonalTools,
   buildTools,
   COMMIT_TOOL_NAMES,
+  CREATE_GROUP_TOOL,
+  FORWARD_MESSAGE_TOOL,
   RESPOND_INVITE_TOOL,
   SAVE_CONTEXT_TOOL,
+  SEND_MESSAGE_TOOL,
   WRITE_TOOL_NAMES,
   type CommitToolName,
 } from "@/lib/agent/tools";
@@ -48,10 +51,13 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     expect(Object.keys(tools).sort()).toEqual(
       [
         "attach_message_file_to_task",
+        "create_group_chat",
         "create_milestone",
         "create_project",
         "decompose_tasks",
         "edit_task_links",
+        "find_contact",
+        "forward_message",
         "get_task_detail",
         "list_dependencies",
         "list_members",
@@ -65,6 +71,7 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
         "read_messages",
         "respond_group_invite",
         "save_personal_context",
+        "send_message",
         "update_tasks",
       ].sort(),
     );
@@ -76,6 +83,11 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     expect(projectTools).not.toHaveProperty("read_messages");
     expect(projectTools).not.toHaveProperty("respond_group_invite");
     expect(projectTools).not.toHaveProperty("attach_message_file_to_task");
+    // 发送 / 转发 / 建群只在工作台：项目页没有消息上下文，也没有发消息的入口
+    expect(projectTools).not.toHaveProperty("find_contact");
+    expect(projectTools).not.toHaveProperty("send_message");
+    expect(projectTools).not.toHaveProperty("forward_message");
+    expect(projectTools).not.toHaveProperty("create_group_chat");
     // 个人模式反过来不重复项目内归档的读工具：项目页问「最近发生了什么」才查得到整套上下文
     expect(tools).not.toHaveProperty("list_project_activity");
     expect(tools).not.toHaveProperty("list_comments");
@@ -206,11 +218,18 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     expect(WRITE_TOOL_NAMES).not.toContain(RESPOND_INVITE_TOOL);
     // 消息附件复制同理：只有工作台助手能读消息
     expect(WRITE_TOOL_NAMES).not.toContain(ATTACH_MESSAGE_TOOL);
+    // 发送 / 转发 / 建群同理：只走个人落库口，不能让项目页提交
+    expect(WRITE_TOOL_NAMES).not.toContain(SEND_MESSAGE_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(FORWARD_MESSAGE_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(CREATE_GROUP_TOOL);
     expect(COMMIT_TOOL_NAMES).toEqual([
       ...WRITE_TOOL_NAMES,
       SAVE_CONTEXT_TOOL,
       RESPOND_INVITE_TOOL,
       ATTACH_MESSAGE_TOOL,
+      SEND_MESSAGE_TOOL,
+      FORWARD_MESSAGE_TOOL,
+      CREATE_GROUP_TOOL,
     ]);
   });
 });

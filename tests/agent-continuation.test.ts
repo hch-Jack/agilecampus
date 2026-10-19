@@ -64,6 +64,27 @@ describe("summarizeDraft", () => {
     ).toBe("消息附件「设计稿.png」→ 任务「改首页」");
   });
 
+  it("发送 / 转发 / 建群摘要带对象与附件", () => {
+    expect(
+      summarizeDraft({
+        tool: "send_message",
+        draft: { targetName: "张三", filename: "设计稿.png" },
+      }),
+    ).toBe("发送消息给「张三」（附件 设计稿.png）");
+    expect(
+      summarizeDraft({ tool: "send_message", draft: { targetName: "讨论组" } }),
+    ).toBe("发送消息给「讨论组」");
+    expect(
+      summarizeDraft({ tool: "forward_message", draft: { targetName: "李四" } }),
+    ).toBe("转发消息给「李四」");
+    expect(
+      summarizeDraft({
+        tool: "create_group_chat",
+        draft: { name: "讨论组", memberCount: 3 },
+      }),
+    ).toBe("组建群聊「讨论组」（3 人）");
+  });
+
   it("群邀请摘要带群名与接受/拒绝", () => {
     expect(
       summarizeDraft({
@@ -91,6 +112,7 @@ describe("isContinuableTool", () => {
       "plan_sprint",
       "create_milestone",
       "create_subtask",
+      "create_group_chat",
     ]) {
       expect(isContinuableTool(t), t).toBe(true);
     }
@@ -100,6 +122,8 @@ describe("isContinuableTool", () => {
     expect(isContinuableTool("delete_subtask")).toBe(false);
     expect(isContinuableTool("delete_attachment")).toBe(false);
     expect(isContinuableTool("attach_message_file_to_task")).toBe(false);
+    expect(isContinuableTool("send_message")).toBe(false);
+    expect(isContinuableTool("forward_message")).toBe(false);
   });
 });
 
