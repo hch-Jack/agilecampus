@@ -304,7 +304,7 @@ curl "$AGILECAMPUS_URL/api/agent/groups" -H "Authorization: Bearer $AGILECAMPUS_
 ### 20. 建群 — `POST /api/agent/groups`
 
 与网页建群一致：成员被**直接拉进群**（不是发邀请待接受）。`memberIds` 里的自己会被忽略；
-至少要有另一位成员；群名 ≤30 字，成员 ≤50 人。
+可以传空数组，先建一个只有自己的群（之后再邀请）；群名 ≤30 字，成员 ≤50 人。
 
 ```bash
 curl -X POST "$AGILECAMPUS_URL/api/agent/groups" \

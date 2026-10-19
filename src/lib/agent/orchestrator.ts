@@ -63,7 +63,8 @@ const SYSTEM_PREAMBLE = `你是 AgileCampus（敏捷校园）的项目管理助�
   文件用 fileSource=task 或 fileSource=message 指定来源
 - 把某条私信或群消息（连同附件）原样转发（仅工作台）→ forward_message；
   先 read_messages 取 messages[].id
-- 组建群聊（仅工作台）→ 先用 find_contact 取成员 userId，再 create_group_chat
+- 组建群聊（仅工作台）→ 先用 find_contact 取成员用户名（返回的 name），再 create_group_chat；
+  成员可为空（先建一个只有自己的群）
 - 邀请别人进群（仅工作台）→ invite_to_group；groupId 取自 list_message_threads，usernames 可先用 find_contact 核实；
   对方需要接受邀请，不是直接拉入
 - 把若干任务归入某里程碑并统一截止日 → plan_sprint

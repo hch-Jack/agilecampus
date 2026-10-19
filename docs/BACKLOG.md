@@ -567,8 +567,10 @@ provider 对 `anyOf:[string,null]` 挑食，先把这三处退回 `z.string().op
   没有「直接调用就落库」的旁路；确认后由 `commitPersonalDraft` 重解 zod、重校目标/成员/附件权限。
 - 助手落库与 REST 共用 `src/lib/chat-transfer.ts`：目标解析、附件字节读取、发送都只有一份实现，
   避免两处各写一遍权限校验而逐渐分叉。
-- 建群沿用网页语义：成员被**直接拉入**，不是发邀请待接受；`memberIds` 里的自己被过滤，
-  工具层与落库口都要求「至少还有一位其他成员」。
+- 建群沿用网页语义：成员被**直接拉入**，不是发邀请待接受。助手侧改收**用户名**而不是
+  `userId`——模型誊抄 uuid 易错（抄错一位、或引用上一轮旧 id，症状是「邀请的成员不存在」），
+  用户名则是 find_contact 直接给出、模型也更容易照抄的字段。名单里的自己被过滤；
+  允许 `usernames` 为空，先建一个只有群主的群，之后再邀请。
 - `send_message` 的附件用扁平 `fileSource` + `attachmentId`（而不是嵌套对象），与卡片编辑态、
   zod 剥离展示字段的做法保持一致；两者必须同时给出。
 - `forward_message` 必须带 `sourceId` 并校验与消息实际所属会话一致：私信填对端 userId、群聊填 groupId，

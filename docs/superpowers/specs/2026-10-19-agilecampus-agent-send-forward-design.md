@@ -48,14 +48,16 @@
 | `find_contact` | `{ username }` | 不产草案，直接返回 `{ userId, name }` | — |
 | `send_message` | `{ targetType, targetId, content?, fileSource?, attachmentId? }` | `targetName`、`content`、`fileSource`、`attachmentId`、`filename`、`mimeType`、`size` | `sendChatMessage` |
 | `forward_message` | `{ sourceType, sourceId, messageId, targetType, targetId }` | `sourceLabel`、`sourceSenderName`、`content`、附件元数据、`targetName` | `forwardChatMessage` |
-| `create_group_chat` | `{ name, memberIds }` | `name`、`memberIds`、`members`、`memberCount` | `createGroup` |
+| `create_group_chat` | `{ name, usernames? }` | `name`、`usernames`、`memberIds`（解析结果）、`members`、`memberCount` | `createGroup` |
 | `invite_to_group` | `{ groupId, usernames }` | `groupName`、`memberCount`、`usernames`、`invitees` | `inviteToGroupMembers`（待接受，不是直接拉人） |
 
 - `fileSource` 与 `attachmentId` 必须**同时给出**；正文与附件至少其一。
 - 发送项目文件前用 `list_attachments({ taskId })` 取真实 `attachmentId`（`get_task_detail` 不含附件）。
   该只读工具同时挂在个人 scope：任务 id 全局唯一，内部按任务实际所属项目校验成员身份；
   `delete_attachment` 仍只在项目助手。
-- `create_group_chat` 过滤自己、要求至少一位其他成员、群名 ≤30 字、成员 ≤50 人。
+- `create_group_chat` 收**用户名**（模型抄 uuid 易错），由 `resolveGroupMembersByUsernames`
+  在服务端解析为 id；名单里的自己被过滤，`usernames` 可为空——允许先建一个只有群主的群。
+  群名 ≤30 字、成员 ≤50 人。落库仍用解析后的 `memberIds`，`createGroup` 会重新校验存在性。
 - `invite_to_group` 一次可邀请 1–20 个用户名；拟稿与落库共用 `resolveGroupInviteTargets`，
   已在群里 / 已邀请过 / 群满 / 查无此人都在拟稿时拒绝；批量插入在一个事务里，任一条失败整批回滚。
 - 常量 `SEND_MESSAGE_TOOL` / `FORWARD_MESSAGE_TOOL` / `CREATE_GROUP_TOOL` / `INVITE_GROUP_TOOL`
@@ -63,7 +65,8 @@
   `commitPersonalDraft` 在拆 `projectId` 之前分派。
 - `create_group_chat` 进「可续做」清单（新 groupId 可派生后续发消息）；
   发送与转发不派生后续动作（`send_message` / `forward_message` 也明确不可续做）。
-- 落库口重校：目标存在/群成员身份、附件可读、成员存在、至少一位其他成员。
+- 落库口重校：目标存在/群成员身份、附件可读、成员存在；建群允许只有群主一人，
+  草案带用户名时落库重新解析（防止沿用旧 id）。
 
 ## 五、提示词与卡片
 

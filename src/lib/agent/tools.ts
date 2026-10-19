@@ -27,7 +27,7 @@ import {
   listGroupMessagesReadOnly,
   listMyGroupInvites,
   resolveGroupInviteTargets,
-  resolveGroupMembers,
+  resolveGroupMembersByUsernames,
 } from "@/lib/group-chat";
 import { getChatAttachmentInfo, getForwardSource, resolveChatTarget } from "@/lib/chat-transfer";
 import { listProjectChatHistoryForTool } from "./conversation";
@@ -637,8 +637,9 @@ export function buildPersonalTools(actorId: string) {
     }),
     find_contact: tool({
       description:
-        "按用户名精确查找一个人（用户名全站唯一，大小写不敏感）。返回 userId，供 send_message 或 " +
-        "create_group_chat 使用。找不到会报错；不支持模糊搜索。已有联系人与群聊用 list_message_threads。",
+        "按用户名精确查找一个人（用户名全站唯一，大小写不敏感）。返回 userId 与规范用户名 name：" +
+        "send_message 用 userId；create_group_chat / invite_to_group 用 name（不要誊抄 uuid）。" +
+        "找不到会报错；不支持模糊搜索。已有联系人与群聊用 list_message_threads。",
       inputSchema: z.object({
         username: z.string().describe("对方的用户名（不是昵称或邮箱）"),
       }),
@@ -739,26 +740,29 @@ export function buildPersonalTools(actorId: string) {
     }),
     create_group_chat: tool({
       description:
-        "拟一个建群草案：name 为群名，memberIds 为成员 userId（取自 find_contact / list_message_threads / " +
-        "list_members，不含自己）。确认后群聊立即创建，成员会被**直接拉进群**（无需对方同意），" +
-        "拟稿时要先向用户说清这一点。仅产草案。",
+        "拟一个建群草案：name 为群名，usernames 为成员用户名（取自 find_contact 返回的 name / " +
+        "list_members 的 name，不含自己；也可留空，先建一个只有你自己的群）。" +
+        "确认后群聊立即创建，成员会被**直接拉进群**（无需对方同意），拟稿时要先向用户说清这一点。仅产草案。",
       inputSchema: z.object({
         name: z.string().describe("群聊名称"),
-        memberIds: z.array(z.uuid()).min(1).describe("至少一位成员 userId（不含自己）"),
+        usernames: z
+          .array(z.string())
+          .max(49)
+          .optional()
+          .describe("成员用户名（全站唯一，不含自己）；省略或空数组 = 只有你自己"),
       }),
-      execute: async ({ name, memberIds }) => {
+      execute: async ({ name, usernames }) => {
         const trimmed = name.trim();
         if (!trimmed) throw new AppError("请输入群聊名称");
         if (trimmed.length > GROUP_NAME_MAX)
           throw new AppError(`群名称不能超过 ${GROUP_NAME_MAX} 个字`);
-        const ids = [...new Set(memberIds.filter((id) => id !== actorId))];
-        if (ids.length === 0) throw new AppError("群聊至少要有另一位成员");
-        if (ids.length + 1 > GROUP_MEMBER_CAP)
+        const members = await resolveGroupMembersByUsernames(actorId, usernames ?? []);
+        if (members.length + 1 > GROUP_MEMBER_CAP)
           throw new AppError(`群成员最多 ${GROUP_MEMBER_CAP} 人`);
-        const members = await resolveGroupMembers(ids);
         return draftEnvelope(CREATE_GROUP_TOOL, {
           name: trimmed,
-          memberIds: ids,
+          usernames: members.map((m) => m.name),
+          memberIds: members.map((m) => m.id),
           members,
           memberCount: members.length + 1,
         });

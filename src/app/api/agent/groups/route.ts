@@ -28,12 +28,13 @@ export async function GET(req: Request) {
 
 const createSchema = z.object({
   name: z.string().min(1),
-  memberIds: z.array(z.uuid()).min(1),
+  // 允许空数组：先建一个只有自己的群，之后再邀请成员
+  memberIds: z.array(z.uuid()).optional().default([]),
 });
 
 /**
  * POST /api/agent/groups — 建群。
- * 与网页建群一致：成员会被**直接拉入群**（不是发邀请待接受）。
+ * 与网页建群一致：成员会被**直接拉入群**（不是发邀请待接受）；也可以只有自己。
  */
 export async function POST(req: Request) {
   const userId = await authenticateBearer(req);
@@ -45,9 +46,6 @@ export async function POST(req: Request) {
   }
 
   const memberIds = parsed.data.memberIds.filter((id) => id !== userId);
-  if (memberIds.length === 0) {
-    return NextResponse.json({ error: "群聊至少要有另一位成员" }, { status: 400 });
-  }
 
   try {
     const group = await createGroup(userId, parsed.data.name, memberIds);

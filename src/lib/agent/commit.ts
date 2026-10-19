@@ -13,7 +13,12 @@ import {
 import { copyMessageAttachmentToTask, deleteAttachment } from "@/lib/attachment";
 import { createPersonalContext } from "@/lib/personal-context";
 import { notifyTaskAssigned, notifyTaskCompleted } from "@/lib/notify";
-import { createGroup, inviteToGroupMembers, respondToGroupInvite } from "@/lib/group-chat";
+import {
+  createGroup,
+  inviteToGroupMembers,
+  resolveGroupMembersByUsernames,
+  respondToGroupInvite,
+} from "@/lib/group-chat";
 import { forwardChatMessage, sendChatMessage } from "@/lib/chat-transfer";
 import { AppError, ForbiddenError } from "@/lib/errors";
 import {
@@ -149,7 +154,11 @@ const forwardMessageSchema = z.object({
 
 const createGroupChatSchema = z.object({
   name: z.string().min(1),
-  memberIds: z.array(z.uuid()).min(1),
+  // 草案里的用户名是权威来源（落库时重新解析，避免沿用旧 id）；
+  // memberIds 兜底兼容本次改动前已展示的卡片
+  usernames: z.array(z.string()).optional(),
+  // 允许空数组：建群可以只有群主一人（之后再到消息页邀请）
+  memberIds: z.array(z.uuid()).optional().default([]),
 });
 
 const inviteToGroupSchema = z.object({
@@ -341,15 +350,17 @@ export async function commitForwardMessage(
   return { committed: 1, conflicts: [] };
 }
 
-// 建群：createGroup 已校验成员存在、群名长度与人数上限；这里补一条「不能只有自己」，
-// 与工具层口径保持一致（否则伪造草案能建出一个单人空群）。
+// 建群：createGroup 已校验成员存在、群名长度与人数上限。允许只有群主一人——
+// 与网页建群、REST 建群同一口径；成员之后可以用 invite_to_group 邀请。
+// 草案带用户名时在这里**重新解析**（与邀请进群同一原则），名称被改/账号注销都会当场报错。
 export async function commitCreateGroup(
   actorId: string,
   draft: unknown,
 ): Promise<CommitResult> {
   const d = createGroupChatSchema.parse(draft);
-  const memberIds = d.memberIds.filter((id) => id !== actorId);
-  if (memberIds.length === 0) throw new AppError("群聊至少要有另一位成员");
+  const memberIds = Array.isArray(d.usernames)
+    ? (await resolveGroupMembersByUsernames(actorId, d.usernames)).map((m) => m.id)
+    : d.memberIds.filter((id) => id !== actorId);
   await createGroup(actorId, d.name, memberIds);
   return { committed: 1, conflicts: [] };
 }

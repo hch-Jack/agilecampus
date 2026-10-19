@@ -562,20 +562,44 @@ export async function getGroupMessageForForward(
 }
 
 /**
- * 建群草案用：按 id 查成员并返回展示名。与 createGroup 一样把「有人不存在」当作整体失败，
- * 避免草案卡上列出半数成员、确认时才发现缺人。
+ * 建群草案用：按**用户名**解析成员（全站唯一、大小写不敏感）。
+ *
+ * 助手不擅长抄 uuid：让它把 find_contact 返回的 userId 再誊一遍，很容易抄错一位或引用
+ * 上一轮的旧 id，最后只得到一句「成员不存在」。用户名是模型天然会复制的字段，也与人
+ * 在界面上看到的一致，所以建群工具改收用户名。与 findUserByUsername 不同：
+ * 允许名单里出现自己（建群允许只有群主一人，误填自己也不该报错），重名只取一次。
  */
-export async function resolveGroupMembers(
-  memberIds: string[],
+export async function resolveGroupMembersByUsernames(
+  actorId: string,
+  rawNames: string[],
 ): Promise<{ id: string; name: string }[]> {
-  const ids = [...new Set(memberIds)];
-  if (ids.length === 0) return [];
+  const seen = new Set<string>();
+  const names = rawNames
+    .map((n) => n.trim())
+    .filter((n) => {
+      if (!n) return false;
+      const key = n.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  if (names.length === 0) return [];
+
   const rows = await db
     .select({ id: users.id, name: users.name })
     .from(users)
-    .where(inArray(users.id, ids));
-  if (rows.length !== ids.length) throw new AppError("邀请的成员不存在");
-  return rows;
+    .where(inArray(sql<string>`lower(${users.name})`, names.map((n) => n.toLowerCase())));
+
+  const byName = new Map(rows.map((r) => [r.name.toLowerCase(), r]));
+  const missing = names.filter((n) => !byName.has(n.toLowerCase()));
+  if (missing.length > 0) {
+    throw new AppError(`用户不存在：${missing.join("、")}。请先用 find_contact 核实用户名`);
+  }
+
+  // 剔除自己：建群允许只有群主一人
+  return names
+    .map((n) => byName.get(n.toLowerCase())!)
+    .filter((m) => m.id !== actorId);
 }
 
 // —— 发送 ——

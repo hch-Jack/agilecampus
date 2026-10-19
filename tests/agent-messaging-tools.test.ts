@@ -392,16 +392,28 @@ describe("工作台助手：组建群聊", () => {
     const { student, owner, third } = await scene();
     const tools = buildPersonalTools(student.id);
 
+    // 实际链路：find_contact 返回的 name 直接交给建群工具（不再誊抄 userId）
+    const contact = (await tools.find_contact.execute!({ username: "THIRD" }, opts)) as {
+      userId: string;
+      name: string;
+    };
+    expect(contact).toMatchObject({ userId: third.id, name: "third" });
+
     const env = envelope(
       await tools.create_group_chat.execute!(
-        { name: "  新讨论组  ", memberIds: [owner.id, third.id] },
+        { name: "  新讨论组  ", usernames: ["owner", contact.name] },
         opts,
       ),
     );
     expect(env).toMatchObject({
       __draft: true,
       tool: CREATE_GROUP_TOOL,
-      draft: { name: "新讨论组", memberIds: [owner.id, third.id], memberCount: 3 },
+      draft: {
+        name: "新讨论组",
+        usernames: ["owner", "third"],
+        memberIds: [owner.id, third.id],
+        memberCount: 3,
+      },
     });
     expect(env.draft.members).toEqual(
       expect.arrayContaining([
@@ -418,32 +430,46 @@ describe("工作台助手：组建群聊", () => {
     expect(info.members.map((m) => m.name).sort()).toEqual(["owner", "student", "third"]);
   });
 
-  it("成员不存在 / 只有自己 / 缺群名都被拒", async () => {
+  it("只有自己也能建群：usernames 留空或只写自己都行，确认后 memberCount=1", async () => {
+    const { student } = await scene();
+    const tools = buildPersonalTools(student.id);
+
+    // 省略 usernames
+    const solo = envelope(await tools.create_group_chat.execute!({ name: "单人房" }, opts));
+    expect(solo.draft).toMatchObject({ memberCount: 1, memberIds: [], members: [] });
+
+    // 名单里写了自己：被忽略，而不是报错
+    const selfNamed = envelope(
+      await tools.create_group_chat.execute!({ name: "我也是", usernames: ["student"] }, opts),
+    );
+    expect(selfNamed.draft).toMatchObject({ memberCount: 1, memberIds: [] });
+
+    await commitPersonalDraft(student.id, CREATE_GROUP_TOOL, solo.draft);
+    const groups = await listGroupConversations(student.id);
+    expect(groups.map((g) => [g.name, g.memberCount])).toEqual([["单人房", 1]]);
+  });
+
+  it("用户名不存在 / 缺群名被拒", async () => {
     const { student } = await scene();
     const tools = buildPersonalTools(student.id);
     await expect(
-      tools.create_group_chat.execute!({ name: "空群", memberIds: [student.id] }, opts),
-    ).rejects.toThrow("群聊至少要有另一位成员");
+      tools.create_group_chat.execute!({ name: "幽灵群", usernames: ["nobody"] }, opts),
+    ).rejects.toThrow("用户不存在：nobody");
     await expect(
-      tools.create_group_chat.execute!(
-        { name: "幽灵群", memberIds: ["00000000-0000-0000-0000-000000000000"] },
-        opts,
-      ),
-    ).rejects.toThrow("邀请的成员不存在");
-    await expect(
-      tools.create_group_chat.execute!({ name: "   ", memberIds: [student.id] }, opts),
+      tools.create_group_chat.execute!({ name: "   " }, opts),
     ).rejects.toThrow("请输入群聊名称");
   });
 
-  it("落库口重校：伪造「只有自己」的草案不能建群", async () => {
+  it("落库口允许只有自己的草案（与网页、REST 同口径）", async () => {
     const { student } = await scene();
     await expect(
       commitPersonalDraft(student.id, CREATE_GROUP_TOOL, {
         name: "单人房",
         memberIds: [student.id],
       }),
-    ).rejects.toThrow("群聊至少要有另一位成员");
-    expect(await listGroupConversations(student.id)).toEqual([]);
+    ).resolves.toEqual({ committed: 1, conflicts: [] });
+    const groups = await listGroupConversations(student.id);
+    expect(groups.map((g) => [g.name, g.memberCount])).toEqual([["单人房", 1]]);
   });
 });
 

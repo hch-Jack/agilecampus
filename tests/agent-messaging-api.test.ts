@@ -276,7 +276,7 @@ describe("GET/POST /api/agent/groups", () => {
     ]);
   });
 
-  it("成员不存在 / 只有自己 / 缺群名 / 未登录", async () => {
+  it("成员不存在 / 缺群名 / 未登录被拒；只有自己可以建群", async () => {
     const { student, studentToken } = await scene();
     expect(
       (
@@ -289,15 +289,21 @@ describe("GET/POST /api/agent/groups", () => {
       ).status,
     ).toBe(400);
     expect(
-      (await createGroupRoute(post({ name: "单人房", memberIds: [student.id] }, studentToken)))
-        .status,
-    ).toBe(400);
-    expect(
       (await createGroupRoute(post({ name: "  ", memberIds: [student.id] }, studentToken))).status,
     ).toBe(400);
     expect((await createGroupRoute(post({ name: "x", memberIds: [student.id] }))).status).toBe(
       401,
     );
+
+    // memberIds 省略 = 只有自己；显式写自己也被过滤
+    const solo = await createGroupRoute(post({ name: "单人房" }, studentToken));
+    expect(solo.status).toBe(200);
+    expect(await solo.json()).toMatchObject({ name: "单人房", memberCount: 1 });
+    const selfOnly = await createGroupRoute(
+      post({ name: "还是我", memberIds: [student.id] }, studentToken),
+    );
+    expect(selfOnly.status).toBe(200);
+    expect(await selfOnly.json()).toMatchObject({ name: "还是我", memberCount: 1 });
   });
 });
 

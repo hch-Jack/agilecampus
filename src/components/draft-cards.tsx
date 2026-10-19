@@ -787,20 +787,27 @@ function DraftCard({
   if (draft.tool === "create_group_chat") {
     const d = data as {
       name?: string;
+      usernames?: string[];
       memberIds?: string[];
       members?: { id: string; name: string }[];
     };
     const members = d.members ?? [];
     const memberCount = (d.memberIds ?? []).length + 1; // 包含群主自己
-    const removeMember = (id: string) =>
+    const removeMember = (id: string) => {
+      const name = members.find((m) => m.id === id)?.name;
       setData({
         ...d,
         memberIds: (d.memberIds ?? []).filter((x) => x !== id),
         members: members.filter((m) => m.id !== id),
+        // 旧卡片（建群工具改收用户名之前）没有 usernames：保持缺省，落库继续走 memberIds
+        ...(Array.isArray(d.usernames)
+          ? { usernames: d.usernames.filter((n) => n !== name) }
+          : {}),
       });
+    };
+    // 允许 0 位其他成员：先建一个只有自己的群，之后再到消息页邀请
     const invalid = firstProblem([
       (d.name ?? "").trim() === "" ? "群名称不能为空" : null,
-      (d.memberIds ?? []).length === 0 ? "至少需要一位成员" : null,
     ]);
     return (
       <CardShell
@@ -816,7 +823,7 @@ function DraftCard({
         />
         <div className="flex flex-wrap items-center gap-1 text-xs">
           <span className="text-ink-soft">成员（{memberCount} 人，含你）：</span>
-          {members.length === 0 && <span className="text-ink-faint">无</span>}
+          {members.length === 0 && <span className="text-ink-faint">仅你一人（之后可邀请）</span>}
           {members.map((m) => (
             <span
               key={m.id}
@@ -834,7 +841,8 @@ function DraftCard({
           ))}
         </div>
         <p className="text-xs text-high">
-          确认后立即建群，成员会被直接拉进群，无需对方同意；之后可在消息页继续邀请。
+          确认后立即建群，成员会被直接拉进群，无需对方同意；不选成员也可以，先建一个只有自己的群，
+          之后再到消息页邀请。
         </p>
       </CardShell>
     );
