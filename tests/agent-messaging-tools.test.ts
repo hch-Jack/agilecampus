@@ -162,7 +162,7 @@ describe("工作台助手：发送消息", () => {
   });
 
   it("可把项目任务附件发给个人：确认后复制字节到消息附件", async () => {
-    const { owner, student, project } = await scene();
+    const { owner, student, outsider, project } = await scene();
     const task = await createTask(owner.id, project.id, { title: "交设计稿" });
     const data = Buffer.from("项目文件内容");
     const att = await uploadAttachment(owner.id, task.id, {
@@ -173,6 +173,19 @@ describe("工作台助手：发送消息", () => {
     });
     const tools = buildPersonalTools(student.id);
 
+    // 助手实际链路：先 list_attachments 取 attachmentId（get_task_detail 不含附件）
+    const listed = (await tools.list_attachments.execute!({ taskId: task.id }, opts)) as {
+      attachmentId: string;
+      filename: string;
+    }[];
+    expect(listed).toEqual([
+      expect.objectContaining({ attachmentId: att.id, filename: "设计稿.png" }),
+    ]);
+    // 无权项目里的任务：附件列表也拒绝
+    await expect(
+      buildPersonalTools(outsider.id).list_attachments.execute!({ taskId: task.id }, opts),
+    ).rejects.toThrow("没有权限");
+
     const env = envelope(
       await tools.send_message.execute!(
         {
@@ -180,7 +193,7 @@ describe("工作台助手：发送消息", () => {
           targetId: owner.id,
           content: "文件给你",
           fileSource: "task" as const,
-          attachmentId: att.id,
+          attachmentId: listed[0].attachmentId,
         },
         opts,
       ),

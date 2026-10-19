@@ -481,6 +481,27 @@ export function buildPersonalTools(actorId: string) {
       // 个人 scope 无「当前项目」：详情自带 projectId，权限由 lib 按任务实际所属项目校验
       execute: async ({ taskId }) => getTaskDetailBundle(actorId, taskId),
     }),
+    list_attachments: tool({
+      description:
+        "列出某个任务的附件（attachmentId、文件名、大小、上传者、上传时间）。" +
+        "要把项目里的文件发给别人（send_message 的 fileSource=task）或问「任务上有什么文件」时，" +
+        "先用它取 attachmentId；taskId 全局唯一，权限按任务实际所属项目校验。",
+      inputSchema: z.object({
+        taskId: z.string().describe("取自 list_tasks、get_task_detail 或快照"),
+      }),
+      execute: async ({ taskId }) => {
+        // 个人 scope 无「当前项目」：listAttachments 内部按任务实际所属项目校验成员身份
+        const rows = await listAttachments(actorId, taskId);
+        return rows.map((a) => ({
+          attachmentId: a.id,
+          filename: a.filename,
+          mimeType: a.mimeType,
+          size: a.size,
+          uploader: a.uploaderName,
+          at: a.createdAt.toISOString(),
+        }));
+      },
+    }),
     list_dependencies: tool({
       description:
         "列出指定项目全部依赖边（前置任务 → 后置任务），带两端标题/状态/是否跨层级。" +

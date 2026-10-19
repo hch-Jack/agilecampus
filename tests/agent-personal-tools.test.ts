@@ -61,6 +61,7 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
         "forward_message",
         "get_task_detail",
         "invite_to_group",
+        "list_attachments",
         "list_dependencies",
         "list_members",
         "list_message_threads",
@@ -95,10 +96,10 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     expect(tools).not.toHaveProperty("list_project_activity");
     expect(tools).not.toHaveProperty("list_comments");
     expect(tools).not.toHaveProperty("list_chat_history");
-    // 子任务与附件管理是项目助手的工具面；工作台只多了「消息文件 → 任务附件」
+    // 子任务与附件删除是项目助手的工具面；工作台有附件查看（发文件前取 attachmentId）
+    // 与「消息文件 → 任务附件」，但不直接管子任务、不删附件
     expect(tools).not.toHaveProperty("create_subtask");
     expect(tools).not.toHaveProperty("delete_subtask");
-    expect(tools).not.toHaveProperty("list_attachments");
     expect(tools).not.toHaveProperty("delete_attachment");
   });
 

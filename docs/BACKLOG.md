@@ -555,6 +555,8 @@ provider 对 `anyOf:[string,null]` 挑食，先把这三处退回 `z.string().op
 - **助手仍不能上传新文件**：没有二进制输入通道；「把消息文件加到任务」是唯一的助手侧新增附件路径。
 - **个人 scope 只加一件工具**（消息附件复制），未把 `list_attachments` / `delete_attachment` / 子任务工具
   复制到工作台助手，避免工具集继续膨胀（个人 19 件、项目 19 件）。
+  （后续修订：`list_attachments` 已补进工作台助手——发送项目文件必须拿到真实 `attachmentId`，
+  见下一节；`delete_attachment` 与子任务工具仍只在项目助手。）
 - 本机无 `DEEPSEEK_API_KEY`，真实模型能否正确串起
   「read_messages → 取 attachmentId → attach_message_file_to_task」未验；部署后需在有 key 的环境补验。
 
@@ -576,6 +578,10 @@ provider 对 `anyOf:[string,null]` 挑食，先把这三处退回 `z.string().op
   只落**待处理邀请**，对方接受后才入群。拟稿与落库共用 `resolveGroupInviteTargets`，
   保证「卡片能确认」和「确认能成功」的口径一致；批量邀请在一个事务里插入，任一条失败整批回滚。
 - REST 只补消息/联系人/建群/转发/邀请/附件/子任务删除；读消息复用只读变体，不置已读。
+- 工作台助手补 `list_attachments`：`get_task_detail` 不返回附件，而 `send_message(fileSource="task")`
+  必须给真实 `attachmentId`，否则「把项目文件发给别人」根本拟不出草案。该工具只读，
+  内部按任务实际所属项目校验成员身份（个人 scope 没有「当前项目」）；`delete_attachment`
+  仍只在项目助手。
 
 ### 简化备案
 - **联系人只做用户名精确匹配**：模糊搜索会把全站用户名变成可枚举接口，本次不做。

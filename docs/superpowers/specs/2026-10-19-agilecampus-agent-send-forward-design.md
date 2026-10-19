@@ -52,6 +52,9 @@
 | `invite_to_group` | `{ groupId, usernames }` | `groupName`、`memberCount`、`usernames`、`invitees` | `inviteToGroupMembers`（待接受，不是直接拉人） |
 
 - `fileSource` 与 `attachmentId` 必须**同时给出**；正文与附件至少其一。
+- 发送项目文件前用 `list_attachments({ taskId })` 取真实 `attachmentId`（`get_task_detail` 不含附件）。
+  该只读工具同时挂在个人 scope：任务 id 全局唯一，内部按任务实际所属项目校验成员身份；
+  `delete_attachment` 仍只在项目助手。
 - `create_group_chat` 过滤自己、要求至少一位其他成员、群名 ≤30 字、成员 ≤50 人。
 - `invite_to_group` 一次可邀请 1–20 个用户名；拟稿与落库共用 `resolveGroupInviteTargets`，
   已在群里 / 已邀请过 / 群满 / 查无此人都在拟稿时拒绝；批量插入在一个事务里，任一条失败整批回滚。

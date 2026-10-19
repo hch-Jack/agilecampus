@@ -173,17 +173,18 @@ docker compose -f docker-compose.prod.yml up -d --build
   `update_tasks` 修改（子任务就是任务）、`delete_subtask` 删除。删除入口**只收子任务**；
   删父任务须到任务详情页操作，删除子任务会级联删掉它下面的所有子任务与依赖。
   三者均走两段式草案；落库口会重新校验父/子层级与项目归属。
-- **项目助手管任务附件**：`list_attachments` 查看（`attachmentId`/文件名/大小/上传者）、
-  `delete_attachment` 删除（不可恢复，需确认）。底表 `task_attachments` 仍是唯一事实来源。
+- **任务附件**：`list_attachments` 两个助手都能用（`attachmentId`/文件名/大小/上传者），
+  工作台助手靠它取到 `attachmentId` 才能把项目文件发出去；`delete_attachment` 删除
+  （不可恢复，需确认）只在项目助手。底表 `task_attachments` 仍是唯一事实来源。
 - **工作台助手把消息文件复制成任务附件**：`read_messages` 对带文件的消息返回
   `attachment.attachmentId`；`attach_message_file_to_task` 拟一张草案，确认后由
   `copyMessageAttachmentToTask` **复制字节**新建 `task_attachments` 行
   （`dm_attachments` 与 `task_attachments` 无外键，复制而非共享）。此后删消息不影响任务附件，
   删任务附件也不影响聊天记录；同一文件占两份存储，单文件上限仍为 10MB。
   复制同时校验：消息附件可读（私信收发双方 / 群成员）+ 目标任务可写。
-- **工具面分工**：子任务与附件管理只挂在项目助手；「消息文件 → 任务附件」与发送/邀请类工具只在工作台助手
-  （只有它能读消息）。项目页落库口只认 `WRITE_TOOL_NAMES`，个人专属草案（上下文、群邀请、消息附件、
-  发送/转发/建群/邀请进群）天然不会从项目页提交。
+- **工具面分工**：子任务管理与附件删除只挂在项目助手；附件查看、发文件、「消息文件 → 任务附件」
+  与发送/邀请类工具需要工作台助手（只有它能读消息、发送）。项目页落库口只认 `WRITE_TOOL_NAMES`，
+  个人专属草案（上下文、群邀请、消息附件、发送/转发/建群/邀请进群）天然不会从项目页提交。
 
 ### 助手的发送、转发、建群与邀请
 
