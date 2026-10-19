@@ -10,6 +10,7 @@ import {
   buildPersonalTools,
   buildTools,
   COMMIT_TOOL_NAMES,
+  RESPOND_INVITE_TOOL,
   SAVE_CONTEXT_TOOL,
   WRITE_TOOL_NAMES,
   type CommitToolName,
@@ -52,19 +53,30 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
         "get_task_detail",
         "list_dependencies",
         "list_members",
+        "list_message_threads",
         "list_milestones",
+        "list_my_task_activity",
         "list_projects",
         "list_tasks",
         "plan_sprint",
         "query_progress",
+        "read_messages",
+        "respond_group_invite",
         "save_personal_context",
         "update_tasks",
       ].sort(),
     );
-    // 项目模式没有这两件：成员段常驻快照，上下文是控制台助手的事
+    // 项目模式没有这几件：成员段常驻快照，上下文与消息是控制台助手的事
     const projectTools = buildTools(student.id, "whatever");
     expect(projectTools).not.toHaveProperty("list_members");
     expect(projectTools).not.toHaveProperty("save_personal_context");
+    expect(projectTools).not.toHaveProperty("list_message_threads");
+    expect(projectTools).not.toHaveProperty("read_messages");
+    expect(projectTools).not.toHaveProperty("respond_group_invite");
+    // 个人模式反过来不重复项目内归档的读工具：项目页问「最近发生了什么」才查得到整套上下文
+    expect(tools).not.toHaveProperty("list_project_activity");
+    expect(tools).not.toHaveProperty("list_comments");
+    expect(tools).not.toHaveProperty("list_chat_history");
   });
 
   it("list_projects 只列我参与的项目", async () => {
@@ -179,10 +191,16 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     expect(out.draft.updates[0].updatedAt).toBe(task.updatedAt.toISOString());
   });
 
-  it("save_personal_context 不并进 WRITE_TOOL_NAMES，但进可落库清单", () => {
+  it("save_personal_context 与群邀请不并进 WRITE_TOOL_NAMES，但进可落库清单", () => {
     expect(WRITE_TOOL_NAMES).toHaveLength(6);
     expect(WRITE_TOOL_NAMES).not.toContain(SAVE_CONTEXT_TOOL);
-    expect(COMMIT_TOOL_NAMES).toEqual([...WRITE_TOOL_NAMES, SAVE_CONTEXT_TOOL]);
+    // 邀请处理只属于个人 scope：塞进 WRITE_TOOL_NAMES 会让项目页也能提交它
+    expect(WRITE_TOOL_NAMES).not.toContain(RESPOND_INVITE_TOOL);
+    expect(COMMIT_TOOL_NAMES).toEqual([
+      ...WRITE_TOOL_NAMES,
+      SAVE_CONTEXT_TOOL,
+      RESPOND_INVITE_TOOL,
+    ]);
   });
 });
 

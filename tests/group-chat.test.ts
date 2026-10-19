@@ -9,6 +9,7 @@ import {
   kickMember,
   leaveGroup,
   listGroupConversations,
+  listGroupMessagesReadOnly,
   listMyGroupInvites,
   openGroupConversation,
   respondToGroupInvite,
@@ -280,6 +281,33 @@ describe("sendGroupMessage / 未读", () => {
 
     await sendGroupMessage(b.id, groupId, { content: "三" });
     expect(await countGroupUnread(owner.id)).toBe(1);
+  });
+
+  it("助手只读：不推进 lastReadAt，未读原样；非成员被拒", async () => {
+    const { owner, b, groupId } = await seedGroup();
+    const outsider = await seedUser("路人", "s@example.com");
+    await sendGroupMessage(b.id, groupId, { content: "一" });
+    await sendGroupMessage(b.id, groupId, { content: "二" });
+    expect(await countGroupUnread(owner.id)).toBe(2);
+
+    const thread = await listGroupMessagesReadOnly(owner.id, groupId, 1);
+    expect(thread.group.name).toBe("项目讨论组");
+    // 只取最近 1 条，正序呈现
+    expect(thread.messages.map((m) => m.content)).toEqual(["二"]);
+    expect(thread.hasMore).toBe(true);
+    // 助手看过不等于用户看过
+    expect(await countGroupUnread(owner.id)).toBe(2);
+
+    const all = await listGroupMessagesReadOnly(owner.id, groupId, 20);
+    expect(all.messages.map((m) => m.content)).toEqual(["一", "二"]);
+    expect(all.hasMore).toBe(false);
+
+    await expect(listGroupMessagesReadOnly(outsider.id, groupId)).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+    // 对照：真正的打开仍会把未读清零
+    await openGroupConversation(owner.id, groupId);
+    expect(await countGroupUnread(owner.id)).toBe(0);
   });
 
   it("打开会话回全量正序消息（含发送人名），超过 200 条只回最近 200", async () => {
