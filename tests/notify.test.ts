@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createUser, bindFeishu } from "@/lib/user";
-import { createTeam } from "@/lib/team";
+import { createTeam, joinTeam } from "@/lib/team";
 import { createProject } from "@/lib/project";
-import { createTask } from "@/lib/task";
+import { createTask, listProjectTasks } from "@/lib/task";
+import { commitDraft } from "@/lib/agent/commit";
 import { db } from "@/db";
 import { tasks } from "@/db/schema";
 import { eq } from "drizzle-orm";
@@ -80,13 +81,73 @@ describe("notifyTaskCompleted", () => {
     expect(sendMock.mock.calls[0][0]).toBe("ou_owner");
   });
 
-  it("创建者=操作者 → 不发（免自我骚扰）", async () => {
+  it("创建者=操作者、自己也是负责人 → 给自己发完成回执", async () => {
+    const { owner, project } = await base();
+    await bindFeishu(owner.id, { openId: "ou_owner", name: "主帅" });
+    const task = await createTask(owner.id, project.id, { title: "攻城", assigneeId: owner.id });
+    await new Promise((r) => setTimeout(r, 50)); // 先让 createTask 的指派通知跑完
+    sendMock.mockClear();
+
+    const { notifyTaskCompleted } = await import("@/lib/notify");
+    await notifyTaskCompleted(task, owner.id);
+
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(sendMock.mock.calls[0][0]).toBe("ou_owner");
+  });
+
+  it("创建者=操作者、负责人是别人 → 通知负责人", async () => {
+    const { owner, team, project } = await base();
+    await bindFeishu(owner.id, { openId: "ou_owner", name: "主帅" });
+    const doer = await createUser({ email: "doer@e.com", password: "password123", name: "小卒" });
+    await joinTeam(doer.id, team.inviteCode);
+    await bindFeishu(doer.id, { openId: "ou_doer", name: "小卒" });
+    const task = await createTask(owner.id, project.id, { title: "攻城", assigneeId: doer.id });
+    await new Promise((r) => setTimeout(r, 50));
+    sendMock.mockClear();
+
+    const { notifyTaskCompleted } = await import("@/lib/notify");
+    await notifyTaskCompleted(task, owner.id);
+
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(sendMock.mock.calls[0][0]).toBe("ou_doer");
+  });
+
+  it("创建者=操作者且无负责人 → 无人可发，跳过", async () => {
     const { owner, project } = await base();
     await bindFeishu(owner.id, { openId: "ou_owner", name: "主帅" });
     const task = await createTask(owner.id, project.id, { title: "攻城" });
     const { notifyTaskCompleted } = await import("@/lib/notify");
     await notifyTaskCompleted(task, owner.id);
     expect(sendMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("助手批量改派（commitDraft update_tasks）的通知", () => {
+  beforeEach(async () => { await resetDb(); sendMock.mockClear(); });
+
+  it("新负责人各收到一张指派卡片；已是该负责人的不重发", async () => {
+    const { owner, project } = await base();
+    await bindFeishu(owner.id, { openId: "ou_owner", name: "主帅" });
+    await createTask(owner.id, project.id, { title: "甲" });
+    await createTask(owner.id, project.id, { title: "乙", assigneeId: owner.id });
+    await new Promise((r) => setTimeout(r, 50)); // 清掉 createTask 的指派通知
+    sendMock.mockClear();
+
+    const rows = await listProjectTasks(owner.id, project.id);
+    const r = await commitDraft(owner.id, project.id, "update_tasks", {
+      updates: rows.map((row) => ({
+        taskId: row.id,
+        updatedAt: row.updatedAt.toISOString(),
+        patch: { assigneeId: owner.id },
+      })),
+    });
+    expect(r.committed).toBe(2);
+    await new Promise((r) => setTimeout(r, 100)); // 等事务提交后的游离通知
+
+    // 只有「甲」是真正改派；「乙」本来就是 Yu，不该再收到一张
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    expect(sendMock.mock.calls[0][0]).toBe("ou_owner");
+    expect(JSON.stringify(sendMock.mock.calls[0][1])).toContain("甲");
   });
 });
 
