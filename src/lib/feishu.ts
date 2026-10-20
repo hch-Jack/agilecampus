@@ -10,6 +10,24 @@ function requireEnv(key: string): string {
   return v;
 }
 
+/**
+ * 这次请求是不是真的走 HTTPS。
+ *
+ * OAuth 的 state cookie 只有在真正 https 时才该打 Secure——不能按 NODE_ENV 一刀切：
+ * 生产构建同样可能跑在 `http://<局域网 IP>:3000` 上，浏览器会**静默丢弃** Secure
+ * cookie；回调时读不到 state，用户只看到「绑定校验失败」。
+ * 反向代理终止 TLS 时看 `x-forwarded-proto`（可能是逗号分隔的链路，取第一段）。
+ */
+export function isHttpsRequest(req: Request): boolean {
+  const forwarded = req.headers.get("x-forwarded-proto");
+  if (forwarded) return forwarded.split(",")[0].trim().toLowerCase() === "https";
+  try {
+    return new URL(req.url).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 // tenant_access_token 内存缓存：{ token, 过期毫秒时间戳 }。留 300s 安全余量。
 let tokenCache: { token: string; expiresAt: number } | null = null;
 

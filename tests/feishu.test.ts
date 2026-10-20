@@ -132,3 +132,23 @@ describe("sendCardMessage", () => {
     await expect(sendCardMessage("ou_x", {})).rejects.toThrow();
   });
 });
+
+describe("isHttpsRequest（OAuth state cookie 的 Secure 判定）", () => {
+  it("https 直连 → true", async () => {
+    const { isHttpsRequest } = await import("@/lib/feishu");
+    expect(isHttpsRequest(new Request("https://ac.example.com/api/auth/feishu/login"))).toBe(true);
+  });
+
+  it("局域网 http → false（生产构建也要能把 state cookie 存下来）", async () => {
+    const { isHttpsRequest } = await import("@/lib/feishu");
+    expect(isHttpsRequest(new Request("http://10.76.39.56:3000/api/auth/feishu/login"))).toBe(false);
+  });
+
+  it("反向代理终止 TLS → 看 x-forwarded-proto 的第一段", async () => {
+    const { isHttpsRequest } = await import("@/lib/feishu");
+    const req = new Request("http://127.0.0.1:3000/api/auth/feishu/login", {
+      headers: { "x-forwarded-proto": "https, http" },
+    });
+    expect(isHttpsRequest(req)).toBe(true);
+  });
+});
