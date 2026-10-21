@@ -35,7 +35,8 @@ export function PersonalContextCard({ items }: { items: ContextRow[] }) {
       <div>
         <h3 className="text-sm font-medium text-ink">我的个人上下文</h3>
         <p className="mt-0.5 text-xs text-ink-faint">
-          助手据此了解你在做什么；「项目可见」的条目会进入项目的共享上下文（队友可见），「仅自己」只有你看得到
+          助手据此了解你在做什么；「项目可见」的条目会进入项目的共享上下文（队友可见），「仅自己」只有你看得到。
+          每条下方的两个按钮可随时切换。
         </p>
       </div>
 
@@ -50,25 +51,39 @@ export function PersonalContextCard({ items }: { items: ContextRow[] }) {
             <li key={it.id} className="flex items-start justify-between gap-3 py-2">
               <div className="min-w-0">
                 <p className="whitespace-pre-wrap text-sm text-ink">{it.content}</p>
-                <form action={toggleContextVisibilityAction} className="mt-1">
-                  <input type="hidden" name="id" value={it.id} />
-                  <input
-                    type="hidden"
-                    name="visibility"
-                    value={it.visibility === "shared" ? "private" : "shared"}
-                  />
-                  <button
-                    type="submit"
-                    title="点击切换可见性"
-                    className={`ac-badge ${
-                      it.visibility === "shared"
-                        ? "bg-primary-soft text-primary"
-                        : "bg-sunken text-ink-soft"
-                    }`}
+                {/* 可见性做成两枚按钮直接选，而不是「点一下徽章翻转」：
+                    当前值一目了然，想改成哪一档就点哪一档。每枚按钮各带一张表单、
+                    用隐藏域传目标值，不依赖 submitter 的 name/value 语义。 */}
+                <div className="mt-1.5 flex items-center gap-2">
+                  <span className="text-xs text-ink-faint">可见性</span>
+                  <div
+                    role="group"
+                    aria-label="可见性"
+                    className="inline-flex rounded-field border border-line bg-sunken p-0.5"
                   >
-                    {it.visibility === "shared" ? "项目可见" : "仅自己"}
-                  </button>
-                </form>
+                    {(["shared", "private"] as const).map((visibility) => {
+                      const active = it.visibility === visibility;
+                      return (
+                        <form key={visibility} action={toggleContextVisibilityAction}>
+                          <input type="hidden" name="id" value={it.id} />
+                          <input type="hidden" name="visibility" value={visibility} />
+                          <button
+                            type="submit"
+                            aria-pressed={active}
+                            title={active ? "当前可见性" : undefined}
+                            className={`rounded-[6px] px-2 py-0.5 text-xs transition-colors ${
+                              active
+                                ? "bg-primary-soft font-medium text-primary"
+                                : "text-ink-soft hover:text-ink"
+                            }`}
+                          >
+                            {visibility === "shared" ? "项目可见" : "仅自己"}
+                          </button>
+                        </form>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
               <form action={deleteContextAction}>
                 <input type="hidden" name="id" value={it.id} />
