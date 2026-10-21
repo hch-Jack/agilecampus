@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { DraftCards, type ChatScope, type Draft, type OptionMap } from "@/components/draft-cards";
 import { continuationOriginalText, isContinuationText } from "@/lib/agent/continuation";
+import { Markdown } from "@/components/markdown";
 
 /**
  * AI 助手对话区 —— 右侧常驻面板（`assistant-shell.tsx`）的唯一使用者。
@@ -305,7 +306,14 @@ export function AgentChat({
                     <span className="text-xs text-ink-faint">{m.role === "user" ? "我" : "助手"}</span>
                     <div className="-mt-1">{deleteButton}</div>
                   </div>
-                  <p className="mt-1 whitespace-pre-wrap text-ink">{m.content}</p>
+                  {/* 助手按 Markdown 渲染；用户自己敲的字保持原样，别把 * 和 # 也吃进去 */}
+                  <div className="mt-1 text-ink">
+                    {m.role === "assistant" ? (
+                      <Markdown>{m.content}</Markdown>
+                    ) : (
+                      <p className="whitespace-pre-wrap">{m.content}</p>
+                    )}
+                  </div>
                 </div>
               )}
               {m.drafts && m.drafts.length > 0 && (
