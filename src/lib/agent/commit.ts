@@ -207,6 +207,7 @@ export async function commitDraft(
       const current = await listProjectTasks(actorId, projectId);
       const versionOf = new Map(current.map((r) => [r.id, r.updatedAt.toISOString()]));
       const prevStatus = new Map(current.map((r) => [r.id, r.status]));
+      const prevAssignee = new Map(current.map((r) => [r.id, r.assigneeId]));
       const conflicts: string[] = [];
       // 先剔除版本冲突项，余者裹事务批量应用（整批回滚保证一致）
       const toApply = d.updates.filter((u) => {
@@ -221,8 +222,13 @@ export async function commitDraft(
         for (const u of toApply) out.push(await updateTask(actorId, u.taskId, u.patch, { tx }));
         return out;
       });
-      // 事务提交后补发完成通知：状态由非 done 转 done 者，知会创建者
+      // 事务提交后补发两类通知，与网页/接口的即时路径保持一致：
+      // 改派 → 新负责人；状态由非 done 转 done → 知会创建者。
+      // 这条路径从前只补完成通知，于是「助手一次把多个任务指派给某人」在飞书里
+      // 一声不响——而它恰好是用户最常用的一次改派多个的入口。
       for (const t of updatedRows) {
+        if (t.assigneeId && t.assigneeId !== prevAssignee.get(t.id))
+          void notifyTaskAssigned(t);
         if (t.status === "done" && prevStatus.get(t.id) !== "done")
           void notifyTaskCompleted(t, actorId);
       }

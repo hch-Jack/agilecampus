@@ -67,10 +67,18 @@ export async function notifyTaskAssigned(task: TaskRow): Promise<void> {
   await safeSend(openId, buildAssignedCard(await enrich(task)));
 }
 
+/**
+ * 完成通知：优先知会交办人（创建者）。
+ *
+ * 创建者自己点的完成（单人团队里这是常态）不再静默——改发给负责人，
+ * 让「完成」这件事至少留下一封回执。从前这里直接 return，于是用户建了自己的任务、
+ * 自己标记完成，飞书里什么都没有，看起来像通知坏了。
+ */
 export async function notifyTaskCompleted(task: TaskRow, actorId: string): Promise<void> {
   const creatorId = task.createdById ?? null;
-  if (!creatorId || creatorId === actorId) return;
-  const openId = await openIdOf(creatorId);
+  const recipientId = creatorId && creatorId !== actorId ? creatorId : task.assigneeId;
+  if (!recipientId) return;
+  const openId = await openIdOf(recipientId);
   if (!openId) return;
   await safeSend(openId, buildCompletedCard(await enrich(task)));
 }
