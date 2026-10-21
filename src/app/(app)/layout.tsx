@@ -32,6 +32,7 @@ export default async function AppLayout({
       feishuBoundAt: users.feishuBoundAt,
       timezone: users.timezone,
       avatarUpdatedAt: users.avatarUpdatedAt,
+      tutorialSeenAt: users.tutorialSeenAt,
     })
     .from(users)
     .where(eq(users.id, session.user.id));
@@ -81,6 +82,8 @@ export default async function AppLayout({
             )}
             <span className="hidden text-sm text-ink-soft sm:inline">{session.user.name}</span>
             <UserMenu
+              // 教程从未看过（NULL）→ 顶栏首次加载自动弹出一次
+              tutorial={{ autoOpen: row?.tutorialSeenAt == null }}
               profile={{
                 name: row?.name ?? "",
                 identity: row?.identity ?? null,

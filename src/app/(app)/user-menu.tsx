@@ -1,20 +1,26 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import type { TimeZoneOption } from "@/lib/time";
-import { signOutAction } from "./actions";
+import { markTutorialSeenAction, signOutAction } from "./actions";
 import { FeishuModal } from "./user-menu/feishu-modal";
 import { ProfileModal } from "./user-menu/profile-modal";
 import { TimezoneModal } from "./user-menu/timezone-modal";
+import { TutorialModal } from "./user-menu/tutorial-modal";
 
-type ModalKind = "profile" | "feishu" | "timezone";
+type ModalKind = "profile" | "feishu" | "timezone" | "tutorial";
 
 const MENU_ITEMS: { kind: ModalKind; label: string }[] = [
   { kind: "profile", label: "修改信息" },
   { kind: "feishu", label: "绑定飞书" },
   { kind: "timezone", label: "时区设置" },
+  { kind: "tutorial", label: "新手教程" },
 ];
+
+// 「已挂载」信号：服务端 false、客户端水合后 true。教程首次自动弹出的小窗要 portal
+// 到 body，而 portal 无法在服务端渲染——靠它在 SSR 与水合首帧都不渲染，之后才弹出。
+const subscribeNoop = () => () => {};
 
 // 顶栏右上角「设置」菜单：齿轮按钮展开一列，外点或 Escape 收起；
 // 前三个功能点开小窗口完成，「退出」直接登出。展开动画见 project.css 的 .ac-pop-in。
@@ -22,6 +28,7 @@ export function UserMenu({
   profile,
   feishu,
   timezone,
+  tutorial,
 }: {
   profile: {
     name: string;
@@ -31,10 +38,20 @@ export function UserMenu({
   };
   feishu: { boundName: string | null; boundAtLabel: string | null };
   timezone: { pref: string; options: TimeZoneOption[] };
+  tutorial: { autoOpen: boolean };
 }) {
   const [open, setOpen] = useState(false);
-  const [modal, setModal] = useState<ModalKind | null>(null);
+  // 教程自动弹出走 useState 初值而非 effect：初值来自服务端给的 props，effect 里同步
+  // setState 会造成级联渲染（react-hooks/set-state-in-effect）。
+  const [modal, setModal] = useState<ModalKind | null>(tutorial.autoOpen ? "tutorial" : null);
+  const mounted = useSyncExternalStore(subscribeNoop, () => true, () => false);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // 首次登录弹出即标记已看过（幂等，见 actions）；中途关掉浏览器也不会下次再弹——
+  // 回看走「设置 → 新手教程」。
+  useEffect(() => {
+    if (tutorial.autoOpen) markTutorialSeenAction().catch(() => {});
+  }, [tutorial.autoOpen]);
 
   useEffect(() => {
     if (!open) return;
@@ -141,6 +158,12 @@ export function UserMenu({
             options={timezone.options}
             onClose={() => setModal(null)}
           />,
+          document.body,
+        )}
+      {modal === "tutorial" && mounted &&
+        createPortal(
+          // firstRun 决定要不要显示「跳过」：从菜单重开时不需要
+          <TutorialModal firstRun={tutorial.autoOpen} onClose={() => setModal(null)} />,
           document.body,
         )}
     </>

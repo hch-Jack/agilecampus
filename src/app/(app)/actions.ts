@@ -1,16 +1,27 @@
 "use server";
 
-import { eq } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { auth, signOut } from "@/lib/auth";
 import { clearFeed, isFeedScopeValid, markFeedRead } from "@/lib/activity";
 import { db } from "@/db";
-import { tasks } from "@/db/schema";
+import { tasks, users } from "@/db/schema";
 
 // 顶栏「设置」菜单里的「退出」：抽成共享 server action，
 // 因为菜单是客户端组件，客户端组件里不能内联定义 "use server"。
 export async function signOutAction() {
   await signOut({ redirectTo: "/login" });
+}
+
+// 「新手教程」首次自动弹出时即标记已看过（教程小窗是纯客户端的，看不看完无从也无须判定）。
+// where 带 isNull：重复/并发调用幂等，绝不覆盖已有标记；未登录静默忽略。
+export async function markTutorialSeenAction() {
+  const session = await auth();
+  if (!session?.user) return;
+  await db
+    .update(users)
+    .set({ tutorialSeenAt: sql`now()` })
+    .where(and(eq(users.id, session.user.id), isNull(users.tutorialSeenAt)));
 }
 
 // 「最新记录」模块点「标记已读」时由客户端调用的动作。
