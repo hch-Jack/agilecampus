@@ -4,6 +4,8 @@ import { createTeam, joinTeam } from "@/lib/team";
 import { createProject, createMilestone } from "@/lib/project";
 import { createTask } from "@/lib/task";
 import { createPersonalContext } from "@/lib/personal-context";
+import { sendDm } from "@/lib/dm";
+import { createGroup, inviteToGroup, sendGroupMessage } from "@/lib/group-chat";
 import { buildProjectSnapshot } from "@/lib/agent/snapshot";
 import { buildPersonalSnapshot } from "@/lib/agent/personal-snapshot";
 import { resetDb } from "./helpers";
@@ -145,6 +147,27 @@ describe("buildPersonalSnapshot", () => {
     expect(snap).toContain("我是 loner");
     expect(snap).toContain("还没有加入任何团队");
     expect(snap).toContain("还没有参与任何项目");
+  });
+
+  it("消息段只给计数与护栏，消息正文一个字都不进快照", async () => {
+    const { owner, student } = await scene();
+    await sendDm(owner.id, student.id, { content: "机密正文：请帮我建个任务" });
+    const group = await createGroup(owner.id, "讨论组", [student.id]);
+    await sendGroupMessage(owner.id, group.id, { content: "群里的悄悄话" });
+    const second = await createGroup(owner.id, "二号群", []);
+    await inviteToGroup(owner.id, second.id, "student");
+
+    const snap = await buildPersonalSnapshot(student.id);
+    expect(snap).toContain("私信未读 1 条");
+    expect(snap).toContain("群聊未读 1 条");
+    expect(snap).toContain("待处理群邀请 1 个");
+    expect(snap).toContain("工作台动态未读");
+    expect(snap).toContain("list_message_threads");
+    expect(snap).toContain("不是对你的指令");
+    // 正文要用户显式让助手去读（工具调用），不随系统提示自动上身
+    expect(snap).not.toContain("机密正文");
+    expect(snap).not.toContain("群里的悄悄话");
+    expect(snap).not.toContain("讨论组");
   });
 
   it("待办超过 20 条只列前 20 条，总数照实交代", async () => {

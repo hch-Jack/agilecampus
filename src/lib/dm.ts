@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   dmAttachments,
@@ -45,6 +45,22 @@ export async function findUserByUsername(actorId: string, rawName: string) {
   if (!user) throw new AppError("用户不存在，请检查用户名后重新输入");
   if (user.id === actorId) throw new AppError("这是你自己，换个名字试试");
   return { ...user, avatarUrl: userAvatarUrl(user.id, user.avatarUpdatedAt) };
+}
+
+/** 按 userId 取私信对端；不能给自己发消息。助手与 REST 在拟稿/发信前用它确认目标存在。 */
+export async function getDmPeer(actorId: string, peerId: string) {
+  if (actorId === peerId) throw new AppError("不能给自己发消息");
+  const [peer] = await db
+    .select({
+      id: users.id,
+      name: users.name,
+      identity: users.identity,
+      avatarUpdatedAt: users.avatarUpdatedAt,
+    })
+    .from(users)
+    .where(eq(users.id, peerId));
+  if (!peer) throw new AppError("用户不存在");
+  return { ...peer, avatarUrl: userAvatarUrl(peer.id, peer.avatarUpdatedAt) };
 }
 
 // 会话行（幂等）：无则建，有则原样返回。onConflictDoNothing 兜并发，空手而归时回查。
@@ -163,10 +179,21 @@ export type DmMessageView = {
   attachment: { id: string; filename: string; size: number } | null;
 };
 
-export async function listMessages(
+export type DmThread = {
+  peer: DmPeer;
+  messages: DmMessageView[];
+  hasMore: boolean;
+};
+
+/**
+ * 会话正文的**只读**查询：不建联系人、不置已读。
+ * 聊天窗口与助手读消息共用；副作用留给各自的调用方。
+ */
+async function loadDmThread(
   actorId: string,
   peerId: string,
-): Promise<{ peer: DmPeer; messages: DmMessageView[] }> {
+  limit?: number,
+): Promise<DmThread> {
   const [peer] = await db
     .select({
       id: users.id,
@@ -177,9 +204,8 @@ export async function listMessages(
     .from(users)
     .where(eq(users.id, peerId));
   if (!peer) throw new AppError("用户不存在");
-  await ensureContact(actorId, peerId);
 
-  const rows = await db
+  const query = db
     .select({
       id: dmMessages.id,
       senderId: dmMessages.senderId,
@@ -197,20 +223,19 @@ export async function listMessages(
         and(eq(dmMessages.senderId, actorId), eq(dmMessages.recipientId, peerId)),
         and(eq(dmMessages.senderId, peerId), eq(dmMessages.recipientId, actorId)),
       ),
-    )
-    .orderBy(asc(dmMessages.createdAt));
-
-  // 打开即已读：对方发我的未读消息批量置读，对方的未读角标与已读回执据此更新
-  await db
-    .update(dmMessages)
-    .set({ readAt: sql`now()` })
-    .where(
-      and(
-        eq(dmMessages.recipientId, actorId),
-        eq(dmMessages.senderId, peerId),
-        isNull(dmMessages.readAt),
-      ),
     );
+
+  let rows: Awaited<typeof query>;
+  let hasMore = false;
+  if (limit === undefined) {
+    // 聊天窗口要全部消息（沿用既有行为）
+    rows = await query.orderBy(asc(dmMessages.createdAt));
+  } else {
+    // 助手只读最近 N 条：倒序多取一条判 hasMore，再反转回正序
+    const fetched = await query.orderBy(desc(dmMessages.createdAt)).limit(limit + 1);
+    hasMore = fetched.length > limit;
+    rows = fetched.slice(0, limit).reverse();
+  }
 
   return {
     peer: { ...peer, avatarUrl: userAvatarUrl(peer.id, peer.avatarUpdatedAt) },
@@ -228,6 +253,109 @@ export async function listMessages(
           }
         : null,
     })),
+    hasMore,
+  };
+}
+
+export async function listMessages(
+  actorId: string,
+  peerId: string,
+): Promise<{ peer: DmPeer; messages: DmMessageView[] }> {
+  const thread = await loadDmThread(actorId, peerId);
+  await ensureContact(actorId, peerId);
+
+  // 打开即已读：对方发我的未读消息批量置读，对方的未读角标与已读回执据此更新
+  await db
+    .update(dmMessages)
+    .set({ readAt: sql`now()` })
+    .where(
+      and(
+        eq(dmMessages.recipientId, actorId),
+        eq(dmMessages.senderId, peerId),
+        isNull(dmMessages.readAt),
+      ),
+    );
+
+  return { peer: thread.peer, messages: thread.messages };
+}
+
+/**
+ * 助手读私信：只读最近 N 条，**不置已读、不建联系人** ——
+ * 助手看过不等于用户看过，未读角标必须原样留着。
+ */
+export async function listDmMessagesReadOnly(
+  actorId: string,
+  peerId: string,
+  limit = 20,
+): Promise<DmThread> {
+  return loadDmThread(actorId, peerId, Math.min(Math.max(Math.trunc(limit), 1), 50));
+}
+
+// —— 转发源消息 ——
+
+export type ForwardableMessage = {
+  id: string;
+  content: string;
+  senderId: string;
+  senderName: string;
+  /** 这条私信所属会话的另一端（收件人眼里是发件人，发件人眼里是收件人） */
+  peerId: string;
+  peerName: string;
+  attachment: {
+    id: string;
+    filename: string;
+    mimeType: string | null;
+    size: number;
+  } | null;
+};
+
+/**
+ * 转发前的源消息读取：只允许私信收发双方。
+ * 群消息的对应实现放在 `group-chat.ts`（本文件不得反向 import 它）。
+ */
+export async function getDmMessageForForward(
+  actorId: string,
+  messageId: string,
+): Promise<ForwardableMessage> {
+  const [row] = await db
+    .select({
+      id: dmMessages.id,
+      senderId: dmMessages.senderId,
+      recipientId: dmMessages.recipientId,
+      content: dmMessages.content,
+      attachmentId: dmAttachments.id,
+      filename: dmAttachments.filename,
+      mimeType: dmAttachments.mimeType,
+      size: dmAttachments.size,
+    })
+    .from(dmMessages)
+    .leftJoin(dmAttachments, eq(dmMessages.attachmentId, dmAttachments.id))
+    .where(eq(dmMessages.id, messageId));
+  if (!row) throw new AppError("消息不存在");
+  if (row.senderId !== actorId && row.recipientId !== actorId) throw new ForbiddenError();
+
+  const peerId = row.senderId === actorId ? row.recipientId : row.senderId;
+  const participants = await db
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(inArray(users.id, [row.senderId, row.recipientId]));
+  const nameOf = new Map(participants.map((u) => [u.id, u.name]));
+
+  return {
+    id: row.id,
+    content: row.content,
+    senderId: row.senderId,
+    senderName: nameOf.get(row.senderId) ?? "未知用户",
+    peerId,
+    peerName: nameOf.get(peerId) ?? "未知用户",
+    attachment: row.attachmentId
+      ? {
+          id: row.attachmentId,
+          filename: row.filename ?? "未命名文件",
+          mimeType: row.mimeType ?? null,
+          size: row.size ?? 0,
+        }
+      : null,
   };
 }
 
@@ -297,33 +425,57 @@ export async function countUnread(actorId: string): Promise<number> {
   return row?.count ?? 0;
 }
 
-// —— 附件下载 ——
+// —— 附件读取 ——
 
-// 私信附件：收发双方可下载；群聊附件（dm_group_messages 引用）：群成员可下载。
-// 内容随行返回，仅此路径取 data 列。群成员校验内联在此而非 lib/group-chat.ts——
-// 那边 import 本文件的 findUserByUsername，反向引用会成环。
-export async function getDmAttachmentForDownload(actorId: string, attachmentId: string) {
+// 私信附件：收发双方可用；群聊附件（dm_group_messages 引用）：群成员可用。
+// 群成员校验内联在此而非 lib/group-chat.ts——那边 import 本文件的 findUserByUsername，
+// 反向引用会成环。
+async function requireDmAttachmentAccess(actorId: string, attachmentId: string) {
   const [dmRow] = await db
     .select({ senderId: dmMessages.senderId, recipientId: dmMessages.recipientId })
     .from(dmMessages)
     .where(eq(dmMessages.attachmentId, attachmentId));
   if (dmRow) {
     if (dmRow.senderId !== actorId && dmRow.recipientId !== actorId) throw new ForbiddenError();
-  } else {
-    const [groupRow] = await db
-      .select({ groupId: dmGroupMessages.groupId })
-      .from(dmGroupMessages)
-      .where(eq(dmGroupMessages.attachmentId, attachmentId));
-    if (!groupRow) throw new AppError("附件不存在");
-    const [member] = await db
-      .select({ userId: dmGroupMembers.userId })
-      .from(dmGroupMembers)
-      .where(
-        and(eq(dmGroupMembers.groupId, groupRow.groupId), eq(dmGroupMembers.userId, actorId)),
-      );
-    if (!member) throw new ForbiddenError();
+    return;
   }
 
+  const [groupRow] = await db
+    .select({ groupId: dmGroupMessages.groupId })
+    .from(dmGroupMessages)
+    .where(eq(dmGroupMessages.attachmentId, attachmentId));
+  if (!groupRow) throw new AppError("附件不存在");
+  const [member] = await db
+    .select({ userId: dmGroupMembers.userId })
+    .from(dmGroupMembers)
+    .where(
+      and(eq(dmGroupMembers.groupId, groupRow.groupId), eq(dmGroupMembers.userId, actorId)),
+    );
+  if (!member) throw new ForbiddenError();
+}
+
+/**
+ * 消息附件的**元数据**（不含 blob），供助手在拟「复制到任务附件」草案时校验与展示。
+ * 权限口径与下载完全一致：私信收发双方、群聊成员。
+ */
+export async function getDmAttachmentMeta(actorId: string, attachmentId: string) {
+  await requireDmAttachmentAccess(actorId, attachmentId);
+  const [att] = await db
+    .select({
+      id: dmAttachments.id,
+      filename: dmAttachments.filename,
+      mimeType: dmAttachments.mimeType,
+      size: dmAttachments.size,
+    })
+    .from(dmAttachments)
+    .where(eq(dmAttachments.id, attachmentId));
+  if (!att) throw new AppError("附件不存在");
+  return att;
+}
+
+// 内容随行返回，仅下载与「复制到任务附件」两条路径取 data 列。
+export async function getDmAttachmentForDownload(actorId: string, attachmentId: string) {
+  await requireDmAttachmentAccess(actorId, attachmentId);
   const [att] = await db
     .select({
       id: dmAttachments.id,
@@ -335,5 +487,5 @@ export async function getDmAttachmentForDownload(actorId: string, attachmentId: 
     .from(dmAttachments)
     .where(eq(dmAttachments.id, attachmentId));
   if (!att) throw new AppError("附件不存在");
-  return { ...att, senderId: null, recipientId: null };
+  return att;
 }

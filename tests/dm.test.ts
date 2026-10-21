@@ -5,6 +5,7 @@ import {
   findUserByUsername,
   getDmAttachmentForDownload,
   listConversations,
+  listDmMessagesReadOnly,
   listMessages,
   sendDm,
 } from "@/lib/dm";
@@ -144,6 +145,57 @@ describe("sendDm / listMessages", () => {
     await sendDm(a.id, b.id, { content: "长".repeat(6000) });
     const { messages } = await listMessages(a.id, b.id);
     expect(messages[0].content).toHaveLength(5000);
+  });
+});
+
+// 助手读消息必须「看过不留痕」：用户没打开的会话，未读角标与联系人列表都不该因助手而变
+describe("listDmMessagesReadOnly（助手只读）", () => {
+  beforeEach(resetDb);
+
+  it("不置已读、不建联系人，未读数原样留着", async () => {
+    const a = await seedUser("甲", "a@example.com");
+    const b = await seedUser("乙", "b@example.com");
+    await sendDm(a.id, b.id, { content: "找我一下" });
+    expect(await countUnread(b.id)).toBe(1);
+    expect(await listConversations(b.id)).toHaveLength(1);
+
+    const thread = await listDmMessagesReadOnly(b.id, a.id);
+    expect(thread.peer.name).toBe("甲");
+    expect(thread.messages.map((m) => m.content)).toEqual(["找我一下"]);
+    expect(thread.messages[0].mine).toBe(false);
+    // 读完仍是未读
+    expect(await countUnread(b.id)).toBe(1);
+
+    // 没有消息时也不该凭空建出一条联系人
+    const c = await seedUser("丙", "c@example.com");
+    const empty = await listDmMessagesReadOnly(c.id, a.id);
+    expect(empty.messages).toEqual([]);
+    expect(await listConversations(c.id)).toEqual([]);
+
+    // 对照：正常的打开会话仍然置读
+    await listMessages(b.id, a.id);
+    expect(await countUnread(b.id)).toBe(0);
+  });
+
+  it("只取最近 N 条并给 hasMore，顺序仍按时间正序", async () => {
+    const a = await seedUser("甲", "a@example.com");
+    const b = await seedUser("乙", "b@example.com");
+    for (const t of ["第一", "第二", "第三"]) await sendDm(a.id, b.id, { content: t });
+
+    const thread = await listDmMessagesReadOnly(b.id, a.id, 2);
+    expect(thread.messages.map((m) => m.content)).toEqual(["第二", "第三"]);
+    expect(thread.hasMore).toBe(true);
+
+    const all = await listDmMessagesReadOnly(b.id, a.id, 10);
+    expect(all.messages).toHaveLength(3);
+    expect(all.hasMore).toBe(false);
+  });
+
+  it("对端不存在 → 可展示错误", async () => {
+    const a = await seedUser("甲", "a@example.com");
+    await expect(
+      listDmMessagesReadOnly(a.id, "00000000-0000-0000-0000-000000000000"),
+    ).rejects.toThrow("用户不存在");
   });
 });
 

@@ -7,10 +7,16 @@ import { createProject, createMilestone } from "@/lib/project";
 import { createTask, listProjectTasks } from "@/lib/task";
 import { commitPersonalDraft } from "@/lib/agent/commit";
 import {
+  ATTACH_MESSAGE_TOOL,
   buildPersonalTools,
   buildTools,
   COMMIT_TOOL_NAMES,
+  CREATE_GROUP_TOOL,
+  FORWARD_MESSAGE_TOOL,
+  INVITE_GROUP_TOOL,
+  RESPOND_INVITE_TOOL,
   SAVE_CONTEXT_TOOL,
+  SEND_MESSAGE_TOOL,
   WRITE_TOOL_NAMES,
   type CommitToolName,
 } from "@/lib/agent/tools";
@@ -45,26 +51,56 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     const tools = buildPersonalTools(student.id);
     expect(Object.keys(tools).sort()).toEqual(
       [
+        "attach_message_file_to_task",
+        "create_group_chat",
         "create_milestone",
         "create_project",
         "decompose_tasks",
         "edit_task_links",
+        "find_contact",
+        "forward_message",
         "get_task_detail",
+        "invite_to_group",
+        "list_attachments",
         "list_dependencies",
         "list_members",
+        "list_message_threads",
         "list_milestones",
+        "list_my_task_activity",
         "list_projects",
         "list_tasks",
         "plan_sprint",
         "query_progress",
+        "read_messages",
+        "respond_group_invite",
         "save_personal_context",
+        "send_message",
         "update_tasks",
       ].sort(),
     );
-    // 项目模式没有这两件：成员段常驻快照，上下文是控制台助手的事
+    // 项目模式没有这几件：成员段常驻快照，上下文与消息是控制台助手的事
     const projectTools = buildTools(student.id, "whatever");
     expect(projectTools).not.toHaveProperty("list_members");
     expect(projectTools).not.toHaveProperty("save_personal_context");
+    expect(projectTools).not.toHaveProperty("list_message_threads");
+    expect(projectTools).not.toHaveProperty("read_messages");
+    expect(projectTools).not.toHaveProperty("respond_group_invite");
+    expect(projectTools).not.toHaveProperty("attach_message_file_to_task");
+    // 发送 / 转发 / 建群只在工作台：项目页没有消息上下文，也没有发消息的入口
+    expect(projectTools).not.toHaveProperty("find_contact");
+    expect(projectTools).not.toHaveProperty("send_message");
+    expect(projectTools).not.toHaveProperty("forward_message");
+    expect(projectTools).not.toHaveProperty("create_group_chat");
+    expect(projectTools).not.toHaveProperty("invite_to_group");
+    // 个人模式反过来不重复项目内归档的读工具：项目页问「最近发生了什么」才查得到整套上下文
+    expect(tools).not.toHaveProperty("list_project_activity");
+    expect(tools).not.toHaveProperty("list_comments");
+    expect(tools).not.toHaveProperty("list_chat_history");
+    // 子任务与附件删除是项目助手的工具面；工作台有附件查看（发文件前取 attachmentId）
+    // 与「消息文件 → 任务附件」，但不直接管子任务、不删附件
+    expect(tools).not.toHaveProperty("create_subtask");
+    expect(tools).not.toHaveProperty("delete_subtask");
+    expect(tools).not.toHaveProperty("delete_attachment");
   });
 
   it("list_projects 只列我参与的项目", async () => {
@@ -179,10 +215,28 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     expect(out.draft.updates[0].updatedAt).toBe(task.updatedAt.toISOString());
   });
 
-  it("save_personal_context 不并进 WRITE_TOOL_NAMES，但进可落库清单", () => {
-    expect(WRITE_TOOL_NAMES).toHaveLength(6);
+  it("个人专属工具不并进 WRITE_TOOL_NAMES，但进可落库清单", () => {
+    expect(WRITE_TOOL_NAMES).toHaveLength(9);
     expect(WRITE_TOOL_NAMES).not.toContain(SAVE_CONTEXT_TOOL);
-    expect(COMMIT_TOOL_NAMES).toEqual([...WRITE_TOOL_NAMES, SAVE_CONTEXT_TOOL]);
+    // 邀请处理只属于个人 scope：塞进 WRITE_TOOL_NAMES 会让项目页也能提交它
+    expect(WRITE_TOOL_NAMES).not.toContain(RESPOND_INVITE_TOOL);
+    // 消息附件复制同理：只有工作台助手能读消息
+    expect(WRITE_TOOL_NAMES).not.toContain(ATTACH_MESSAGE_TOOL);
+    // 发送 / 转发 / 建群同理：只走个人落库口，不能让项目页提交
+    expect(WRITE_TOOL_NAMES).not.toContain(SEND_MESSAGE_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(FORWARD_MESSAGE_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(CREATE_GROUP_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(INVITE_GROUP_TOOL);
+    expect(COMMIT_TOOL_NAMES).toEqual([
+      ...WRITE_TOOL_NAMES,
+      SAVE_CONTEXT_TOOL,
+      RESPOND_INVITE_TOOL,
+      ATTACH_MESSAGE_TOOL,
+      SEND_MESSAGE_TOOL,
+      FORWARD_MESSAGE_TOOL,
+      CREATE_GROUP_TOOL,
+      INVITE_GROUP_TOOL,
+    ]);
   });
 });
 

@@ -153,36 +153,91 @@ export async function getGroupInfo(actorId: string, groupId: string): Promise<Gr
 
 // —— 邀请（行存在即待处理）——
 
-export async function inviteToGroup(actorId: string, groupId: string, rawName: string) {
+export type GroupInviteTarget = { id: string; name: string };
+
+/**
+ * 邀请前的只读校验：群成员身份、用户名存在且不是自己、未在群里、没有待处理邀请、群未满。
+ * 助手拟稿与真正落库共用，保证「卡片能确认」与「确认能成功」的口径一致。
+ */
+export async function resolveGroupInviteTargets(
+  actorId: string,
+  groupId: string,
+  rawNames: string[],
+): Promise<{ groupName: string; memberCount: number; invitees: GroupInviteTarget[] }> {
   await requireMembership(groupId, actorId);
-  const invitee = await findUserByUsername(actorId, rawName);
 
-  const [existingMember] = await db
-    .select({ userId: dmGroupMembers.userId })
-    .from(dmGroupMembers)
-    .where(and(eq(dmGroupMembers.groupId, groupId), eq(dmGroupMembers.userId, invitee.id)));
-  if (existingMember) throw new AppError("TA 已在群聊里");
+  const seen = new Set<string>();
+  const names = rawNames
+    .map((n) => n.trim())
+    .filter((n) => {
+      if (!n) return false;
+      const key = n.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  if (names.length === 0) throw new AppError("请输入要邀请的用户名");
 
-  const [pending] = await db
-    .select({ id: dmGroupInvites.id })
-    .from(dmGroupInvites)
-    .where(and(eq(dmGroupInvites.groupId, groupId), eq(dmGroupInvites.inviteeId, invitee.id)));
-  if (pending) throw new AppError("已邀请过，等待对方处理");
+  // 逐个走 findUserByUsername：保留「不存在 / 这是你自己」的既有文案
+  const byId = new Map<string, GroupInviteTarget>();
+  for (const name of names) {
+    const u = await findUserByUsername(actorId, name);
+    byId.set(u.id, { id: u.id, name: u.name });
+  }
+  const invitees = [...byId.values()];
+  const ids = invitees.map((i) => i.id);
 
-  const [{ count }] = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(dmGroupMembers)
-    .where(eq(dmGroupMembers.groupId, groupId));
-  if (count >= GROUP_MEMBER_CAP) throw new AppError(`群成员已满（上限 ${GROUP_MEMBER_CAP} 人）`);
+  const [members, pending, group] = await Promise.all([
+    db
+      .select({ userId: dmGroupMembers.userId })
+      .from(dmGroupMembers)
+      .where(and(eq(dmGroupMembers.groupId, groupId), inArray(dmGroupMembers.userId, ids))),
+    db
+      .select({ inviteeId: dmGroupInvites.inviteeId })
+      .from(dmGroupInvites)
+      .where(and(eq(dmGroupInvites.groupId, groupId), inArray(dmGroupInvites.inviteeId, ids))),
+    db
+      .select({ name: dmGroups.name, memberCount: sql<number>`count(*)::int` })
+      .from(dmGroups)
+      .innerJoin(dmGroupMembers, eq(dmGroupMembers.groupId, dmGroups.id))
+      .where(eq(dmGroups.id, groupId))
+      .groupBy(dmGroups.name),
+  ]);
+  if (members.length > 0) throw new AppError("TA 已在群聊里");
+  if (pending.length > 0) throw new AppError("已邀请过，等待对方处理");
+  if (!group[0]) throw new AppError("群聊不存在或已解散");
+  if (group[0].memberCount + invitees.length > GROUP_MEMBER_CAP)
+    throw new AppError(`群成员已满（上限 ${GROUP_MEMBER_CAP} 人）`);
 
-  const [inserted] = await db
-    .insert(dmGroupInvites)
-    .values({ groupId, inviterId: actorId, inviteeId: invitee.id })
-    .onConflictDoNothing()
-    .returning({ id: dmGroupInvites.id });
-  // 并发兜底：唯一索引 (groupId, inviteeId) 挡下重复邀请
-  if (!inserted) throw new AppError("已邀请过，等待对方处理");
-  return { inviteeName: invitee.name };
+  return { groupName: group[0].name, memberCount: group[0].memberCount, invitees };
+}
+
+/** 邀请一个或多个人进群（行存在即待处理，对方接受后才真正入群）。 */
+export async function inviteToGroupMembers(
+  actorId: string,
+  groupId: string,
+  rawNames: string[],
+): Promise<{ groupName: string; invitees: GroupInviteTarget[] }> {
+  const { groupName, invitees } = await resolveGroupInviteTargets(actorId, groupId, rawNames);
+
+  await db.transaction(async (tx) => {
+    const inserted = await tx
+      .insert(dmGroupInvites)
+      .values(
+        invitees.map((i) => ({ groupId, inviterId: actorId, inviteeId: i.id })),
+      )
+      .onConflictDoNothing()
+      .returning({ id: dmGroupInvites.id });
+    // 并发兜底：唯一索引 (groupId, inviteeId) 挡下重复邀请；抛错会回滚整批
+    if (inserted.length !== invitees.length) throw new AppError("已邀请过，等待对方处理");
+  });
+
+  return { groupName, invitees };
+}
+
+export async function inviteToGroup(actorId: string, groupId: string, rawName: string) {
+  const { invitees } = await inviteToGroupMembers(actorId, groupId, [rawName]);
+  return { inviteeName: invitees[0].name };
 }
 
 export async function listMyGroupInvites(actorId: string): Promise<GroupInviteView[]> {
@@ -357,12 +412,18 @@ export async function countPendingGroupInvites(actorId: string): Promise<number>
 
 // —— 会话内消息 ——
 
-export async function openGroupConversation(
+/**
+ * 群消息的**只读**查询：成员校验照做，但不推进 `lastReadAt`。
+ * 聊天窗口与助手读消息共用；已读基线由调用方决定是否推进。
+ */
+async function loadGroupMessages(
   actorId: string,
   groupId: string,
-): Promise<{ group: GroupInfo; messages: GroupMessageView[] }> {
+  limit: number,
+): Promise<{ group: GroupInfo; messages: GroupMessageView[]; hasMore: boolean }> {
   const group = await getGroupInfo(actorId, groupId);
 
+  // 倒序多取一条判 hasMore，再反转回正序（asc + 大偏移才是贵的取法）
   const rows = await db
     .select({
       id: dmGroupMessages.id,
@@ -379,7 +440,38 @@ export async function openGroupConversation(
     .leftJoin(dmAttachments, eq(dmGroupMessages.attachmentId, dmAttachments.id))
     .where(eq(dmGroupMessages.groupId, groupId))
     .orderBy(desc(dmGroupMessages.createdAt))
-    .limit(GROUP_MESSAGE_FETCH_LIMIT);
+    .limit(limit + 1);
+
+  const hasMore = rows.length > limit;
+  return {
+    group,
+    messages: rows
+      .slice(0, limit)
+      .reverse()
+      .map((r) => ({
+        id: r.id,
+        senderId: r.senderId,
+        senderName: r.senderName,
+        mine: r.senderId === actorId,
+        content: r.content,
+        createdAt: r.createdAt.toISOString(),
+        attachment: r.attachmentId
+          ? {
+              id: r.attachmentId,
+              filename: r.attachmentFilename ?? "未命名文件",
+              size: r.attachmentSize ?? 0,
+            }
+          : null,
+      })),
+    hasMore,
+  };
+}
+
+export async function openGroupConversation(
+  actorId: string,
+  groupId: string,
+): Promise<{ group: GroupInfo; messages: GroupMessageView[] }> {
+  const thread = await loadGroupMessages(actorId, groupId, GROUP_MESSAGE_FETCH_LIMIT);
 
   // 打开即已读：未读基线推到 DB 当前时刻（幂等，谁打开谁推自己的）
   await db
@@ -387,25 +479,127 @@ export async function openGroupConversation(
     .set({ lastReadAt: sql`now()` })
     .where(and(eq(dmGroupMembers.groupId, groupId), eq(dmGroupMembers.userId, actorId)));
 
+  return { group: thread.group, messages: thread.messages };
+}
+
+/**
+ * 助手读群聊：只读最近 N 条，**不推进 lastReadAt** ——
+ * 助手看过不等于用户看过，群未读角标必须原样留着。
+ */
+export async function listGroupMessagesReadOnly(
+  actorId: string,
+  groupId: string,
+  limit = 20,
+): Promise<{ group: { id: string; name: string }; messages: GroupMessageView[]; hasMore: boolean }> {
+  const capped = Math.min(Math.max(Math.trunc(limit), 1), 50);
+  const thread = await loadGroupMessages(actorId, groupId, capped);
   return {
-    group,
-    // 倒序取最近 200 条再反转回正序（asc + 大偏移才是贵的取法）
-    messages: rows.reverse().map((r) => ({
-      id: r.id,
-      senderId: r.senderId,
-      senderName: r.senderName,
-      mine: r.senderId === actorId,
-      content: r.content,
-      createdAt: r.createdAt.toISOString(),
-      attachment: r.attachmentId
-        ? {
-            id: r.attachmentId,
-            filename: r.attachmentFilename ?? "未命名文件",
-            size: r.attachmentSize ?? 0,
-          }
-        : null,
-    })),
+    group: { id: thread.group.id, name: thread.group.name },
+    messages: thread.messages,
+    hasMore: thread.hasMore,
   };
+}
+
+// —— 转发源消息 / 建群成员校验 ——
+
+export type ForwardableGroupMessage = {
+  id: string;
+  content: string;
+  senderId: string;
+  senderName: string;
+  groupId: string;
+  groupName: string;
+  attachment: {
+    id: string;
+    filename: string;
+    mimeType: string | null;
+    size: number;
+  } | null;
+};
+
+/** 转发前的群消息读取：先验证群成员身份，再限定消息确属该群。 */
+export async function getGroupMessageForForward(
+  actorId: string,
+  groupId: string,
+  messageId: string,
+): Promise<ForwardableGroupMessage> {
+  await requireMembership(groupId, actorId);
+  const [row] = await db
+    .select({
+      id: dmGroupMessages.id,
+      senderId: dmGroupMessages.senderId,
+      senderName: users.name,
+      content: dmGroupMessages.content,
+      groupName: dmGroups.name,
+      attachmentId: dmAttachments.id,
+      filename: dmAttachments.filename,
+      mimeType: dmAttachments.mimeType,
+      size: dmAttachments.size,
+    })
+    .from(dmGroupMessages)
+    .innerJoin(users, eq(dmGroupMessages.senderId, users.id))
+    .innerJoin(dmGroups, eq(dmGroupMessages.groupId, dmGroups.id))
+    .leftJoin(dmAttachments, eq(dmGroupMessages.attachmentId, dmAttachments.id))
+    .where(and(eq(dmGroupMessages.id, messageId), eq(dmGroupMessages.groupId, groupId)));
+  if (!row) throw new AppError("消息不存在");
+
+  return {
+    id: row.id,
+    content: row.content,
+    senderId: row.senderId,
+    senderName: row.senderName,
+    groupId,
+    groupName: row.groupName,
+    attachment: row.attachmentId
+      ? {
+          id: row.attachmentId,
+          filename: row.filename ?? "未命名文件",
+          mimeType: row.mimeType ?? null,
+          size: row.size ?? 0,
+        }
+      : null,
+  };
+}
+
+/**
+ * 建群草案用：按**用户名**解析成员（全站唯一、大小写不敏感）。
+ *
+ * 助手不擅长抄 uuid：让它把 find_contact 返回的 userId 再誊一遍，很容易抄错一位或引用
+ * 上一轮的旧 id，最后只得到一句「成员不存在」。用户名是模型天然会复制的字段，也与人
+ * 在界面上看到的一致，所以建群工具改收用户名。与 findUserByUsername 不同：
+ * 允许名单里出现自己（建群允许只有群主一人，误填自己也不该报错），重名只取一次。
+ */
+export async function resolveGroupMembersByUsernames(
+  actorId: string,
+  rawNames: string[],
+): Promise<{ id: string; name: string }[]> {
+  const seen = new Set<string>();
+  const names = rawNames
+    .map((n) => n.trim())
+    .filter((n) => {
+      if (!n) return false;
+      const key = n.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  if (names.length === 0) return [];
+
+  const rows = await db
+    .select({ id: users.id, name: users.name })
+    .from(users)
+    .where(inArray(sql<string>`lower(${users.name})`, names.map((n) => n.toLowerCase())));
+
+  const byName = new Map(rows.map((r) => [r.name.toLowerCase(), r]));
+  const missing = names.filter((n) => !byName.has(n.toLowerCase()));
+  if (missing.length > 0) {
+    throw new AppError(`用户不存在：${missing.join("、")}。请先用 find_contact 核实用户名`);
+  }
+
+  // 剔除自己：建群允许只有群主一人
+  return names
+    .map((n) => byName.get(n.toLowerCase())!)
+    .filter((m) => m.id !== actorId);
 }
 
 // —— 发送 ——

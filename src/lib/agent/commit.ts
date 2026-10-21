@@ -3,16 +3,33 @@ import { db } from "@/db";
 import { createMilestone, createProject, getProjectForUser } from "@/lib/project";
 import {
   applyTaskSuccessorDelta,
+  createSubtask,
   createTask,
+  deleteTask,
+  getTaskDetailBundle,
   listProjectTasks,
   updateTask,
 } from "@/lib/task";
+import { copyMessageAttachmentToTask, deleteAttachment } from "@/lib/attachment";
 import { createPersonalContext } from "@/lib/personal-context";
 import { notifyTaskAssigned, notifyTaskCompleted } from "@/lib/notify";
+import {
+  createGroup,
+  inviteToGroupMembers,
+  resolveGroupMembersByUsernames,
+  respondToGroupInvite,
+} from "@/lib/group-chat";
+import { forwardChatMessage, sendChatMessage } from "@/lib/chat-transfer";
 import { AppError, ForbiddenError } from "@/lib/errors";
 import {
+  ATTACH_MESSAGE_TOOL,
+  CREATE_GROUP_TOOL,
+  FORWARD_MESSAGE_TOOL,
+  INVITE_GROUP_TOOL,
   personalContextDraftSchema,
+  RESPOND_INVITE_TOOL,
   SAVE_CONTEXT_TOOL,
+  SEND_MESSAGE_TOOL,
   type CommitToolName,
   type WriteToolName,
 } from "./tools";
@@ -94,6 +111,67 @@ const createMilestoneSchema = z.object({
   targetDate: optionalDate,
 });
 
+// 子任务草案：卡片展示字段（parentTitle/projectId）会被 zod 剥离，只取落库要用的。
+const createSubtaskSchema = z.object({
+  parentTaskId: z.uuid(),
+  title: z.string().min(1),
+  description: z.string().optional(),
+  assigneeId: z.string().optional(),
+  startDate: optionalDate,
+  dueDate: optionalDate,
+  milestoneId: z.string().optional(),
+  priority: z.enum(["low", "medium", "high"]).optional(),
+});
+
+const deleteSubtaskSchema = z.object({ taskId: z.uuid() });
+const deleteAttachmentSchema = z.object({ attachmentId: z.uuid() });
+const attachMessageFileSchema = z.object({ attachmentId: z.uuid(), taskId: z.uuid() });
+
+const chatTargetTypeSchema = z.enum(["user", "group"]);
+
+// 卡片上的 targetName/filename 等展示字段由 zod 自动剥离；落库只认 id 与内容。
+const sendMessageSchema = z
+  .object({
+    targetType: chatTargetTypeSchema,
+    targetId: z.uuid(),
+    content: z.string().optional(),
+    // null 与 undefined 都表示「没带附件」；卡片清空附件字段时会送 null
+    fileSource: z.enum(["task", "message"]).nullable().optional(),
+    attachmentId: z.uuid().nullable().optional(),
+  })
+  .refine((d) => (d.fileSource == null) === (d.attachmentId == null), {
+    message: "附件来源与附件 id 必须同时给出",
+    path: ["attachmentId"],
+  });
+
+const forwardMessageSchema = z.object({
+  sourceType: z.enum(["dm", "group"]),
+  sourceId: z.uuid(),
+  messageId: z.uuid(),
+  targetType: chatTargetTypeSchema,
+  targetId: z.uuid(),
+});
+
+const createGroupChatSchema = z.object({
+  name: z.string().min(1),
+  // 草案里的用户名是权威来源（落库时重新解析，避免沿用旧 id）；
+  // memberIds 兜底兼容本次改动前已展示的卡片
+  usernames: z.array(z.string()).optional(),
+  // 允许空数组：建群可以只有群主一人（之后再到消息页邀请）
+  memberIds: z.array(z.uuid()).optional().default([]),
+});
+
+const inviteToGroupSchema = z.object({
+  groupId: z.uuid(),
+  usernames: z.array(z.string().min(1)).min(1),
+});
+
+function chatTargetOf(d: { targetType: "user" | "group"; targetId: string }) {
+  return d.targetType === "user"
+    ? ({ kind: "user", id: d.targetId } as const)
+    : ({ kind: "group", id: d.targetId } as const);
+}
+
 export type CommitResult = { committed: number; conflicts: string[] };
 
 // 落库：绝不信 Agent 输出——入口重校访问权，每类先施 Zod，再走图二 lib（lib 内建权限/归属校验）
@@ -174,6 +252,29 @@ export async function commitDraft(
       await createMilestone(actorId, projectId, d);
       return { committed: 1, conflicts: [] };
     }
+    case "create_subtask": {
+      const d = createSubtaskSchema.parse(draft);
+      // 父任务必须属于当前项目：否则带 A 项目的落库口能往 B 项目挂子任务
+      await getTaskDetailBundle(actorId, d.parentTaskId, { projectId });
+      const { parentTaskId, ...input } = d;
+      await createSubtask(actorId, parentTaskId, input);
+      return { committed: 1, conflicts: [] };
+    }
+    case "delete_subtask": {
+      const d = deleteSubtaskSchema.parse(draft);
+      const detail = await getTaskDetailBundle(actorId, d.taskId, { projectId });
+      // 落库口再验一次层级：卡片上的「只删子任务」不能只靠工具层相信
+      if (!detail.parentTaskId)
+        throw new AppError("只能删除子任务；删除主任务请到任务详情页操作");
+      await deleteTask(actorId, d.taskId);
+      return { committed: 1, conflicts: [] };
+    }
+    case "delete_attachment": {
+      const d = deleteAttachmentSchema.parse(draft);
+      // deleteAttachment 带 projectId 时自行比对归属，并重校任务写权限
+      await deleteAttachment(actorId, d.attachmentId, { projectId });
+      return { committed: 1, conflicts: [] };
+    }
   }
 }
 
@@ -188,6 +289,91 @@ export async function commitPersonalContext(
     d.entries.map((e) => ({ content: e.content, visibility: e.visibility, source: "agent" })),
   );
   return { committed, conflicts: [] };
+}
+
+// 群邀请：卡片上的 groupName / inviterName 只用于展示，zod 自动剥离；
+// 真正的归属校验在 respondToGroupInvite 的事务内（DELETE ... WHERE invitee_id = actorId）。
+const inviteResponseSchema = z.object({
+  inviteId: z.uuid(),
+  accept: z.boolean(),
+});
+
+export async function commitGroupInviteResponse(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = inviteResponseSchema.parse(draft);
+  await respondToGroupInvite(actorId, d.inviteId, d.accept);
+  return { committed: 1, conflicts: [] };
+}
+
+// 消息文件 → 任务附件：只属于工作台助手，草案不带 projectId（复制函数按任务实际
+// 所属项目重校写权限），故在拆 projectId 之前分派。
+export async function commitMessageAttachment(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = attachMessageFileSchema.parse(draft);
+  await copyMessageAttachmentToTask(actorId, d.attachmentId, d.taskId);
+  return { committed: 1, conflicts: [] };
+}
+
+// 发送消息：卡片确认后才真正落库。目标权限、附件可读性与 10MB 上限都由
+// chat-transfer → sendDm/sendGroupMessage 重校；这里只负责把卡片数据还原成来源对象。
+export async function commitSendMessage(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = sendMessageSchema.parse(draft);
+  const attachment =
+    d.fileSource && d.attachmentId
+      ? { source: d.fileSource, attachmentId: d.attachmentId }
+      : null;
+  await sendChatMessage(actorId, chatTargetOf(d), {
+    content: d.content ?? "",
+    attachment,
+  });
+  return { committed: 1, conflicts: [] };
+}
+
+// 转发消息：重新读取源消息（收发双方/群成员）并复制附件字节，不信任草案里的正文。
+export async function commitForwardMessage(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = forwardMessageSchema.parse(draft);
+  await forwardChatMessage(
+    actorId,
+    { sourceType: d.sourceType, sourceId: d.sourceId, messageId: d.messageId },
+    chatTargetOf(d),
+  );
+  return { committed: 1, conflicts: [] };
+}
+
+// 建群：createGroup 已校验成员存在、群名长度与人数上限。允许只有群主一人——
+// 与网页建群、REST 建群同一口径；成员之后可以用 invite_to_group 邀请。
+// 草案带用户名时在这里**重新解析**（与邀请进群同一原则），名称被改/账号注销都会当场报错。
+export async function commitCreateGroup(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = createGroupChatSchema.parse(draft);
+  const memberIds = Array.isArray(d.usernames)
+    ? (await resolveGroupMembersByUsernames(actorId, d.usernames)).map((m) => m.id)
+    : d.memberIds.filter((id) => id !== actorId);
+  await createGroup(actorId, d.name, memberIds);
+  return { committed: 1, conflicts: [] };
+}
+
+// 邀请进群：草案里的 groupName / invitees 只用于展示；用户名在这里重新解析，
+// 群成员身份、已在群里、重复邀请、群满全部由 inviteToGroupMembers 重校。
+export async function commitInviteToGroup(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = inviteToGroupSchema.parse(draft);
+  await inviteToGroupMembers(actorId, d.groupId, d.usernames);
+  return { committed: 1, conflicts: [] };
 }
 
 // 与项目版的 createProjectSchema 共用字段定义：个人版只是多一个团队 id，
@@ -213,6 +399,12 @@ export async function commitPersonalDraft(
   draft: unknown,
 ): Promise<CommitResult> {
   if (tool === SAVE_CONTEXT_TOOL) return commitPersonalContext(actorId, draft);
+  if (tool === RESPOND_INVITE_TOOL) return commitGroupInviteResponse(actorId, draft);
+  if (tool === ATTACH_MESSAGE_TOOL) return commitMessageAttachment(actorId, draft);
+  if (tool === SEND_MESSAGE_TOOL) return commitSendMessage(actorId, draft);
+  if (tool === FORWARD_MESSAGE_TOOL) return commitForwardMessage(actorId, draft);
+  if (tool === CREATE_GROUP_TOOL) return commitCreateGroup(actorId, draft);
+  if (tool === INVITE_GROUP_TOOL) return commitInviteToGroup(actorId, draft);
 
   if (tool === "create_project") {
     // teamId 是 uuid 形状，与下面那四类同理：缺了/填成了团队名就说清楚，别甩一句「草案格式无效」

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createUser } from "@/lib/user";
 import { createTeam, joinTeam } from "@/lib/team";
 import { createProject } from "@/lib/project";
+import { createGroup, inviteToGroup, listGroupConversations, listMyGroupInvites } from "@/lib/group-chat";
 import { listMyPersonalContext } from "@/lib/personal-context";
 import { listPersonalChatHistory, listProjectChatHistory } from "@/lib/agent/conversation";
 import { POST as chatRoute } from "@/app/api/chat/route";
@@ -211,6 +212,54 @@ describe("POST /api/chat/commit", () => {
     );
     expect(res.status).toBe(400);
     expect(await listMyPersonalContext(student.id)).toEqual([]);
+  });
+
+  it("scope=personal + respond_group_invite：确认后真正接受，展示字段被忽略", async () => {
+    const { owner, student } = await scene();
+    const group = await createGroup(owner.id, "讨论组", []);
+    await inviteToGroup(owner.id, group.id, "student");
+    const [invite] = await listMyGroupInvites(student.id);
+    expect(invite.groupName).toBe("讨论组");
+
+    authMock.userId = student.id;
+    const res = await commitRoute(
+      req({
+        scope: "personal",
+        tool: "respond_group_invite",
+        // groupName / inviterName 只是卡片展示字段，落库 zod 会剥掉
+        draft: {
+          inviteId: invite.inviteId,
+          accept: true,
+          groupName: "伪造的群名",
+          inviterName: "伪造的人",
+        },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).committed).toBe(1);
+
+    expect((await listGroupConversations(student.id)).map((c) => c.groupId)).toContain(group.id);
+    expect(await listMyGroupInvites(student.id)).toEqual([]);
+  });
+
+  it("项目页不认群邀请工具（scope=project + respond_group_invite）→ 400", async () => {
+    const { owner, student, project } = await scene();
+    const group = await createGroup(owner.id, "讨论组", []);
+    await inviteToGroup(owner.id, group.id, "student");
+    const [invite] = await listMyGroupInvites(student.id);
+
+    authMock.userId = student.id;
+    const res = await commitRoute(
+      req({
+        scope: "project",
+        projectId: project.id,
+        tool: "respond_group_invite",
+        draft: { inviteId: invite.inviteId, accept: true },
+      }),
+    );
+    expect(res.status).toBe(400);
+    // 请求被拒，邀请原样留着
+    expect(await listMyGroupInvites(student.id)).toHaveLength(1);
   });
 
   it("个人 scope 的改任务草案照常落库（projectId 从草案里取）", async () => {
