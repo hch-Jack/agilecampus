@@ -5,7 +5,9 @@ import { runAgentTurn } from "@/lib/agent/orchestrator";
 import { collectDraftOptions } from "@/lib/agent/draft-options";
 import { AppError, ForbiddenError } from "@/lib/errors";
 
-// scope 决定这轮对话挂在哪儿：project 走项目页（要 projectId），personal 走工作台（跨项目）。
+// scope 决定这轮对话挂在哪儿：project 走项目共享会话（要 projectId），personal 走每人的私人会话。
+// personal 也可以带 projectId：它**不改变会话归属**，只是「用户此刻在看哪个项目」（焦点），
+// 让这一轮多带项目快照与项目专属工具。权限在编排入口按 getProjectForUser 校。
 // 身份一律取自 session —— 请求体里没有、也不接受 actorId 之类的字段。
 const schema = z.object({
   scope: z.enum(["project", "personal"]).default("project"),
@@ -30,7 +32,11 @@ export async function POST(req: Request) {
   try {
     const result =
       scope === "personal"
-        ? await runAgentTurn({ actorId: session.user.id, userText, scope: { kind: "personal" } })
+        ? await runAgentTurn({
+            actorId: session.user.id,
+            userText,
+            scope: { kind: "personal", focusProjectId: projectId },
+          })
         : await runAgentTurn({ actorId: session.user.id, userText, projectId: projectId! });
 
     // 个人 scope 的草案可能指向多个项目，下拉选项随响应一并给（见 lib/agent/draft-options.ts）

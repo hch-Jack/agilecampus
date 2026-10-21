@@ -381,3 +381,19 @@ body.proj-cosmic .nav-unread-badge {
 body.proj-cosmic .graph-sticky {
   background-color: rgba(14, 19, 34, 0.96);
 }
+
+/* —— 12. 右侧 AI 助手面板 —— */
+/* 宇宙主题的 --color-surface 只有 45% 不透明度，铺在页面内容上会透底、字也糊。
+   面板单独压厚，并保留一层模糊让边缘与星空背景过渡。浅色主题用 bg-surface（纯白）。 */
+body.proj-cosmic .assistant-panel {
+  background-color: rgba(14, 19, 34, 0.94);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+/* 挤压/滑入都用 transition（不是 animation），这里一并尊重减弱动态偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .assistant-panel,
+  .assistant-shell-push {
+    transition: none !important;
+  }
+}

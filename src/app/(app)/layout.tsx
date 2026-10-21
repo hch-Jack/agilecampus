@@ -5,6 +5,8 @@ import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { IdentityBadge } from "@/components/badges";
+import { AssistantShell, AssistantToggle } from "@/components/assistant-shell";
+import { listPersonalChatHistory } from "@/lib/agent/conversation";
 import { AUTO_TIMEZONE, DEFAULT_TIMEZONE, formatDateTime, listTimeZones } from "@/lib/time";
 import { getTimeZonePref, resolveUserTimeZone } from "@/lib/time-pref";
 import { userAvatarUrl } from "@/lib/user";
@@ -37,15 +39,20 @@ export default async function AppLayout({
     .from(users)
     .where(eq(users.id, session.user.id));
   const identity = row?.identity ?? null;
-  const tz = await resolveUserTimeZone(session.user.id);
   const avatarUrl = userAvatarUrl(session.user.id, row?.avatarUpdatedAt ?? null);
 
-  // 时区偏好为「跟随浏览器」时，才需要客户端把本机时区报到 cookie 里
-  const timeZonePref = await getTimeZonePref(session.user.id);
+  // 时区偏好为「跟随浏览器」时，才需要客户端把本机时区报到 cookie 里。
+  // 助手历史一次性取好交给右侧面板（只读，不建会话）；面板在每个页面都常驻，
+  // 历史本身在 lib 里截到最近 200 条，别让它随时间无限膨胀。
+  const [tz, timeZonePref, chatHistory] = await Promise.all([
+    resolveUserTimeZone(session.user.id),
+    getTimeZonePref(session.user.id),
+    listPersonalChatHistory(session.user.id),
+  ]);
 
   return (
     <ProjTheme>
-      <div className="min-h-screen">
+      <AssistantShell initialMessages={chatHistory}>
         <TzSync auto={timeZonePref === AUTO_TIMEZONE} />
         <header className="sticky top-0 z-20 flex items-center justify-between border-b border-line bg-surface/85 px-6 py-3 backdrop-blur">
           <div className="flex items-center gap-6">
@@ -62,6 +69,7 @@ export default async function AppLayout({
             <NavLinks />
           </div>
           <div className="flex items-center gap-3">
+            <AssistantToggle />
             <IdentityBadge identity={identity} className="hidden sm:inline-flex" />
             {avatarUrl ? (
               // 有头像显图片；proj-avatar 类只在宇宙主题里有样式（描边光晕），图片沿用同一圈。
@@ -104,7 +112,7 @@ export default async function AppLayout({
           </div>
         </header>
         <div className="mx-auto max-w-5xl p-6">{children}</div>
-      </div>
+      </AssistantShell>
     </ProjTheme>
   );
 }

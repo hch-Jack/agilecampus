@@ -187,10 +187,39 @@ export async function listProjectChatHistory(
   return latest ? historyOf(latest.id) : [];
 }
 
-/** 工作台历史：**我的**个人会话的消息（无则空）。读的行永远归我，故无需额外校验 */
-export async function listPersonalChatHistory(actorId: string): Promise<ChatHistoryMessage[]> {
+/**
+ * 右侧助手面板的历史：**我的**个人会话的消息（无则空）。读的行永远归我，故无需额外校验。
+ *
+ * 默认只取最近 200 条：面板在每个页面都会渲染，历史无上限时随年累月会把整份转录塞进每页 HTML。
+ * 取法同 `recentMessagesForModel`（倒序取再反转，同一轮问答按「答在下、问在上」排），
+ * 但**不丢开头的 assistant** —— 这里是给人看的转录，截断本就可能落在一问一答中间。
+ */
+export async function listPersonalChatHistory(
+  actorId: string,
+  limit = 200,
+): Promise<ChatHistoryMessage[]> {
   const conv = await findPersonalConversation(actorId);
-  return conv ? historyOf(conv.id) : [];
+  if (!conv) return [];
+
+  const capped = Math.min(Math.max(Math.trunc(limit), 1), 500);
+  const rows = await db
+    .select({ role: messages.role, content: messages.content })
+    .from(messages)
+    .where(
+      and(
+        eq(messages.conversationId, conv.id),
+        inArray(messages.role, ["user", "assistant"]),
+      ),
+    )
+    .orderBy(
+      desc(messages.createdAt),
+      desc(sql`case when ${messages.role} = 'assistant' then 1 else 0 end`),
+    )
+    .limit(capped);
+
+  return rows
+    .reverse()
+    .map((r) => ({ role: r.role as "user" | "assistant", content: r.content }));
 }
 
 export type ChatHistoryEntry = {

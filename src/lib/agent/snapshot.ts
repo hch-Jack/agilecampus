@@ -15,6 +15,8 @@ import type { TaskStatus } from "@/db/schema";
 // 上限放宽至 4000：快照须随行携带 uuid（成员/里程碑/任务各 36 字符）供写工具填参，
 // 旧的 2000 字符下十余个任务即触发降级，模型只得反复调读工具，反更耗 token。
 const SNAPSHOT_CHAR_LIMIT = 4000;
+// 「当前项目」段（个人助手的焦点）预算：个人快照本身另有 4000，两段相加仍远小于上下文窗口
+const FOCUS_SNAPSHOT_CHAR_LIMIT = 2500;
 // 任务明细至多列此数，余者提示模型用 list_tasks 现查
 const TASK_LIST_LIMIT = 40;
 // 成员个人上下文段落整段上限（每人 ≤5 条、每条 ≤200 字符另计）
@@ -140,6 +142,75 @@ export async function buildProjectSnapshot(actorId: string, projectId: string): 
 
   const withoutMilestones = head + memberBlock + contextBlock;
   if (withoutMilestones.length <= SNAPSHOT_CHAR_LIMIT) return withoutMilestones;
+
+  return head + memberBlock;
+}
+
+/**
+ * 个人助手在**项目页面**里用的「当前项目」段（接在个人快照之后）。
+ *
+ * 与项目 scope 的 `buildProjectSnapshot` 的差别，都是刻意的：
+ *  · **不带日期行** —— 个人快照开头已经给过「今天」；
+ *  · **不带任务明细** —— 个人快照有「我的待办」，其余用 list_tasks 现查，别把两段任务表都塞进提示词；
+ *  · 预算更小（2500 字），先弃里程碑明细、再弃成员共享上下文，**成员段恒留**（assigneeId 只能取自这里）。
+ *
+ * 权限与项目快照同口径：`getProjectForUser` 收口，非成员直接 ForbiddenError。
+ */
+export async function buildFocusProjectSnapshot(
+  actorId: string,
+  projectId: string,
+): Promise<string> {
+  const access = await getProjectForUser(actorId, projectId);
+  if (!access) throw new ForbiddenError();
+  const { project } = access;
+
+  const [milestones, tasks, members, memberContext] = await Promise.all([
+    listProjectMilestones(actorId, projectId),
+    listProjectTasks(actorId, projectId),
+    listTeamMembers(project.teamId),
+    listProjectMembersSharedContext(actorId, projectId),
+  ]);
+
+  const byStatus: Record<TaskStatus, number> = { todo: 0, doing: 0, done: 0 };
+  for (const t of tasks) byStatus[t.status]++;
+
+  const description =
+    project.description && project.description.length > 300
+      ? `${project.description.slice(0, 300)}…`
+      : project.description;
+
+  const head = [
+    `# 当前项目：${project.name}（projectId=${project.id}）`,
+    description ? `描述：${description}` : null,
+    `状态：${project.status}；起止：${project.startDate ?? "?"} ~ ${project.endDate ?? "?"}`,
+    `任务统计：共 ${tasks.length} 个（待办 ${byStatus.todo} / 进行中 ${byStatus.doing} / 已完成 ${byStatus.done}）；共 ${milestones.length} 个里程碑`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const memberBlock =
+    "\n\n## 成员（assigneeId 只能取此处的 id）\n" +
+    members.map((m) => `- ${m.name}｜${m.role}｜id=${m.id}`).join("\n");
+
+  const milestoneBlock =
+    milestones.length > 0
+      ? "\n\n## 里程碑（milestoneId 取此处的 id）\n" +
+        milestones
+          .map(
+            (m) =>
+              `- ${m.title}｜${m.status}${m.targetDate ? `｜目标 ${m.targetDate}` : ""}｜id=${m.id}`,
+          )
+          .join("\n")
+      : "";
+
+  // 成员个人上下文只收 shared（筛选在 lib/personal-context.ts 的 SQL 里），且自带上限
+  const contextBlock = memberContextBlock(memberContext);
+
+  const full = head + memberBlock + contextBlock + milestoneBlock;
+  if (full.length <= FOCUS_SNAPSHOT_CHAR_LIMIT) return full;
+
+  const withoutMilestones = head + memberBlock + contextBlock;
+  if (withoutMilestones.length <= FOCUS_SNAPSHOT_CHAR_LIMIT) return withoutMilestones;
 
   return head + memberBlock;
 }

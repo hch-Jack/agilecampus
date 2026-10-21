@@ -436,7 +436,7 @@ export function buildTools(actorId: string, projectId: string) {
 }
 
 /**
- * 控制台助手（工作台）的工具集。
+ * 控制台助手（右侧面板）的基础工具集 —— **不带任何隐含项目**。
  *
  * 与 project 版的差别只有一处，但很关键：**没有「当前项目」**。故凡涉及具体项目的工具都多一个
  * `projectId` 参数，模型只能从快照（我的项目 / 我的待办）或 list_projects 里取；权限仍由底层
@@ -445,8 +445,10 @@ export function buildTools(actorId: string, projectId: string) {
  *
  * 另外多两件：`list_members`（项目版不给——那里成员段常驻快照，且改名会动到项目助手的行为面）
  * 与 `save_personal_context`（把用户自述的背景记成上下文；同样只产草案）。
+ *
+ * 导出入口见文件末尾的 `buildPersonalTools`：用户在项目页面时，它会在这一份之上再挂六件项目专属工具。
  */
-export function buildPersonalTools(actorId: string) {
+function buildBasePersonalTools(actorId: string) {
   return {
     list_projects: tool({
       description:
@@ -962,6 +964,55 @@ export function buildPersonalTools(actorId: string) {
       inputSchema: personalContextDraftSchema,
       execute: async (input) => draftEnvelope("save_personal_context", input),
     }),
+  };
+}
+
+/**
+ * 用户在某个项目页面时，个人助手额外拥有的项目专属工具。
+ *
+ * 这几件在 project 版里都闭包着「当前项目」，个人版没有——但焦点项目下正需要它们：
+ * 动态/留言/旧助手对话是只读的；子任务与附件删除是写操作，照旧只产草案。
+ * 其余项目工具（query_progress / list_tasks / update_tasks …）个人版本来就有，只是要显式 projectId，
+ * **不要**整份 spread `buildTools`：那会把个人版同名的读工具换成项目版 schema，反而改变行为面。
+ */
+export const FOCUS_PROJECT_TOOL_NAMES = [
+  "list_project_activity",
+  "list_comments",
+  "list_chat_history",
+  "create_subtask",
+  "delete_subtask",
+  "delete_attachment",
+] as const;
+
+type BasePersonalTools = ReturnType<typeof buildBasePersonalTools>;
+type FocusProjectTools = Pick<
+  ReturnType<typeof buildTools>,
+  (typeof FOCUS_PROJECT_TOOL_NAMES)[number]
+>;
+
+/** 无焦点项目：恰好是控制台基础工具集（测试钉着这 25 件的全集） */
+export function buildPersonalTools(actorId: string): BasePersonalTools;
+/** 有焦点项目：基础工具集 + 六件项目专属工具 */
+export function buildPersonalTools(
+  actorId: string,
+  focusProjectId: string,
+): BasePersonalTools & FocusProjectTools;
+export function buildPersonalTools(
+  actorId: string,
+  focusProjectId?: string,
+): BasePersonalTools | (BasePersonalTools & FocusProjectTools) {
+  const base = buildBasePersonalTools(actorId);
+  if (!focusProjectId) return base;
+
+  const projectTools = buildTools(actorId, focusProjectId);
+  return {
+    ...base,
+    list_project_activity: projectTools.list_project_activity,
+    list_comments: projectTools.list_comments,
+    list_chat_history: projectTools.list_chat_history,
+    create_subtask: projectTools.create_subtask,
+    delete_subtask: projectTools.delete_subtask,
+    delete_attachment: projectTools.delete_attachment,
   };
 }
 

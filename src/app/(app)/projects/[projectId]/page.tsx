@@ -7,12 +7,10 @@ import { listTeamMembers } from "@/lib/team";
 import { listProjectTasks } from "@/lib/task";
 import { getFeedUnreadCount, listProjectActivities, projectFeedScope } from "@/lib/activity";
 import { listTeamLabels } from "@/lib/label";
-import { listProjectChatHistory } from "@/lib/agent/conversation";
 import { parseFilters, applyFilters } from "@/lib/board-filters";
 import { todayIn } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
 import { ActivityFeed } from "@/components/activity-feed";
-import { AgentChat } from "@/components/agent-chat";
 import { MilestoneSection } from "./milestone-section";
 import { NewTaskForm } from "./new-task-form";
 import { Board } from "./board";
@@ -61,9 +59,6 @@ export default async function ProjectPage({
 
   const canWrite = role === "admin" || role === "student";
   const isAdmin = role === "admin";
-
-  // 助手历史：一律走 lib（口径与隔离都在那边收口），别在本页手搓查询
-  const initialMessages = await listProjectChatHistory(session.user.id, projectId);
 
   return (
     <main className="mx-auto max-w-5xl space-y-8 py-8">
@@ -164,23 +159,6 @@ export default async function ProjectPage({
           milestones={projectMilestones.map((m) => ({ id: m.id, name: m.title }))}
         />
       </section>
-
-      <AgentChat
-        scope="project"
-        projectId={projectId}
-        initialMessages={initialMessages}
-        defaultOptions={{
-          [projectId]: {
-            members: members.map((m) => ({ id: m.id, name: m.name })),
-            milestones: projectMilestones.map((m) => ({ id: m.id, name: m.title })),
-            tasks: projectTasks.map((t) => ({
-              id: t.id,
-              name: t.title,
-              parentTaskId: t.parentTaskId,
-            })),
-          },
-        }}
-      />
 
       {canWrite && (
         <NewTaskForm
