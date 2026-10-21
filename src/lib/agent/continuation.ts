@@ -22,6 +22,12 @@ export const DRAFT_TOOL_LABELS: Record<string, string> = {
   forward_message: "转发消息",
   create_group_chat: "组建群聊",
   invite_to_group: "邀请进群",
+  create_resource_usage: "登记资源占用",
+  end_resource_usage: "结束资源占用",
+  create_label: "新建标签",
+  update_label: "修改标签",
+  delete_label: "删除标签",
+  edit_task_labels: "任务标签",
 };
 
 /**
@@ -40,6 +46,10 @@ const CONTINUABLE_TOOLS = new Set([
   "create_subtask",
   // 新建群聊会产生 groupId：用户可能紧接着想往这个群发消息
   "create_group_chat",
+  // 登记占用会产生 usageId：用户可能紧接着想结束它；新建标签会产生 labelId，
+  // 用户可能想立刻把它贴到某个任务上
+  "create_resource_usage",
+  "create_label",
 ]);
 
 export function isContinuableTool(tool: string): boolean {
@@ -148,6 +158,43 @@ export function summarizeDraft(d: DraftLike): string {
       return `邀请「${shown.length > 0 ? `${shown.join("、")}${more}` : "成员"}」进群「${
         group ? clip(group, TITLE_LIMIT) : "群聊"
       }」`;
+    }
+    case "create_resource_usage": {
+      const name = text(body.resourceName);
+      const team = text(body.teamName);
+      const start = text(body.startTime);
+      const end = text(body.endTime);
+      return `登记占用「${name ? clip(name, TITLE_LIMIT) : "资源"}」${
+        team ? `（${clip(team, TITLE_LIMIT)}）` : ""
+      }${start ? ` ${start}${end ? ` → ${end}` : " 起"}` : ""}`;
+    }
+    case "end_resource_usage": {
+      const name = text(body.resourceName);
+      return `结束占用「${name ? clip(name, TITLE_LIMIT) : "资源"}」`;
+    }
+    case "create_label": {
+      const name = text(body.name);
+      const team = text(body.teamName);
+      return `新建标签「${name ? clip(name, TITLE_LIMIT) : "标签"}」${
+        team ? `（${clip(team, TITLE_LIMIT)}）` : ""
+      }`;
+    }
+    case "update_label": {
+      const from = text(body.currentName);
+      const to = text(body.name);
+      return `修改标签「${from ? clip(from, TITLE_LIMIT) : "标签"}」${
+        to && to !== from ? ` → 「${clip(to, TITLE_LIMIT)}」` : ""
+      }`;
+    }
+    case "delete_label": {
+      const name = text(body.name);
+      return `删除标签「${name ? clip(name, TITLE_LIMIT) : "标签"}」`;
+    }
+    case "edit_task_labels": {
+      const title = text(body.taskTitle);
+      return `任务标签「${title ? clip(title, TITLE_LIMIT) : "任务"}」（${
+        list(body.labelIds).length
+      } 个）`;
     }
     case "save_personal_context":
       return `个人上下文（${list(body.entries).length} 条）`;

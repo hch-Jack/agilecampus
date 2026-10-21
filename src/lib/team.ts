@@ -80,6 +80,25 @@ export async function requireTeamRole(
   return member;
 }
 
+/**
+ * 取团队名与本人的角色 —— 给助手工具用：快照里只给了 teamId，草案卡要展示团队名，
+ * 拟稿时也要知道是不是 admin。
+ *
+ * 先查团队再查成员：团队不存在与「不是成员」是两件事。前者报「团队不存在」（id 来自快照，
+ * 走到这里通常意味着已解散），后者一律 ForbiddenError，与其它 lib 的越权口径一致。
+ */
+export async function getTeamForMember(userId: string, teamId: string) {
+  const [team] = await db
+    .select({ id: teams.id, name: teams.name })
+    .from(teams)
+    .where(eq(teams.id, teamId));
+  if (!team) throw new AppError("团队不存在");
+
+  const member = await getTeamMembership(userId, teamId);
+  if (!member) throw new ForbiddenError();
+  return { id: team.id, name: team.name, role: member.role };
+}
+
 // 无权限前置：调用方须已校验访问权（如 getProjectForUser / requireTeamRole）后再调用
 export async function listTeamMembers(teamId: string) {
   return db

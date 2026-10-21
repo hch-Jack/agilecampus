@@ -12,13 +12,19 @@ import {
   buildPersonalTools,
   buildTools,
   COMMIT_TOOL_NAMES,
-  FOCUS_PROJECT_TOOL_NAMES,
   CREATE_GROUP_TOOL,
+  CREATE_LABEL_TOOL,
+  CREATE_RESOURCE_USAGE_TOOL,
+  DELETE_LABEL_TOOL,
+  EDIT_TASK_LABELS_TOOL,
+  END_RESOURCE_USAGE_TOOL,
+  FOCUS_PROJECT_TOOL_NAMES,
   FORWARD_MESSAGE_TOOL,
   INVITE_GROUP_TOOL,
   RESPOND_INVITE_TOOL,
   SAVE_CONTEXT_TOOL,
   SEND_MESSAGE_TOOL,
+  UPDATE_LABEL_TOOL,
   WRITE_TOOL_NAMES,
   type CommitToolName,
 } from "@/lib/agent/tools";
@@ -55,21 +61,28 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
       [
         "attach_message_file_to_task",
         "create_group_chat",
+        "create_label",
         "create_milestone",
         "create_project",
+        "create_resource_usage",
         "decompose_tasks",
+        "delete_label",
+        "edit_task_labels",
         "edit_task_links",
+        "end_resource_usage",
         "find_contact",
         "forward_message",
         "get_task_detail",
         "invite_to_group",
         "list_attachments",
         "list_dependencies",
+        "list_labels",
         "list_members",
         "list_message_threads",
         "list_milestones",
         "list_my_task_activity",
         "list_projects",
+        "list_resource_usages",
         "list_tasks",
         "plan_sprint",
         "query_progress",
@@ -77,6 +90,7 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
         "respond_group_invite",
         "save_personal_context",
         "send_message",
+        "update_label",
         "update_tasks",
       ].sort(),
     );
@@ -229,6 +243,13 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     expect(WRITE_TOOL_NAMES).not.toContain(FORWARD_MESSAGE_TOOL);
     expect(WRITE_TOOL_NAMES).not.toContain(CREATE_GROUP_TOOL);
     expect(WRITE_TOOL_NAMES).not.toContain(INVITE_GROUP_TOOL);
+    // 资源占用与标签同理：全部只在工作台助手，项目页的落库口不该认它们
+    expect(WRITE_TOOL_NAMES).not.toContain(CREATE_RESOURCE_USAGE_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(END_RESOURCE_USAGE_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(CREATE_LABEL_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(UPDATE_LABEL_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(DELETE_LABEL_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(EDIT_TASK_LABELS_TOOL);
     expect(COMMIT_TOOL_NAMES).toEqual([
       ...WRITE_TOOL_NAMES,
       SAVE_CONTEXT_TOOL,
@@ -238,6 +259,12 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
       FORWARD_MESSAGE_TOOL,
       CREATE_GROUP_TOOL,
       INVITE_GROUP_TOOL,
+      CREATE_RESOURCE_USAGE_TOOL,
+      END_RESOURCE_USAGE_TOOL,
+      CREATE_LABEL_TOOL,
+      UPDATE_LABEL_TOOL,
+      DELETE_LABEL_TOOL,
+      EDIT_TASK_LABELS_TOOL,
     ]);
   });
 });
@@ -327,7 +354,7 @@ describe("个人写工具的草案，落库口都吃得下", () => {
 });
 
 // 右侧助手在项目页里会带一个「焦点项目」：不改会话归属，只多放出 6 件项目专属工具。
-// 这里钉住工具面——多放一件或少放一件都会改变模型的选择空间（25 → 31 已是有意为之）。
+// 这里钉住工具面——多放一件或少放一件都会改变模型的选择空间（33 → 39 已是有意为之）。
 describe("buildPersonalTools：焦点项目的工具面", () => {
   beforeEach(resetDb);
 
@@ -336,8 +363,8 @@ describe("buildPersonalTools：焦点项目的工具面", () => {
     const base = buildPersonalTools(student.id);
     const focused = buildPersonalTools(student.id, project.id);
 
-    expect(Object.keys(base)).toHaveLength(25);
-    expect(Object.keys(focused)).toHaveLength(31);
+    expect(Object.keys(base)).toHaveLength(33);
+    expect(Object.keys(focused)).toHaveLength(39);
     expect(Object.keys(focused).filter((name) => !(name in base)).sort()).toEqual(
       [...FOCUS_PROJECT_TOOL_NAMES].sort(),
     );

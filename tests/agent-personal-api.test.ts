@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createUser } from "@/lib/user";
 import { createTeam, joinTeam } from "@/lib/team";
 import { createProject } from "@/lib/project";
+import { listTeamResourceUsages } from "@/lib/resource";
+import { listTeamLabels } from "@/lib/label";
 import { createGroup, inviteToGroup, listGroupConversations, listMyGroupInvites } from "@/lib/group-chat";
 import { listMyPersonalContext } from "@/lib/personal-context";
 import {
@@ -399,5 +401,46 @@ describe("POST /api/chat/commit", () => {
     );
     expect(res.status).toBe(200);
     expect((await res.json()).committed).toBe(2);
+  });
+
+  it("个人 scope 的资源占用草案：墙面时间按用户时区落库", async () => {
+    const { student, team } = await scene();
+    authMock.userId = student.id;
+    const res = await commitRoute(
+      req({
+        scope: "personal",
+        tool: "create_resource_usage",
+        draft: {
+          teamId: team.id,
+          teamName: "东吴实验室", // 展示字段，落库 zod 剥掉
+          resourceName: "GPU-01",
+          purpose: "训练模型",
+          startTime: "2026-11-01T09:30",
+          endTime: "2026-11-01T11:00",
+        },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).committed).toBe(1);
+
+    const { usages } = await listTeamResourceUsages(student.id, team.id);
+    // 默认时区 Asia/Shanghai：09:30 当地 = 01:30Z
+    expect(usages[0].startTime.toISOString()).toBe("2026-11-01T01:30:00.000Z");
+    expect(usages[0].endTime?.toISOString()).toBe("2026-11-01T03:00:00.000Z");
+  });
+
+  it("项目页不认标签工具（scope=project + create_label）→ 400", async () => {
+    const { owner, project, team } = await scene();
+    authMock.userId = owner.id;
+    const res = await commitRoute(
+      req({
+        scope: "project",
+        projectId: project.id,
+        tool: "create_label",
+        draft: { teamId: team.id, name: "论文" },
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await listTeamLabels(owner.id, team.id)).map((l) => l.name)).toEqual([]);
   });
 });

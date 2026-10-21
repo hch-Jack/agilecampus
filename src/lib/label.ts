@@ -1,11 +1,11 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { labels, taskLabels, tasks, type LabelColor } from "@/db/schema";
+import { labels, taskLabels, tasks, teams, type LabelColor } from "@/db/schema";
 import { AppError, ForbiddenError, isUniqueViolation } from "./errors";
 import { getTeamMembership, requireTeamRole } from "./team";
 import { requireTaskWrite } from "./task";
 
-const LABEL_NAME_MAX = 20;
+export const LABEL_NAME_MAX = 20;
 
 function normalizeName(raw: string) {
   const name = raw.trim();
@@ -32,6 +32,76 @@ export async function listTeamLabels(actorId: string, teamId: string) {
     .from(labels)
     .where(eq(labels.teamId, teamId))
     .orderBy(labels.name);
+}
+
+/**
+ * 团队标签 + 每条贴附的任务数（成员可读）。
+ *
+ * 助手一次要回答「团队有哪些标签、各贴在多少任务上」，分开查会让模型多绕一轮；
+ * 计数用 left join + count(任务 id)，没贴任何任务的标签也会以 0 出现。
+ */
+export async function listTeamLabelsWithUsage(actorId: string, teamId: string) {
+  const [team] = await db
+    .select({ id: teams.id, name: teams.name })
+    .from(teams)
+    .where(eq(teams.id, teamId));
+  if (!team) throw new AppError("团队不存在");
+
+  const member = await getTeamMembership(actorId, teamId);
+  if (!member) throw new ForbiddenError();
+
+  const rows = await db
+    .select({
+      id: labels.id,
+      name: labels.name,
+      color: labels.color,
+      usageCount: sql<number>`count(${taskLabels.taskId})::int`,
+    })
+    .from(labels)
+    .leftJoin(taskLabels, eq(taskLabels.labelId, labels.id))
+    .where(eq(labels.teamId, teamId))
+    .groupBy(labels.id, labels.name, labels.color)
+    .orderBy(labels.name);
+
+  return {
+    teamId,
+    teamName: team.name,
+    role: member.role,
+    labels: rows,
+  };
+}
+
+/**
+ * 单条标签的详情（含团队名、贴附任务数、本人能否管理）。
+ * 读权限同 listTeamLabels：团队成员即可；增删改仍由 createLabel/renameLabel/deleteLabel 校 admin。
+ */
+export async function getLabelDetail(actorId: string, labelId: string) {
+  const [row] = await db
+    .select({
+      id: labels.id,
+      teamId: labels.teamId,
+      teamName: teams.name,
+      name: labels.name,
+      color: labels.color,
+    })
+    .from(labels)
+    .innerJoin(teams, eq(labels.teamId, teams.id))
+    .where(eq(labels.id, labelId));
+  if (!row) throw new AppError("标签不存在");
+
+  const member = await getTeamMembership(actorId, row.teamId);
+  if (!member) throw new ForbiddenError();
+
+  const [countRow] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(taskLabels)
+    .where(eq(taskLabels.labelId, labelId));
+
+  return {
+    ...row,
+    usageCount: countRow?.n ?? 0,
+    canManage: member.role === "admin",
+  };
 }
 
 export async function createLabel(

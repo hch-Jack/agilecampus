@@ -234,7 +234,12 @@ export function AgentChat({
         {actions && <div className="flex shrink-0 items-center gap-1.5">{actions}</div>}
       </div>
 
-      <div ref={listRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+      {/* pr-3 + scrollbar-gutter：Windows 的覆盖式滚动条会画在内容右缘，
+          草案行尾的删除键曾因此点不到。留出稳定槽位，滚动条出现与否都不压按钮。 */}
+      <div
+        ref={listRef}
+        className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-3 [scrollbar-gutter:stable]"
+      >
         {messages.map((m, i) => (
           <div key={m.localId ?? m.id ?? `idx-${i}`}>
             <div className={`rounded-lg p-2.5 text-sm ${m.role === "user" ? "bg-sunken" : "bg-primary-soft"}`}>
@@ -248,7 +253,7 @@ export function AgentChat({
                     m.role === "user" ? "删除这一轮对话（我的提问）" : "删除这一轮对话（助手的回答）"
                   }
                   title="删除这一轮"
-                  className="-mr-1 -mt-1 grid h-7 w-7 shrink-0 place-items-center rounded text-ink-faint/70 transition-colors hover:bg-surface hover:text-high disabled:opacity-40"
+                  className="-mt-1 grid h-7 w-7 shrink-0 place-items-center rounded text-ink-faint/70 transition-colors hover:bg-surface hover:text-high disabled:opacity-40"
                 >
                   <svg
                     viewBox="0 0 24 24"

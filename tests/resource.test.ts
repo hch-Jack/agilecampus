@@ -4,6 +4,7 @@ import { createTeam, joinTeam, updateMemberRole } from "@/lib/team";
 import {
   createResourceUsage,
   endResourceUsage,
+  getResourceUsageDetail,
   listTeamResourceUsages,
 } from "@/lib/resource";
 import { resetDb } from "./helpers";
@@ -179,5 +180,64 @@ describe("listTeamResourceUsages", () => {
   it("非成员查看被拒", async () => {
     const { outsider, team } = await scene();
     await expect(listTeamResourceUsages(outsider.id, team.id)).rejects.toThrow("没有权限");
+  });
+});
+
+// 助手拟「结束占用」草案前要拿到团队名、登记人，并提前判断权不权、结没结束
+describe("getResourceUsageDetail", () => {
+  beforeEach(resetDb);
+
+  it("成员可读，自带团队名 / 登记人 / active / canEnd", async () => {
+    const { student, teacher, team } = await scene();
+    const u = await createResourceUsage(student.id, team.id, {
+      resourceName: "GPU-01",
+      purpose: "训练模型",
+      startTime: H(1),
+    });
+    const detail = await getResourceUsageDetail(teacher.id, u.id);
+    expect(detail).toMatchObject({
+      id: u.id,
+      teamId: team.id,
+      teamName: "东吴实验室",
+      userId: student.id,
+      userName: "student",
+      resourceName: "GPU-01",
+      purpose: "训练模型",
+      active: true,
+      canEnd: false, // teacher 既不是登记人也不是 admin
+    });
+  });
+
+  it("登记者本人或 admin 才 canEnd", async () => {
+    const { owner, student, team } = await scene();
+    const u = await createResourceUsage(student.id, team.id, {
+      resourceName: "GPU-01",
+      startTime: H(1),
+    });
+    expect((await getResourceUsageDetail(student.id, u.id)).canEnd).toBe(true);
+    expect((await getResourceUsageDetail(owner.id, u.id)).canEnd).toBe(true);
+    expect((await getResourceUsageDetail(owner.id, u.id)).active).toBe(true);
+  });
+
+  it("已结束的记录 active=false", async () => {
+    const { student, team } = await scene();
+    const u = await createResourceUsage(student.id, team.id, {
+      resourceName: "GPU-01",
+      startTime: H(1),
+      endTime: H(2),
+    });
+    expect((await getResourceUsageDetail(student.id, u.id)).active).toBe(false);
+  });
+
+  it("非成员读被拒，不存在的 id 报不存在", async () => {
+    const { student, outsider, team } = await scene();
+    const u = await createResourceUsage(student.id, team.id, {
+      resourceName: "GPU-01",
+      startTime: H(1),
+    });
+    await expect(getResourceUsageDetail(outsider.id, u.id)).rejects.toThrow("没有权限");
+    await expect(
+      getResourceUsageDetail(student.id, "00000000-0000-4000-8000-000000000000"),
+    ).rejects.toThrow("不存在");
   });
 });

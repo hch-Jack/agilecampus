@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { buildContinuationText, isContinuableTool } from "@/lib/agent/continuation";
+import { LABEL_COLORS, LABEL_COLOR_CLASS } from "@/lib/board-columns";
 
 /**
  * 草案卡片：助手拟的一切改动都先落在这些卡片上，用户改完点「确认落库」才生效。
@@ -352,7 +353,7 @@ function DraftCard({
             <input
               value={e.content}
               onChange={(ev) => setEntry(idx, { content: ev.target.value })}
-              className="ac-field flex-1 text-xs"
+              className="ac-field min-w-0 flex-1 text-xs"
             />
             <select
               value={e.visibility ?? "shared"}
@@ -365,7 +366,7 @@ function DraftCard({
             <button
               type="button"
               onClick={() => setData({ ...d, entries: d.entries.filter((_, i) => i !== idx) })}
-              className="text-xs text-high hover:underline"
+              className="shrink-0 whitespace-nowrap text-xs text-high hover:underline"
             >
               删
             </button>
@@ -460,7 +461,7 @@ function DraftCard({
       >
         {d.tasks.map((t, idx) => (
           <div key={idx} className="flex flex-wrap gap-1 border-b border-line pb-1">
-            <input value={t.title} onChange={(e) => setTask(idx, { title: e.target.value })} className="ac-field flex-1 text-xs" />
+            <input value={t.title} onChange={(e) => setTask(idx, { title: e.target.value })} className="ac-field min-w-0 flex-1 text-xs" />
             <select value={t.assigneeId ?? ""} onChange={(e) => setTask(idx, { assigneeId: e.target.value || undefined })} className="ac-field w-auto text-xs">
               <option value="">未分配</option>
               {opts.members.map((m) => (
@@ -490,7 +491,7 @@ function DraftCard({
               onChange={(e) => setTask(idx, { dueDate: e.target.value || undefined })}
               className="ac-field w-auto text-xs"
             />
-            <button type="button" onClick={() => setData({ ...d, tasks: d.tasks.filter((_, i) => i !== idx) })} className="text-xs text-high hover:underline">
+            <button type="button" onClick={() => setData({ ...d, tasks: d.tasks.filter((_, i) => i !== idx) })} className="shrink-0 whitespace-nowrap text-xs text-high hover:underline">
               删
             </button>
           </div>
@@ -597,7 +598,7 @@ function DraftCard({
             const crossLevel = (s.parentTaskId ?? null) !== sameLevel;
             const removed = remove.includes(s.id);
             return (
-              <span key={s.id} className="flex items-center gap-1 rounded border border-line px-1">
+              <span key={s.id} className="flex shrink-0 items-center gap-1 rounded border border-line px-1">
                 <span className={removed ? "text-ink-faint line-through" : "text-ink"}>{s.title}</span>
                 {/* 历史跨层级边只读：删它会静默无效，故不给按钮，标出来即可 */}
                 {crossLevel ? (
@@ -608,7 +609,7 @@ function DraftCard({
                   <button
                     type="button"
                     onClick={() => toggle("remove", s.id)}
-                    className="text-xs text-high hover:underline"
+                    className="shrink-0 whitespace-nowrap text-xs text-high hover:underline"
                   >
                     {removed ? "撤销" : "移除"}
                   </button>
@@ -626,9 +627,9 @@ function DraftCard({
             <span className="text-ink-faint">没有可选同级任务</span>
           )}
           {add.map((id) => (
-            <span key={id} className="flex items-center gap-1 rounded border border-primary bg-primary-soft px-1 text-primary">
+            <span key={id} className="flex shrink-0 items-center gap-1 rounded border border-primary bg-primary-soft px-1 text-primary">
               {nameOf(id)}
-              <button type="button" onClick={() => toggle("add", id)} className="text-high hover:underline">
+              <button type="button" onClick={() => toggle("add", id)} className="shrink-0 text-high hover:underline">
                 ×
               </button>
             </span>
@@ -773,7 +774,7 @@ function DraftCard({
               onClick={() =>
                 setData({ ...d, fileSource: null, attachmentId: null, filename: null, size: null })
               }
-              className="text-high hover:underline"
+              className="shrink-0 whitespace-nowrap text-high hover:underline"
             >
               移除
             </button>
@@ -827,13 +828,13 @@ function DraftCard({
           {members.map((m) => (
             <span
               key={m.id}
-              className="flex items-center gap-1 rounded border border-line px-1 text-ink"
+              className="flex shrink-0 items-center gap-1 rounded border border-line px-1 text-ink"
             >
               {m.name}
               <button
                 type="button"
                 onClick={() => removeMember(m.id)}
-                className="text-high hover:underline"
+                className="shrink-0 text-high hover:underline"
               >
                 ×
               </button>
@@ -893,13 +894,13 @@ function DraftCard({
           ).map((p) => (
             <span
               key={p.id}
-              className="flex items-center gap-1 rounded border border-line px-1 text-ink"
+              className="flex shrink-0 items-center gap-1 rounded border border-line px-1 text-ink"
             >
               {p.name}
               <button
                 type="button"
                 onClick={() => removeInvitee(p.name)}
-                className="text-high hover:underline"
+                className="shrink-0 text-high hover:underline"
               >
                 ×
               </button>
@@ -1123,6 +1124,297 @@ function DraftCard({
         </p>
         <p className="text-xs text-ink-faint">
           确认后会复制一份文件到任务附件；之后删除消息不会影响它。
+        </p>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "create_resource_usage") {
+    const d = data as {
+      teamId?: string;
+      teamName?: string;
+      resourceName?: string;
+      purpose?: string | null;
+      startTime?: string;
+      endTime?: string | null;
+    };
+    const start = d.startTime ?? "";
+    const end = d.endTime ?? "";
+    const invalid = firstProblem([
+      typeof d.teamId !== "string" || d.teamId === ""
+        ? "草案缺少团队，请让助手重拟"
+        : null,
+      (d.resourceName ?? "").trim() === "" ? "资源名不能为空" : null,
+      start === "" ? "开始时间不能为空" : null,
+      // 同一时区的墙面时间，字典序即时间序
+      start !== "" && end !== "" && end <= start ? "结束时间须晚于开始时间" : null,
+    ]);
+    return (
+      <CardShell
+        title={`登记资源占用（${d.teamName ?? "团队"}）`}
+        onConfirm={() => save("create_resource_usage", d)}
+        invalid={invalid}
+      >
+        <p className="text-xs text-ink-soft">
+          团队：{d.teamName ?? `${(d.teamId ?? "").slice(0, 8)}…`} · 登记人：你
+        </p>
+        <input
+          value={d.resourceName ?? ""}
+          onChange={(e) => setData({ ...d, resourceName: e.target.value })}
+          placeholder="资源名，如 GPU-01"
+          className="ac-field text-xs"
+        />
+        <input
+          value={d.purpose ?? ""}
+          onChange={(e) => setData({ ...d, purpose: e.target.value || null })}
+          placeholder="用途（可选）"
+          className="ac-field text-xs"
+        />
+        <div className="flex flex-wrap items-center gap-1 text-xs">
+          <label className="flex items-center gap-1">
+            <span className="text-ink-soft">开始</span>
+            <input
+              type="datetime-local"
+              value={start}
+              onChange={(e) => setData({ ...d, startTime: e.target.value })}
+              className="ac-field w-auto text-xs"
+            />
+          </label>
+          <label className="flex items-center gap-1">
+            <span className="text-ink-soft">结束</span>
+            <input
+              type="datetime-local"
+              value={end}
+              onChange={(e) => setData({ ...d, endTime: e.target.value || null })}
+              className="ac-field w-auto text-xs"
+            />
+          </label>
+        </div>
+        <p className="text-xs text-ink-faint">
+          时间按你的时区解释。结束时间留空 = 仍在占用，之后可让助手结束它。
+        </p>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "end_resource_usage") {
+    const d = data as {
+      usageId?: string;
+      teamName?: string;
+      resourceName?: string;
+      userName?: string;
+      startText?: string;
+    };
+    return (
+      <CardShell
+        title="结束资源占用"
+        onConfirm={() => save("end_resource_usage", d)}
+        invalid={
+          typeof d.usageId !== "string" || d.usageId === ""
+            ? "草案缺少占用记录 id，请让助手重拟"
+            : undefined
+        }
+      >
+        <p className="text-xs text-ink-soft">
+          团队：{d.teamName ?? "—"} · 资源：{d.resourceName ?? "—"}
+        </p>
+        <p className="text-xs text-ink-soft">
+          登记人：{d.userName ?? "—"} · 开始于 {d.startText ?? "—"}
+        </p>
+        <p className="text-xs text-high">确认后以当前时间结束这条占用。</p>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "create_label") {
+    const d = data as {
+      teamId?: string;
+      teamName?: string;
+      name?: string;
+      color?: string;
+    };
+    const name = d.name ?? "";
+    const color = d.color ?? "slate";
+    const invalid = firstProblem([
+      typeof d.teamId !== "string" || d.teamId === ""
+        ? "草案缺少团队，请让助手重拟"
+        : null,
+      name.trim() === "" ? "标签名不能为空" : null,
+      name.trim().length > 20 ? "标签名不可超过 20 字" : null,
+    ]);
+    return (
+      <CardShell
+        title={`新建标签（${d.teamName ?? "团队"}）`}
+        onConfirm={() => save("create_label", d)}
+        invalid={invalid}
+      >
+        <p className="text-xs text-ink-soft">
+          团队：{d.teamName ?? `${(d.teamId ?? "").slice(0, 8)}…`}
+        </p>
+        <div className="flex flex-wrap items-center gap-1">
+          <input
+            value={name}
+            onChange={(e) => setData({ ...d, name: e.target.value })}
+            maxLength={20}
+            placeholder="标签名，如：论文"
+            className="ac-field min-w-0 flex-1 text-xs"
+          />
+          <select
+            value={color}
+            onChange={(e) => setData({ ...d, color: e.target.value })}
+            aria-label="颜色"
+            className="ac-field w-auto text-xs"
+          >
+            {LABEL_COLORS.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          <span className={`ac-badge shrink-0 ${LABEL_COLOR_CLASS[color] ?? LABEL_COLOR_CLASS.slate}`}>
+            {name.trim() || "预览"}
+          </span>
+        </div>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "update_label") {
+    const d = data as {
+      labelId?: string;
+      teamName?: string;
+      currentName?: string;
+      currentColor?: string;
+      name?: string;
+      color?: string;
+    };
+    const name = d.name ?? d.currentName ?? "";
+    const color = d.color ?? d.currentColor ?? "slate";
+    const invalid = firstProblem([
+      typeof d.labelId !== "string" || d.labelId === ""
+        ? "草案缺少标签 id，请让助手重拟"
+        : null,
+      name.trim() === "" ? "标签名不能为空" : null,
+      name.trim().length > 20 ? "标签名不可超过 20 字" : null,
+    ]);
+    return (
+      <CardShell
+        title={`修改标签（${d.currentName ?? "标签"}）`}
+        onConfirm={() => save("update_label", d)}
+        invalid={invalid}
+      >
+        <p className="text-xs text-ink-soft">团队：{d.teamName ?? "—"}</p>
+        <div className="flex flex-wrap items-center gap-1">
+          <input
+            value={name}
+            onChange={(e) => setData({ ...d, name: e.target.value })}
+            maxLength={20}
+            placeholder="标签名"
+            className="ac-field min-w-0 flex-1 text-xs"
+          />
+          <select
+            value={color}
+            onChange={(e) => setData({ ...d, color: e.target.value })}
+            aria-label="颜色"
+            className="ac-field w-auto text-xs"
+          >
+            {LABEL_COLORS.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          <span className={`ac-badge shrink-0 ${LABEL_COLOR_CLASS[color] ?? LABEL_COLOR_CLASS.slate}`}>
+            {name.trim() || "预览"}
+          </span>
+        </div>
+        <p className="text-xs text-ink-faint">只改颜色时，名称保持原样即可。</p>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "delete_label") {
+    const d = data as {
+      labelId?: string;
+      teamName?: string;
+      name?: string;
+      color?: string;
+      usageCount?: number;
+    };
+    return (
+      <CardShell
+        title={`删除标签（${d.name ?? "标签"}）`}
+        onConfirm={() => save("delete_label", d)}
+        invalid={
+          typeof d.labelId !== "string" || d.labelId === ""
+            ? "草案缺少标签 id，请让助手重拟"
+            : undefined
+        }
+      >
+        <p className="text-xs text-ink-soft">
+          团队：{d.teamName ?? "—"} ·{" "}
+          <span className={`ac-badge ${LABEL_COLOR_CLASS[d.color ?? "slate"] ?? LABEL_COLOR_CLASS.slate}`}>
+            {d.name ?? "标签"}
+          </span>
+        </p>
+        <p className="text-xs text-high">
+          该标签贴在 {d.usageCount ?? 0}{" "}
+          个任务上，删除后会从这些任务上一并撕下，且不可恢复。
+        </p>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "edit_task_labels") {
+    const d = data as {
+      taskId?: string;
+      taskTitle?: string;
+      labelIds?: string[];
+      currentLabelIds?: string[];
+      labels?: { id: string; name: string; color: string }[];
+    };
+    const labels = d.labels ?? [];
+    const labelIds = d.labelIds ?? [];
+    const selected = new Set(labelIds);
+    const current = new Set(d.currentLabelIds ?? []);
+    const toggle = (id: string) =>
+      setData({
+        ...d,
+        labelIds: selected.has(id) ? labelIds.filter((x) => x !== id) : [...labelIds, id],
+      });
+    return (
+      <CardShell
+        title={`任务标签（${d.taskTitle ?? "任务"}）`}
+        onConfirm={() => save("edit_task_labels", d)}
+        invalid={
+          typeof d.taskId !== "string" || d.taskId === ""
+            ? "草案缺少任务 id，请让助手重拟"
+            : undefined
+        }
+      >
+        <p className="text-xs text-ink-soft">
+          当前 {current.size} 个 → 确认后 {selected.size} 个
+        </p>
+        {labels.length === 0 ? (
+          <p className="text-xs text-ink-faint">团队还没有标签。请让助手先新建标签。</p>
+        ) : (
+          <div className="flex flex-wrap gap-x-3 gap-y-1">
+            {labels.map((l) => (
+              <label key={l.id} className="flex items-center gap-1 text-xs text-ink">
+                <input
+                  type="checkbox"
+                  checked={selected.has(l.id)}
+                  onChange={() => toggle(l.id)}
+                />
+                <span className={`ac-badge ${LABEL_COLOR_CLASS[l.color] ?? LABEL_COLOR_CLASS.slate}`}>
+                  {l.name}
+                </span>
+              </label>
+            ))}
+          </div>
+        )}
+        <p className="text-xs text-ink-faint">
+          勾选结果就是任务最终的标签集合：取消勾选的会从任务上撕下。
         </p>
       </CardShell>
     );

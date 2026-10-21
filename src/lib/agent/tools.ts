@@ -7,7 +7,19 @@ import {
   listProjectTasks,
   requireTaskWrite,
 } from "@/lib/task";
-import { listTeamMembers } from "@/lib/team";
+import { getTeamForMember, listTeamMembers } from "@/lib/team";
+import {
+  getLabelDetail,
+  LABEL_NAME_MAX,
+  listTeamLabels,
+  listTeamLabelsWithUsage,
+} from "@/lib/label";
+import {
+  getResourceUsageDetail,
+  listTeamResourceUsages,
+} from "@/lib/resource";
+import { formatDateTime, formatInputValue, zonedWallClockToInstant } from "@/lib/time";
+import { resolveUserTimeZone } from "@/lib/time-pref";
 import { AppError, ForbiddenError } from "@/lib/errors";
 import { listMyTaskActivities, listProjectActivities, type TaskActivityRow } from "@/lib/activity";
 import { listProjectComments, type ProjectCommentRow } from "@/lib/comment";
@@ -171,6 +183,39 @@ async function editLinksDraft(
     remove: [...new Set(input.remove ?? [])],
   });
 }
+
+// ------------------------------------------------------------------ 资源占用 / 标签
+
+/**
+ * 模型给的是用户**本地墙面时间**（`YYYY-MM-DDTHH:mm`），不是 ISO 时刻。
+ * 必须按用户时区解释 —— `new Date(墙上时间)` 会按服务端进程时区解析，容器里就错 8 小时。
+ */
+function wallClockToInstant(tz: string, value: string, label: string): Date {
+  try {
+    return zonedWallClockToInstant(tz, value);
+  } catch {
+    throw new AppError(`${label}格式无效，请用 YYYY-MM-DDTHH:mm（如 2026-11-01T14:00）`);
+  }
+}
+
+// 标签名规则与 lib/label.ts 同口径；拟稿期先拦一道，别让用户点确认才看到报错。
+function normalizeLabelName(raw: string): string {
+  const name = raw.trim();
+  if (!name) throw new AppError("标签名不可为空");
+  if (name.length > LABEL_NAME_MAX) throw new AppError(`标签名不可超过 ${LABEL_NAME_MAX} 字`);
+  return name;
+}
+
+// 与 db/schema.ts 的 labelColorEnum 一致；这里写字面量是为了让工具 schema 自足。
+export const labelColorSchema = z.enum([
+  "slate",
+  "red",
+  "amber",
+  "green",
+  "blue",
+  "violet",
+  "pink",
+]);
 
 // AI SDK 工具装配：绑定 actorId/projectId，execute 委托纯函数
 export function buildTools(actorId: string, projectId: string) {
@@ -832,6 +877,245 @@ function buildBasePersonalTools(actorId: string) {
       execute: async ({ limit }) =>
         activityBrief(await listMyTaskActivities(actorId, limit ?? 20), true),
     }),
+    list_resource_usages: tool({
+      description:
+        "列出指定团队的资源占用记录（最新在前，含 usageId、资源名、登记人、起止时间、是否占用中、时长）" +
+        "与按成员/按资源汇总的总用时（只计已结束的占用）。登记或结束占用前先用它取 usageId。",
+      inputSchema: z.object({
+        teamId: z.uuid().describe("取自快照「我的团队」中的 teamId"),
+      }),
+      execute: async ({ teamId }) => {
+        const team = await getTeamForMember(actorId, teamId);
+        const { usages, byUser, byResource } = await listTeamResourceUsages(actorId, teamId);
+        return {
+          team: { id: team.id, name: team.name },
+          activeCount: usages.filter((u) => u.active).length,
+          total: usages.length,
+          // 与其它列表工具同口径：最多回 50 条明细；汇总仍按全量算
+          usages: usages.slice(0, 50).map((u) => ({
+            usageId: u.id,
+            resourceName: u.resourceName,
+            purpose: u.purpose,
+            userName: u.userName,
+            userId: u.userId,
+            startTime: u.startTime.toISOString(),
+            endTime: u.endTime?.toISOString() ?? null,
+            active: u.active,
+            durationMinutes: u.durationMinutes,
+          })),
+          byUser,
+          byResource,
+        };
+      },
+    }),
+    create_resource_usage: tool({
+      description:
+        "拟一张登记资源占用的草案（任一团队成员皆可登记，无审批）。startTime / endTime 用**用户本地时间** " +
+        "YYYY-MM-DDTHH:mm（如 2026-11-01T14:00）；省略 endTime 表示仍在占用。仅产草案，需人工确认后落库。",
+      inputSchema: z.object({
+        teamId: z.uuid().describe("取自快照「我的团队」中的 teamId"),
+        resourceName: z.string().describe("资源名，如 GPU-01"),
+        purpose: z.string().optional().describe("用途，如「训练模型」"),
+        startTime: z.string().describe("开始时间，本地墙面时间 YYYY-MM-DDTHH:mm"),
+        endTime: z.string().optional().describe("结束时间，同样格式；省略 = 仍在占用"),
+      }),
+      execute: async ({ teamId, resourceName, purpose, startTime, endTime }) => {
+        const team = await getTeamForMember(actorId, teamId);
+        const name = resourceName.trim();
+        if (!name) throw new AppError("资源名不能为空");
+
+        const tz = await resolveUserTimeZone(actorId);
+        const start = wallClockToInstant(tz, startTime, "开始时间");
+        const end = endTime ? wallClockToInstant(tz, endTime, "结束时间") : null;
+        if (end && end.getTime() <= start.getTime())
+          throw new AppError("结束时间须晚于开始时间");
+
+        return draftEnvelope(CREATE_RESOURCE_USAGE_TOOL, {
+          teamId,
+          teamName: team.name,
+          resourceName: name,
+          purpose: purpose?.trim() || null,
+          // 草案里的时间统一成 `<input type="datetime-local">` 的规范形态；
+          // 落库口会按同一时区再换算回时刻（不信任这里的字面量）
+          startTime: formatInputValue(tz, start),
+          endTime: end ? formatInputValue(tz, end) : null,
+        });
+      },
+    }),
+    end_resource_usage: tool({
+      description:
+        "拟一张结束资源占用的草案（以当前时间结束）。只能结束**本人登记的**占用；团队 admin 可结束任意一条。" +
+        "usageId 取自 list_resource_usages，且该条必须仍在占用中。仅产草案，需人工确认后落库。",
+      inputSchema: z.object({
+        usageId: z.uuid().describe("取自 list_resource_usages 的 usageId"),
+      }),
+      execute: async ({ usageId }) => {
+        const usage = await getResourceUsageDetail(actorId, usageId);
+        if (!usage.active) throw new AppError("该占用已结束");
+        if (!usage.canEnd) throw new ForbiddenError();
+
+        const tz = await resolveUserTimeZone(actorId);
+        return draftEnvelope(END_RESOURCE_USAGE_TOOL, {
+          usageId,
+          teamId: usage.teamId,
+          teamName: usage.teamName,
+          resourceName: usage.resourceName,
+          userName: usage.userName,
+          startText: formatDateTime(tz, usage.startTime),
+        });
+      },
+    }),
+    list_labels: tool({
+      description:
+        "列出指定团队的标签（labelId、名称、颜色、贴在多少个任务上）。给任务贴/撕标签、改标签前先用它取 id。" +
+        "任何成员可读；canManage 表示当前用户能否增删改标签（仅团队 admin）。",
+      inputSchema: z.object({
+        teamId: z.uuid().describe("取自快照「我的团队」中的 teamId"),
+      }),
+      execute: async ({ teamId }) => {
+        const { teamName, role, labels } = await listTeamLabelsWithUsage(actorId, teamId);
+        return {
+          team: { id: teamId, name: teamName },
+          canManage: role === "admin",
+          labels: labels.map((l) => ({
+            labelId: l.id,
+            name: l.name,
+            color: l.color,
+            usageCount: l.usageCount,
+          })),
+        };
+      },
+    }),
+    create_label: tool({
+      description:
+        "拟一张新建团队标签的草案（仅团队 admin）。name 最多 20 字；color 缺省 slate。" +
+        "同团队内名称不区分大小写去重。仅产草案，需人工确认后落库。",
+      inputSchema: z.object({
+        teamId: z.uuid().describe("取自快照「我的团队」中的 teamId"),
+        name: z.string().describe("标签名，最多 20 字"),
+        color: labelColorSchema.optional().describe("颜色，缺省 slate"),
+      }),
+      execute: async ({ teamId, name, color }) => {
+        const team = await getTeamForMember(actorId, teamId);
+        if (team.role !== "admin") throw new ForbiddenError();
+        const nextName = normalizeLabelName(name);
+        const existing = await listTeamLabels(actorId, teamId);
+        if (existing.some((l) => l.name.toLowerCase() === nextName.toLowerCase()))
+          throw new AppError("标签已存在");
+
+        return draftEnvelope(CREATE_LABEL_TOOL, {
+          teamId,
+          teamName: team.name,
+          name: nextName,
+          color: color ?? "slate",
+        });
+      },
+    }),
+    update_label: tool({
+      description:
+        "拟一张修改团队标签的草案（仅团队 admin）：可改名、换色，至少给一项。" +
+        "labelId 取自 list_labels。名称规则同新建（≤20 字、同团队去重）。仅产草案，需人工确认后落库。",
+      inputSchema: z.object({
+        labelId: z.uuid().describe("取自 list_labels"),
+        name: z.string().optional().describe("新名称；不改就省略"),
+        color: labelColorSchema.optional().describe("新颜色；不改就省略"),
+      }),
+      execute: async ({ labelId, name, color }) => {
+        const detail = await getLabelDetail(actorId, labelId);
+        if (!detail.canManage) throw new ForbiddenError();
+        if (name === undefined && color === undefined)
+          throw new AppError("请至少给出新的名称或颜色");
+
+        const nextName = name === undefined ? undefined : normalizeLabelName(name);
+        if (nextName !== undefined) {
+          const existing = await listTeamLabels(actorId, detail.teamId);
+          if (
+            existing.some(
+              (l) => l.id !== labelId && l.name.toLowerCase() === nextName.toLowerCase(),
+            )
+          )
+            throw new AppError("标签已存在");
+        }
+
+        return draftEnvelope(UPDATE_LABEL_TOOL, {
+          labelId,
+          teamId: detail.teamId,
+          teamName: detail.teamName,
+          currentName: detail.name,
+          currentColor: detail.color,
+          ...(nextName !== undefined ? { name: nextName } : {}),
+          ...(color !== undefined ? { color } : {}),
+        });
+      },
+    }),
+    delete_label: tool({
+      description:
+        "拟一张删除团队标签的草案（仅团队 admin）。标签会从所有任务上一并撕下，不可恢复。" +
+        "labelId 取自 list_labels。仅产草案，需人工确认后落库。",
+      inputSchema: z.object({
+        labelId: z.uuid().describe("取自 list_labels"),
+      }),
+      execute: async ({ labelId }) => {
+        const detail = await getLabelDetail(actorId, labelId);
+        if (!detail.canManage) throw new ForbiddenError();
+        return draftEnvelope(DELETE_LABEL_TOOL, {
+          labelId,
+          teamId: detail.teamId,
+          teamName: detail.teamName,
+          name: detail.name,
+          color: detail.color,
+          usageCount: detail.usageCount,
+        });
+      },
+    }),
+    edit_task_labels: tool({
+      description:
+        "拟一张「任务标签」调整草案（增量：add 添加、remove 移除，其余标签不动）。" +
+        "标签必须属于任务所在团队；add 里的标签须尚未贴上，remove 里的须当前已贴。" +
+        "taskId 取自 list_tasks / get_task_detail，labelId 取自 list_labels。仅产草案，需人工确认后落库。",
+      inputSchema: z.object({
+        taskId: z.uuid().describe("取自 list_tasks / get_task_detail"),
+        add: z.array(z.uuid()).optional().describe("要添加的标签 id"),
+        remove: z.array(z.uuid()).optional().describe("要移除的标签 id"),
+      }),
+      execute: async ({ taskId, add: addIds, remove: removeIds }) => {
+        const add = [...new Set(addIds ?? [])];
+        const remove = [...new Set(removeIds ?? [])];
+        if (add.length === 0 && remove.length === 0)
+          throw new AppError("请至少给出要添加或移除的标签");
+        if (add.some((id) => remove.includes(id)))
+          throw new AppError("同一标签不能既添加又移除");
+
+        const detail = await getTaskDetailBundle(actorId, taskId);
+        const access = await requireTaskWrite(actorId, detail.projectId);
+        const teamLabels = await listTeamLabels(actorId, access.project.teamId);
+        const byId = new Map(teamLabels.map((l) => [l.id, l]));
+
+        if ([...add, ...remove].some((id) => !byId.has(id)))
+          throw new AppError("标签不存在或不属于该团队");
+
+        const current = new Set(detail.labels.map((l) => l.id));
+        const already = add.find((id) => current.has(id));
+        if (already) throw new AppError(`任务已有标签「${byId.get(already)!.name}」`);
+        const missing = remove.find((id) => !current.has(id));
+        if (missing) throw new AppError(`任务没有标签「${byId.get(missing)!.name}」`);
+
+        const next = new Set([...current].filter((id) => !remove.includes(id)).concat(add));
+        // 按标签名顺序排列（listTeamLabels 已排序），卡片勾选与摘要都稳定
+        const labelIds = teamLabels.filter((l) => next.has(l.id)).map((l) => l.id);
+        if (labelIds.length === current.size && labelIds.every((id) => current.has(id)))
+          throw new AppError("标签没有变化");
+
+        return draftEnvelope(EDIT_TASK_LABELS_TOOL, {
+          taskId,
+          taskTitle: detail.title,
+          // 最终集合 + 团队全部标签：卡片据此渲染复选框，模型不用复述现有标签
+          labelIds,
+          currentLabelIds: [...current],
+          labels: teamLabels.map((l) => ({ id: l.id, name: l.name, color: l.color })),
+        });
+      },
+    }),
     create_project: tool({
       description:
         "拟一个新项目草案（挂在我指定的团队下）。必须给 teamId（取自快照「我的团队」）。仅产草案，需人工确认后落库。",
@@ -990,7 +1274,7 @@ type FocusProjectTools = Pick<
   (typeof FOCUS_PROJECT_TOOL_NAMES)[number]
 >;
 
-/** 无焦点项目：恰好是控制台基础工具集（测试钉着这 25 件的全集） */
+/** 无焦点项目：恰好是控制台基础工具集（测试钉着这 33 件的全集） */
 export function buildPersonalTools(actorId: string): BasePersonalTools;
 /** 有焦点项目：基础工具集 + 六件项目专属工具 */
 export function buildPersonalTools(
@@ -1049,6 +1333,15 @@ export const FORWARD_MESSAGE_TOOL = "forward_message" as const;
 export const CREATE_GROUP_TOOL = "create_group_chat" as const;
 export const INVITE_GROUP_TOOL = "invite_to_group" as const;
 
+// 团队资源占用与标签：同样只挂在工作台助手（个人 scope）。
+// 资源占用是两个独立动作（登记 / 结束），标签是三件管理 + 一件贴到任务上。
+export const CREATE_RESOURCE_USAGE_TOOL = "create_resource_usage" as const;
+export const END_RESOURCE_USAGE_TOOL = "end_resource_usage" as const;
+export const CREATE_LABEL_TOOL = "create_label" as const;
+export const UPDATE_LABEL_TOOL = "update_label" as const;
+export const DELETE_LABEL_TOOL = "delete_label" as const;
+export const EDIT_TASK_LABELS_TOOL = "edit_task_labels" as const;
+
 /** 需要人工确认才落库的工具全集 —— 两个 scope 的草案都走同一张确认卡 */
 export const COMMIT_TOOL_NAMES = [
   ...WRITE_TOOL_NAMES,
@@ -1059,6 +1352,12 @@ export const COMMIT_TOOL_NAMES = [
   FORWARD_MESSAGE_TOOL,
   CREATE_GROUP_TOOL,
   INVITE_GROUP_TOOL,
+  CREATE_RESOURCE_USAGE_TOOL,
+  END_RESOURCE_USAGE_TOOL,
+  CREATE_LABEL_TOOL,
+  UPDATE_LABEL_TOOL,
+  DELETE_LABEL_TOOL,
+  EDIT_TASK_LABELS_TOOL,
 ] as const;
 
 export type CommitToolName = (typeof COMMIT_TOOL_NAMES)[number];

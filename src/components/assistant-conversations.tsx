@@ -107,7 +107,7 @@ export function AssistantConversations({
       {open && (
         <div
           id="assistant-conversation-list"
-          className="mt-1 max-h-56 overflow-y-auto rounded-field border border-line bg-sunken/60 p-1"
+          className="mt-1 max-h-56 overflow-y-auto rounded-field border border-line bg-sunken/60 p-1 pr-2 [scrollbar-gutter:stable]"
         >
           {conversations.length === 0 ? (
             <p className="px-2 py-1.5 text-xs text-ink-faint">还没有对话</p>
