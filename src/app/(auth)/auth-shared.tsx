@@ -1,14 +1,17 @@
 "use client";
 
-// 登录 / 注册共用的深空背景层
+import { ParticleMorph } from "./particle-morph";
+
+// 登录 / 注册共用的深空背景层：发光粒子矩阵 morph + 遮罩压暗
 export function AuthBackground() {
   return (
     <>
-      <div className="bg" />
-      <div className="shade" />
+      <div className="aurora" />
+      <ParticleMorph />
       <div className="blob b1" />
       <div className="blob b2" />
       <div className="blob b3" />
+      <div className="shade" />
     </>
   );
 }
@@ -56,7 +59,7 @@ export function AuthHero({
       <p className="kicker">{kicker ?? "AGILE CAMPUS"}</p>
       <h1 className="title">
         <span className="title-inner">
-          <span className="title-text">
+          <span className="title-text" data-text={title}>
             {title}
             <Spark className="spark spark-a" />
             <Spark className="spark spark-b" />
