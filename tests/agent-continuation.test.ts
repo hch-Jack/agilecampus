@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   buildContinuationText,
+  continuationOriginalText,
   isContinuableTool,
+  isContinuationText,
   summarizeDraft,
 } from "@/lib/agent/continuation";
 
@@ -228,5 +230,38 @@ describe("buildContinuationText", () => {
     expect(text).toContain("原请求：「（未记录）」");
     expect(text).toContain("已落库：无");
     expect(text).toContain("不要改动它们）：无");
+  });
+});
+
+describe("continue 提示词的识别", () => {
+  const prompt = buildContinuationText({
+    originalText: "建两个任务，再给第一个加后置",
+    committed: [],
+    remaining: [],
+  });
+
+  it("提示词以标记开头，普通提问不算", () => {
+    expect(isContinuationText(prompt)).toBe(true);
+    expect(isContinuationText("  \n" + prompt)).toBe(true);
+    expect(isContinuationText("把这个拆成任务")).toBe(false);
+    expect(isContinuationText("[继续上一轮请求]")).toBe(false);
+  });
+
+  it("续做提示词能取回最初的原请求；普通提问原样返回", () => {
+    expect(continuationOriginalText(prompt)).toBe("建两个任务，再给第一个加后置");
+    expect(continuationOriginalText("把这个拆成任务")).toBe("把这个拆成任务");
+  });
+
+  it("原请求含换行或「」时也取得回来", () => {
+    const tricky = buildContinuationText({
+      originalText: "第一行\n第二行「引用」还在",
+      committed: [{ tool: "create_milestone", draft: { title: "中期答辩" } }],
+      remaining: [],
+    });
+    expect(continuationOriginalText(tricky)).toBe("第一行 第二行「引用」还在");
+  });
+
+  it("缺原请求行时返回空串，交给调用方回落", () => {
+    expect(continuationOriginalText("【继续上一轮请求】\n随便什么")).toBe("");
   });
 });

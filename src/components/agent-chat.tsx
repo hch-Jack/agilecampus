@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { DraftCards, type ChatScope, type Draft, type OptionMap } from "@/components/draft-cards";
+import { continuationOriginalText, isContinuationText } from "@/lib/agent/continuation";
 
 /**
  * AI 助手对话区 —— 右侧常驻面板（`assistant-shell.tsx`）的唯一使用者。
@@ -240,55 +241,94 @@ export function AgentChat({
         ref={listRef}
         className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-3 [scrollbar-gutter:stable]"
       >
-        {messages.map((m, i) => (
-          <div key={m.localId ?? m.id ?? `idx-${i}`}>
-            <div className={`rounded-lg p-2.5 text-sm ${m.role === "user" ? "bg-sunken" : "bg-primary-soft"}`}>
-              <div className="flex items-start justify-between gap-2">
-                <span className="text-xs text-ink-faint">{m.role === "user" ? "我" : "助手"}</span>
-                <button
-                  type="button"
-                  onClick={() => void deleteTurn(m)}
-                  disabled={busy || disabled}
-                  aria-label={
-                    m.role === "user" ? "删除这一轮对话（我的提问）" : "删除这一轮对话（助手的回答）"
-                  }
-                  title="删除这一轮"
-                  className="-mt-1 grid h-7 w-7 shrink-0 place-items-center rounded text-ink-faint/70 transition-colors hover:bg-surface hover:text-high disabled:opacity-40"
+        {messages.map((m, i) => {
+          // 「继续处理后续动作」发出去的是写给模型的提示词（原请求复述 + 续做规矩），
+          // 界面上只留一行「继续上一轮请求」，别把机器话术摊给用户看。
+          const continuation = m.role === "user" && isContinuationText(m.content);
+          const deleteButton = (
+            <button
+              type="button"
+              onClick={() => void deleteTurn(m)}
+              disabled={busy || disabled}
+              aria-label={
+                continuation
+                  ? "删除这一轮对话（继续上一轮请求）"
+                  : m.role === "user"
+                    ? "删除这一轮对话（我的提问）"
+                    : "删除这一轮对话（助手的回答）"
+              }
+              title="删除这一轮"
+              className="grid h-7 w-7 shrink-0 place-items-center rounded text-ink-faint/70 transition-colors hover:bg-surface hover:text-high disabled:opacity-40"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" />
+                <path d="M10 11v5M14 11v5" />
+              </svg>
+            </button>
+          );
+          return (
+            <div key={m.localId ?? m.id ?? `idx-${i}`}>
+              {continuation ? (
+                <div className="flex items-center justify-between gap-2 px-1 text-xs text-ink-faint">
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-3 w-3 shrink-0"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden
+                    >
+                      <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+                      <path d="M3 3v5h5" />
+                    </svg>
+                    <span className="truncate">继续上一轮请求</span>
+                  </span>
+                  {deleteButton}
+                </div>
+              ) : (
+                <div
+                  className={`rounded-lg p-2.5 text-sm ${m.role === "user" ? "bg-sunken" : "bg-primary-soft"}`}
                 >
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="h-3.5 w-3.5"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden
-                  >
-                    <path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" />
-                    <path d="M10 11v5M14 11v5" />
-                  </svg>
-                </button>
-              </div>
-              <p className="mt-1 whitespace-pre-wrap text-ink">{m.content}</p>
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-xs text-ink-faint">{m.role === "user" ? "我" : "助手"}</span>
+                    <div className="-mt-1">{deleteButton}</div>
+                  </div>
+                  <p className="mt-1 whitespace-pre-wrap text-ink">{m.content}</p>
+                </div>
+              )}
+              {m.drafts && m.drafts.length > 0 && (
+                <DraftCards
+                  drafts={m.drafts}
+                  options={m.options ?? {}}
+                  // 草案卡的项目下拉随这一轮走，而不是随当前页面走
+                  defaultProjectId={m.focusProjectId ?? projectId}
+                  scope={scope}
+                  // 「继续」要复述用户最初那句话；助手消息前一条正是它。若上一轮本身也是
+                  // 「继续」，这里取回最初的请求，而不是把整段提示词再套一层。
+                  originalText={
+                    i > 0 && messages[i - 1].role === "user"
+                      ? continuationOriginalText(messages[i - 1].content)
+                      : ""
+                  }
+                  busy={pending || disabled}
+                  onContinue={(text) => sendText(text, m.focusProjectId)}
+                />
+              )}
             </div>
-            {m.drafts && m.drafts.length > 0 && (
-              <DraftCards
-                drafts={m.drafts}
-                options={m.options ?? {}}
-                // 草案卡的项目下拉随这一轮走，而不是随当前页面走
-                defaultProjectId={m.focusProjectId ?? projectId}
-                scope={scope}
-                // 「继续」要复述用户最初那句话；助手消息前一条正是它
-                originalText={
-                  i > 0 && messages[i - 1].role === "user" ? messages[i - 1].content : ""
-                }
-                busy={pending || disabled}
-                onContinue={(text) => sendText(text, m.focusProjectId)}
-              />
-            )}
-          </div>
-        ))}
+          );
+        })}
         {messages.length === 0 && <p className="text-sm text-ink-soft">{emptyHint}</p>}
       </div>
       {error && <p className="shrink-0 text-sm text-high">{error}</p>}

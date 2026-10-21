@@ -209,6 +209,35 @@ export function summarizeDraft(d: DraftLike): string {
 }
 
 /**
+ * 「继续处理后续动作」提示词的开头。
+ *
+ * 这句话是**机器写给模型看的**（原请求复述 + 续做规矩），界面上不该原样展开 —— 用户只需要
+ * 知道「正在继续上一轮」。识别靠开头这行标记：它随消息一起落库，刷新后同样能认出来，
+ * 不必给消息表加字段。
+ */
+export const CONTINUATION_PREFIX = "【继续上一轮请求】";
+
+export function isContinuationText(text: string): boolean {
+  return text.trimStart().startsWith(CONTINUATION_PREFIX);
+}
+
+/**
+ * 从续做提示词里取回**最初那句人话**。
+ *
+ * 续做提示词自己又可能被当成「上一轮提问」再续一次；此时要复述的是最初的原请求，
+ * 而不是把整段机器话术再套一层。取不到就返回空串，让调用方回落。
+ */
+export function continuationOriginalText(text: string): string {
+  if (!isContinuationText(text)) return text.trim();
+  // 原请求本身可能含换行或「」——用后面那几行的行首标记收口，避免截在正文中间
+  const start = text.indexOf("原请求：「");
+  if (start < 0) return "";
+  const bodyStart = start + "原请求：「".length;
+  const end = text.indexOf("」\n已落库：", bodyStart);
+  return (end < 0 ? "" : text.slice(bodyStart, end)).trim();
+}
+
+/**
  * 「继续处理后续动作」发出去的那句话。必须自包含：
  * 模型看不到上一轮卡片上的编辑态，只会看到这句话 + 会话上文。
  */
@@ -223,7 +252,7 @@ export function buildContinuationText(params: {
   const remaining =
     params.remaining.length > 0 ? params.remaining.map(summarizeDraft).join("、") : "无";
 
-  return `【继续上一轮请求】
+  return `${CONTINUATION_PREFIX}
 原请求：「${original}」
 已落库：${committed}
 上一轮已展示但尚未确认的草案（不要重复生成，也不要改动它们）：${remaining}
