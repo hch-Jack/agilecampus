@@ -1,14 +1,14 @@
 "use client";
 
 import { useActionState } from "react";
-import { setHistoryLimitAction, type ContextState } from "@/app/(app)/dashboard/actions";
+import { setHistoryLimitAction, type ContextState } from "@/app/(app)/settings/actions";
 import { AI_HISTORY_LIMIT_MAX, AI_HISTORY_LIMIT_MIN } from "@/lib/agent/history-limit";
 
 /**
- * 「助手记得多少上文」——工作台助手卡片右上角「设置」里的一行。
+ * 「助手记得多少上文」——「AI配置」页「AI 助手」一节里的一行。
  *
- * 这个数是**用户级**的，工作台助手与项目页助手共用同一条（见 lib/agent/memory.ts），
- * 所以界面上的说明必须点明它不只管这一处，否则用户会以为改的只是眼前这个框。
+ * 这个数是**用户级**的（见 lib/agent/memory.ts）：网页右侧面板与走 `/api/chat` 的其他
+ * 助手对话共用同一条，所以说明里点明「对助手的全部对话生效」，别让用户以为只改眼前这一处。
  */
 
 export function AgentHistorySetting({ limit }: { limit: number }) {
@@ -24,9 +24,9 @@ export function AgentHistorySetting({ limit }: { limit: number }) {
       <div>
         <h3 className="text-sm font-medium text-ink">助手记忆</h3>
         <p className="mt-0.5 text-xs text-ink-faint">
-          每轮把最近多少条聊天记录一并交给助手，好让它接着上文说（0 = 不看历史，最多{" "}
+          右侧 AI 助手每轮把最近多少条聊天记录一并交给模型，好让它接着上文说（0 = 不看历史，最多{" "}
           {AI_HISTORY_LIMIT_MAX} 条；一问一答算 2 条）。
-          <span className="text-ink-soft">工作台的助手与项目页的助手都按这个数来。</span>
+          <span className="text-ink-soft">这个数对助手的全部对话生效。</span>
         </p>
       </div>
 
