@@ -6,9 +6,10 @@ import { ForbiddenError } from "@/lib/errors";
 import { buildPersonalSnapshot } from "./personal-snapshot";
 import {
   getOrCreateConversation,
-  getOrCreatePersonalConversation,
   persistTurn,
   recentMessagesForModel,
+  resolvePersonalConversation,
+  type ConversationRow,
   type ToolTraceEntry,
 } from "./conversation";
 import { getAiHistoryLimit } from "./memory";
@@ -97,10 +98,12 @@ const SYSTEM_PREAMBLE = `你是 AgileCampus（敏捷校园）的项目管理助�
 export type AgentScope =
   | { kind: "project"; projectId: string }
   /**
-   * 个人助手是每人一条的**私人**会话。`focusProjectId` 不是会话归属，只是「用户此刻正看着
-   * 哪个项目」：它让快照多带一段项目上下文、并放出项目专属工具（动态/留言/历史/子任务/附件）。
+   * 个人助手是**私人**会话，用户可能有多条。`conversationId` 指定挂在哪一条；
+   * 省略时落到最近一条（没有则新建），保持老客户端的语义。
+   * `focusProjectId` 不是会话归属，只是「用户此刻正看着哪个项目」：它让快照多带一段
+   * 项目上下文、并放出项目专属工具（动态/留言/历史/子任务/附件）。
    */
-  | { kind: "personal"; focusProjectId?: string };
+  | { kind: "personal"; focusProjectId?: string; conversationId?: string };
 
 /**
  * 参数取联合类型而非「projectId 可选」：project 与 personal 两态**必须二选一**，
@@ -112,7 +115,10 @@ export type RunAgentTurnParams = {
   model?: LanguageModel;
 } & (
   | { projectId: string; scope?: { kind: "project"; projectId: string } }
-  | { projectId?: never; scope: { kind: "personal"; focusProjectId?: string } }
+  | {
+      projectId?: never;
+      scope: { kind: "personal"; focusProjectId?: string; conversationId?: string };
+    }
 );
 
 /** 两个 scope 各自的额外说明，接在军规之后 —— 军规本身原样共用 */
@@ -189,7 +195,7 @@ export async function runAgentTurn(params: RunAgentTurnParams) {
 
   // 权限收敛：会话创建内部经 getProjectForUser 校验，非成员/不存在一律 ForbiddenError
   const { conversation, snapshot, tools }: {
-    conversation: Awaited<ReturnType<typeof getOrCreatePersonalConversation>>;
+    conversation: ConversationRow;
     snapshot: string;
     tools: ToolSet;
   } =
@@ -204,7 +210,7 @@ export async function runAgentTurn(params: RunAgentTurnParams) {
         })()
       : await (async () => {
           const [conversation, personalSnapshot, tools, focusBlock] = await Promise.all([
-            getOrCreatePersonalConversation(actorId),
+            resolvePersonalConversation(actorId, scope.conversationId),
             buildPersonalSnapshot(actorId),
             Promise.resolve(
               scope.focusProjectId
@@ -275,7 +281,7 @@ export async function runAgentTurn(params: RunAgentTurnParams) {
         ].join("、")}），请在下方卡片中确认落库。`
       : "这一轮没有生成可展示的回复，请换个说法再试。";
 
-  await persistTurn(conversation.id, userText, text, toolTrace);
+  const persisted = await persistTurn(conversation.id, userText, text, toolTrace);
 
-  return { conversationId: conversation.id, text, toolTrace, drafts };
+  return { conversationId: conversation.id, text, toolTrace, drafts, ...persisted };
 }

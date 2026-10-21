@@ -2,10 +2,12 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { listApiTokens } from "@/lib/api-token";
 import { getAiHistoryLimit } from "@/lib/agent/memory";
+import { countPersonalConversations } from "@/lib/agent/conversation";
 import { listMyPersonalContext } from "@/lib/personal-context";
 import { formatDateTime } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
 import { AgentHistorySetting } from "@/components/agent-history-setting";
+import { AssistantHistoryReset } from "@/components/assistant-history-reset";
 import { PersonalContextCard } from "@/components/personal-context-card";
 import { TokenManager, type TokenRow } from "./token-manager";
 
@@ -34,10 +36,11 @@ export default async function SettingsPage({
   // 令牌列表的时间按**用户自己的**时区显示
   const tz = await resolveUserTimeZone(session.user.id);
 
-  const [rawTokens, contextItems, historyLimit] = await Promise.all([
+  const [rawTokens, contextItems, historyLimit, conversationCount] = await Promise.all([
     listApiTokens(session.user.id),
     listMyPersonalContext(session.user.id),
     getAiHistoryLimit(session.user.id),
+    countPersonalConversations(session.user.id),
   ]);
 
   const tokens: TokenRow[] = rawTokens.map((t) => ({
@@ -79,6 +82,9 @@ export default async function SettingsPage({
           <AgentHistorySetting limit={historyLimit} />
           <div className="border-t border-line pt-3">
             <PersonalContextCard items={contextItems} />
+          </div>
+          <div className="border-t border-line pt-3">
+            <AssistantHistoryReset conversationCount={conversationCount} />
           </div>
         </div>
       </section>

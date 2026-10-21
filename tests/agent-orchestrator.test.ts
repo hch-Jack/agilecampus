@@ -9,7 +9,10 @@ import {
   findPersonalConversation,
   listConversationMessages,
   listPersonalChatHistory,
+  listPersonalConversationMessages,
   listProjectChatHistory,
+  persistTurn,
+  startPersonalConversation,
 } from "@/lib/agent/conversation";
 import { setAiHistoryLimit } from "@/lib/agent/memory";
 import { runAgentTurn } from "@/lib/agent/orchestrator";
@@ -307,8 +310,69 @@ describe("runAgentTurn（个人 scope + 焦点项目）", () => {
       }),
     ).rejects.toThrow("没有权限");
 
-    // 权限校验在 getOrCreatePersonalConversation 之前
+    // 权限校验在 resolvePersonalConversation 之前
     expect(await findPersonalConversation(outsider.id)).toBeNull();
+  });
+});
+
+describe("runAgentTurn（个人 scope + 指定会话）", () => {
+  beforeEach(resetDb);
+
+  it("带 conversationId 就落那条旧会话", async () => {
+    const { student } = await scene();
+    const older = await startPersonalConversation(student.id);
+    await persistTurn(older.id, "旧问", "旧答", []);
+    const latest = await startPersonalConversation(student.id);
+    await persistTurn(latest.id, "较新问", "较新答", []);
+
+    const result = await runAgentTurn({
+      actorId: student.id,
+      userText: "接着旧的说",
+      scope: { kind: "personal", conversationId: older.id },
+      model: capturingReplay([textStep("好的。")]).model,
+    });
+
+    expect(result.conversationId).toBe(older.id);
+    expect(typeof result.turnId).toBe("string");
+    expect(
+      (await listPersonalConversationMessages(student.id, older.id)).map((m) => m.content),
+    ).toEqual(["旧问", "旧答", "接着旧的说", "好的。"]);
+    expect(
+      (await listPersonalConversationMessages(student.id, latest.id)).map((m) => m.content),
+    ).toEqual(["较新问", "较新答"]);
+  });
+
+  it("别人的会话 id 被拒，且不落库", async () => {
+    const { student, owner } = await scene();
+    const theirs = await startPersonalConversation(owner.id);
+
+    await expect(
+      runAgentTurn({
+        actorId: student.id,
+        userText: "偷看",
+        scope: { kind: "personal", conversationId: theirs.id },
+        model: capturingReplay([textStep("不该到这里")]).model,
+      }),
+    ).rejects.toThrow("会话不存在");
+
+    expect(await findPersonalConversation(student.id)).toBeNull();
+  });
+
+  it("不带 id 时落到最近一条（老客户端语义不变）", async () => {
+    const { student } = await scene();
+    const older = await startPersonalConversation(student.id);
+    await persistTurn(older.id, "旧问", "旧答", []);
+    const latest = await startPersonalConversation(student.id);
+    await persistTurn(latest.id, "较新问", "较新答", []);
+
+    const result = await runAgentTurn({
+      actorId: student.id,
+      userText: "随后来一句",
+      scope: { kind: "personal" },
+      model: capturingReplay([textStep("收到。")]).model,
+    });
+
+    expect(result.conversationId).toBe(latest.id);
   });
 });
 

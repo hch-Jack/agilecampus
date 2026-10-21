@@ -25,6 +25,8 @@ import {
   setPersonalContextVisibility,
 } from "@/lib/personal-context";
 import { setAiHistoryLimit } from "@/lib/agent/memory";
+import { deleteAllPersonalConversations } from "@/lib/agent/conversation";
+import { ASSISTANT_CONVERSATION_COOKIE } from "@/lib/agent/assistant-panel-shared";
 import {
   AI_HISTORY_LIMIT_DEFAULT,
   AI_HISTORY_LIMIT_MAX,
@@ -305,6 +307,39 @@ export async function setHistoryLimitAction(
   await setAiHistoryLimit(session.user.id, parsed.data.limit);
   revalidatePath("/settings");
   return { ok: true };
+}
+
+// ------------------------------------------------------------------ 聊天记录
+
+export type AssistantResetState =
+  | { ok: true; deleted: number }
+  | { error: string }
+  | null;
+
+/**
+ * 清空本人的聊天记录：删掉**全部个人会话**，消息随外键级联。
+ *
+ * 只动 `kind='personal' AND owner_id=自己` 的行 —— 项目页的共享对话不受影响。
+ * 已确认落库的任务、留言等改动也不会撤销（聊天记录不是这些改动的回滚日志）。
+ * 顺手清掉「上次看的是哪条」的 cookie，下次发消息由 `/api/chat` 自动新建。
+ */
+export async function resetAssistantHistoryAction(
+  _prev: AssistantResetState,
+  formData: FormData,
+): Promise<AssistantResetState> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+
+  try {
+    const deleted = await deleteAllPersonalConversations(session.user.id);
+    // 客户端写 cookie 时用了 path=/，删除也要带同样的 path 才删得掉
+    (await cookies()).delete({ name: ASSISTANT_CONVERSATION_COOKIE, path: "/" });
+    revalidateFrom(formData, "/settings");
+    return { ok: true, deleted };
+  } catch (e) {
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
 }
 
 // 删一条 / 改可见性：都是「只能动自己的」—— lib 的查询恒带 userId = 发话人，

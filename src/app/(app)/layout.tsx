@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
@@ -6,7 +7,8 @@ import { db } from "@/db";
 import { users } from "@/db/schema";
 import { IdentityBadge } from "@/components/badges";
 import { AssistantShell, AssistantToggle } from "@/components/assistant-shell";
-import { listPersonalChatHistory } from "@/lib/agent/conversation";
+import { getAssistantPanelData } from "@/lib/agent/conversation";
+import { ASSISTANT_CONVERSATION_COOKIE } from "@/lib/agent/assistant-panel-shared";
 import { AUTO_TIMEZONE, DEFAULT_TIMEZONE, formatDateTime, listTimeZones } from "@/lib/time";
 import { getTimeZonePref, resolveUserTimeZone } from "@/lib/time-pref";
 import { userAvatarUrl } from "@/lib/user";
@@ -42,17 +44,25 @@ export default async function AppLayout({
   const avatarUrl = userAvatarUrl(session.user.id, row?.avatarUpdatedAt ?? null);
 
   // 时区偏好为「跟随浏览器」时，才需要客户端把本机时区报到 cookie 里。
-  // 助手历史一次性取好交给右侧面板（只读，不建会话）；面板在每个页面都常驻，
-  // 历史本身在 lib 里截到最近 200 条，别让它随时间无限膨胀。
-  const [tz, timeZonePref, chatHistory] = await Promise.all([
+  // 助手面板的数据一次性取好（只读，不建会话）：会话列表 + 上次看的那条 + 其最近 200 条消息。
+  // cookie 只是「上次看的是哪条」的提示，lib 会校验归属；面板在每个页面都常驻，别让它无限膨胀。
+  const cookieStore = await cookies();
+  const preferredConversationId =
+    cookieStore.get(ASSISTANT_CONVERSATION_COOKIE)?.value ?? null;
+
+  const [tz, timeZonePref, assistant] = await Promise.all([
     resolveUserTimeZone(session.user.id),
     getTimeZonePref(session.user.id),
-    listPersonalChatHistory(session.user.id),
+    getAssistantPanelData(session.user.id, preferredConversationId),
   ]);
 
   return (
     <ProjTheme>
-      <AssistantShell initialMessages={chatHistory}>
+      <AssistantShell
+        initialConversations={assistant.conversations}
+        initialActiveId={assistant.activeId}
+        initialMessages={assistant.messages}
+      >
         <TzSync auto={timeZonePref === AUTO_TIMEZONE} />
         <header className="sticky top-0 z-20 flex items-center justify-between border-b border-line bg-surface/85 px-6 py-3 backdrop-blur">
           <div className="flex items-center gap-6">

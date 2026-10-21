@@ -5,9 +5,13 @@ import { createProject } from "@/lib/project";
 import { createGroup, inviteToGroup, listGroupConversations, listMyGroupInvites } from "@/lib/group-chat";
 import { listMyPersonalContext } from "@/lib/personal-context";
 import {
+  countPersonalConversations,
   findPersonalConversation,
   listPersonalChatHistory,
+  listPersonalConversationMessages,
   listProjectChatHistory,
+  persistTurn,
+  startPersonalConversation,
 } from "@/lib/agent/conversation";
 import { POST as chatRoute } from "@/app/api/chat/route";
 import { POST as commitRoute } from "@/app/api/chat/commit/route";
@@ -173,6 +177,81 @@ describe("POST /api/chat", () => {
     );
     expect(res.status).toBe(400);
     expect(await findPersonalConversation(student.id)).toBeNull();
+  });
+
+  it("响应带回会话与轮次 id（客户端据此寻址和成对删除）", async () => {
+    const { student } = await scene();
+    authMock.userId = student.id;
+    useScript([textStep("在。")]);
+
+    const res = await chatRoute(req({ scope: "personal", userText: "在吗" }));
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as Record<string, unknown>;
+    expect(typeof data.conversationId).toBe("string");
+    expect(data.conversationTitle).toBe("在吗");
+    expect(typeof data.conversationCreatedAt).toBe("string");
+    expect(data.lastMessageAt).toMatch(/T.*Z$/);
+    expect(typeof data.turnId).toBe("string");
+    expect(typeof data.userMessageId).toBe("string");
+    expect(typeof data.assistantMessageId).toBe("string");
+  });
+
+  it("scope=personal + conversationId：落指定会话，最近一条不被追加", async () => {
+    const { student } = await scene();
+    authMock.userId = student.id;
+    const older = await startPersonalConversation(student.id);
+    await persistTurn(older.id, "旧问", "旧答", []);
+    const latest = await startPersonalConversation(student.id);
+    await persistTurn(latest.id, "较新问", "较新答", []);
+
+    useScript([textStep("好的。")]);
+    const res = await chatRoute(
+      req({ scope: "personal", conversationId: older.id, userText: "追加到旧会话" }),
+    );
+    expect(res.status).toBe(200);
+
+    expect(
+      (await listPersonalConversationMessages(student.id, older.id)).map((m) => m.content),
+    ).toEqual(["旧问", "旧答", "追加到旧会话", "好的。"]);
+    expect(
+      (await listPersonalConversationMessages(student.id, latest.id)).map((m) => m.content),
+    ).toEqual(["较新问", "较新答"]);
+  });
+
+  it("别人的 / 畸形的 conversationId 都被拒，且不新建", async () => {
+    const { student, owner } = await scene();
+    authMock.userId = student.id;
+    const theirs = await startPersonalConversation(owner.id);
+    useScript([textStep("不该到这里")]);
+
+    const foreign = await chatRoute(
+      req({ scope: "personal", conversationId: theirs.id, userText: "偷看" }),
+    );
+    expect(foreign.status).toBe(403);
+
+    const malformed = await chatRoute(
+      req({ scope: "personal", conversationId: "not-a-uuid", userText: "你好" }),
+    );
+    expect(malformed.status).toBe(400);
+
+    expect(await countPersonalConversations(student.id)).toBe(0);
+  });
+
+  it("scope=project 带 conversationId → 400（项目共享会话不走这套）", async () => {
+    const { student, project } = await scene();
+    authMock.userId = student.id;
+    useScript([textStep("不该到这里")]);
+
+    const res = await chatRoute(
+      req({
+        scope: "project",
+        projectId: project.id,
+        conversationId: "3f0f2a7e-8b1c-4d8e-9f00-123456789abc",
+        userText: "你好",
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(await listProjectChatHistory(student.id, project.id)).toEqual([]);
   });
 });
 

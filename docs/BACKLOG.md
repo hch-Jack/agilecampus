@@ -274,10 +274,12 @@
 这是本仓第一次用 `drizzle-kit push` 建 CHECK —— 先在**测试库**核对生成的 SQL，确认约束真的建出来了，
 再推开发库；两库重跑 `db:push` 都报 `No changes detected`（幂等）。
 
-**一个索引顶两件事**：`uniqueIndex("conversations_owner_unique").on(ownerId)`。
+**当时的索引取舍**：`uniqueIndex("conversations_owner_unique").on(ownerId)`。
 PG 的唯一索引视**多个 NULL 互异**，所以项目会话（`ownerId` 为空）不限条数、
 个人会话（`ownerId` 非空）每人恰一条 —— 不需要带谓词的部分索引。
-首轮并发靠 `onConflictDoNothing` + 回读兜住（两条请求同时发现「还没有会话」时，撞索引的那条回读对方那条）。
+首轮并发靠 `onConflictDoNothing` + 回读兜住。
+（**已被 2026-10-21 的多会话设计取代**：唯一索引删除，改普通索引 + advisory lock，
+见文末「助手：多会话、成对删除、聊天记录重置」。）
 
 ### 隔离：九道围栏，每道都有一条测试
 
@@ -320,8 +322,9 @@ PG 的唯一索引视**多个 NULL 互异**，所以项目会话（`ownerId` 为
 
 ### 简化取舍
 
-- **个人会话每人一条，没有会话列表**（与既有「每项目一活跃会话」同构）。要做列表得给
-  `ownerId` 索引加上 `status`/`archivedAt` 之类的维度，本次不值当。
+- ~~**个人会话每人一条，没有会话列表**~~：当时判断「要做列表得加维度，不值当」；
+  后来按用户要求做了会话列表，实际上不需要再加 `status`/`archivedAt` ——
+  直接去掉唯一索引、按 `last_message_at` 排序即可（见文末 2026-10-21 小节）。
 - **工作台是单线程跨项目混排**：一轮对话里可能横跨多个项目，故草案的 members/milestones 下拉
   按**草案里的 projectId** 现取（`/api/chat` 响应附带 `options`，逐个 `getProjectForUser` 复核，无效者跳过），
   而不是读「当前项目」。这也顺手省掉了一个需要单独鉴权的取选项入口。
@@ -605,7 +608,8 @@ provider 对 `anyOf:[string,null]` 挑食，先把这三处退回 `z.string().op
 ## 助手：右侧常驻面板 + 项目焦点（2026-10-21）
 
 ### 决策
-- **会话归属与视角分离**：右侧面板永远是每人一条的**个人会话**（队友看不到）；进入项目页时只多一个
+- **会话归属与视角分离**：右侧面板永远是**个人会话**（当时每人一条；多会话见文末 2026-10-21 小节），
+  队友看不到；进入项目页时只多一个
   `focusProjectId`（提示词多一段「当前项目」快照 + 6 件项目专属工具）。没有复用项目 scope，
   否则「在项目页问一句私事」会写进全员共享的转录里。
 - **焦点权限前移**：`runAgentTurn` 在 `getOrCreatePersonalConversation` **之前**先校
@@ -634,3 +638,45 @@ provider 对 `anyOf:[string,null]` 挑食，先把这三处退回 `z.string().op
   是否正确带上焦点快照里的 projectId 未验；部署后需在有 key 的环境补验
   「这个项目最近有什么动态」「留言板说了什么」「给我手上的任务加个子任务」，
   以及切到另一个项目后点旧草案卡的「继续处理后续动作」。
+
+## 助手：多会话、成对删除、聊天记录重置（2026-10-21）
+
+### 决策
+
+- **多条个人会话**：删除 `conversations_owner_unique`，改为普通索引 `conversations_owner_idx`。
+  每人可有多条 `kind='personal'` 会话；`CHECK conversations_scope_chk` 不变。
+- **并发改锁**：`resolvePersonalConversation` / `startPersonalConversation` /
+  `deleteAllPersonalConversations` 在同一事务里取
+  `pg_advisory_xact_lock(hashtextextended(actorId, 0))`，按用户串行化，
+  替代原来靠唯一索引 + `onConflictDoNothing` 的防并发。
+- **会话活跃时间**：新增 `conversations.last_message_at`（可空）；列表按
+  `coalesce(last_message_at, created_at) DESC` 排序。删空消息后回写 NULL，退回按创建时间。
+- **一轮一个 turn_id**：`messages.turn_id` 可空；`persistTurn` 一条 INSERT 写两行、共用一个 id。
+  删除任意一条 = 删除同轮两条。老数据 turn_id 为 NULL，按**原始** `created_at` 在 SQL 里配对
+  （读出来的 Date 已被截到毫秒，绝不能反查）。
+- **新对话复用空会话**：`startPersonalConversation` 若最近一条没有任何消息则复用它，
+  避免连点「新对话」堆空行；否则新建。
+- **标题只在首轮生成**：仅当会话此前零消息时用首句（首行、压空白、24 码点）写 `title`；
+  老会话 title 为空但已有消息时不补，界面显示「新对话」，可手动改名。
+- **client remount 策略**：`AgentChat` 的 `key=viewKey` 只在显式切换/新建/删除当前会话/重置时递增。
+  发送时后端懒建会话**不**递增 key，否则刚发的消息与输入会被 remount 掉。
+- **稳定消息 key**：`localId ?? id`。乐观插入的提问先有 localId，成功后回填服务端 id；
+  删除失败消息只做本地移除。
+- **reset 跨组件通知**：面板常驻挂载，`useState` 不随服务端 props 重播种；
+  设置页 action 成功后派发 `window` 事件 `ac:assistant-reset`，面板收到后清空并清 cookie。
+- **cookie 只是提示**：`ac_assistant_conversation` 记录上次看的会话；layout 读、服务端校验归属，
+  无效/越权回落到最近一条。cookie 不参与任何授权判断。
+- **权限口径**：新增路由全部只操作本人的 personal 会话；别人的会话/消息统一 404（不泄露存在性），
+  项目共享会话也不走删除入口。`ForbiddenError → 403`、`NotFoundError → 404`、`AppError → 400`。
+- **重置范围**：设置页只删本人的 personal 会话（消息级联），项目共享会话与别人的数据不动；
+  不撤销已确认落库的任务/留言等改动。
+
+### 简化备案
+
+- 会话列表最多 100 条、每条会话最多渲染最近 200 条消息；不做分页或「加载更早」。
+- 草案卡、`focusProjectId`、`options` 只在客户端内存；切换会话或刷新后草案卡消失（改动前亦然），本次不落库。
+- 删除按轮而非按单条：用户确认过「删提问或删回答都删整轮」。若将来要单条删除，需先改掉 turn_id 的用法。
+- 老数据同一会话同一微秒内的两轮会被一并删除；现有写入路径不会产生这种数据。
+- 多标签页之间不做实时同步：一个标签页删除/重置后，另一个标签页要刷新才看到。
+- 本机无模型 key，真实模型下的多会话切换、删除后重发、重置后自动新建未做端到端验证；
+  单测覆盖了 lib/路由层，UI 需人工冒烟。
