@@ -158,6 +158,17 @@ describe("summarizeDraft", () => {
     ).toBe("任务标签「写开题报告」（2 个）");
   });
 
+  it("建团 / 入团摘要带团队名", () => {
+    expect(summarizeDraft({ tool: "create_team", draft: { name: "东吴实验室" } })).toBe(
+      "新建团队「东吴实验室」",
+    );
+    expect(summarizeDraft({ tool: "create_team", draft: {} })).toBe("新建团队「新团队」");
+    expect(
+      summarizeDraft({ tool: "join_team", draft: { teamName: "东吴实验室", inviteCode: "abc" } }),
+    ).toBe("加入团队「东吴实验室」");
+    expect(summarizeDraft({ tool: "join_team", draft: {} })).toBe("加入团队「新团队」");
+  });
+
   it("认不出的工具退回工具名，不抛错", () => {
     expect(summarizeDraft({ tool: "future_tool", draft: {} })).toBe("future_tool");
   });
@@ -174,6 +185,8 @@ describe("isContinuableTool", () => {
       "create_milestone",
       "create_subtask",
       "create_group_chat",
+      "create_team",
+      "join_team",
       "create_resource_usage",
       "create_label",
     ]) {

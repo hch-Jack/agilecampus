@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createUser } from "@/lib/user";
-import { createTeam, joinTeam } from "@/lib/team";
+import { createTeam, joinTeam, listMyTeams } from "@/lib/team";
 import { createProject } from "@/lib/project";
 import { listTeamResourceUsages } from "@/lib/resource";
 import { listTeamLabels } from "@/lib/label";
@@ -196,6 +196,23 @@ describe("POST /api/chat", () => {
     expect(typeof data.turnId).toBe("string");
     expect(typeof data.userMessageId).toBe("string");
     expect(typeof data.assistantMessageId).toBe("string");
+  });
+
+  it("open_page 的跳转意图随响应下发 navigations", async () => {
+    const { student, project } = await scene();
+    authMock.userId = student.id;
+    useScript([
+      toolStep("open_page", { target: "project", projectId: project.id }),
+      textStep("已为你打开赤壁演习。"),
+    ]);
+
+    const res = await chatRoute(req({ scope: "personal", userText: "打开赤壁演习" }));
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { navigations: { label: string; href: string }[] };
+    // 路径与标签都由服务端生成，模型只报了目标与 id
+    expect(data.navigations).toEqual([
+      { label: "赤壁演习", href: `/projects/${project.id}` },
+    ]);
   });
 
   it("scope=personal + conversationId：落指定会话，最近一条不被追加", async () => {
@@ -427,6 +444,52 @@ describe("POST /api/chat/commit", () => {
     // 默认时区 Asia/Shanghai：09:30 当地 = 01:30Z
     expect(usages[0].startTime.toISOString()).toBe("2026-11-01T01:30:00.000Z");
     expect(usages[0].endTime?.toISOString()).toBe("2026-11-01T03:00:00.000Z");
+  });
+
+  it("scope=personal + create_team：确认后建团，发起人为 admin", async () => {
+    const { student } = await scene();
+    authMock.userId = student.id;
+    const res = await commitRoute(
+      req({ scope: "personal", tool: "create_team", draft: { name: "  新团队  " } }),
+    );
+    expect(res.status).toBe(200);
+
+    const names = (await listMyTeams(student.id)).map((t) => [t.name, t.role]);
+    expect(names).toEqual(expect.arrayContaining([["新团队", "admin"]]));
+  });
+
+  it("scope=personal + join_team：凭邀请码入团", async () => {
+    const { team } = await scene();
+    const latecomer = await makeUser("late@example.com");
+    authMock.userId = latecomer.id;
+    const res = await commitRoute(
+      req({
+        scope: "personal",
+        tool: "join_team",
+        // teamName 是卡片展示字段，落库 zod 剥掉
+        draft: { inviteCode: team.inviteCode, teamName: "伪造的团队名" },
+      }),
+    );
+    expect(res.status).toBe(200);
+
+    expect((await listMyTeams(latecomer.id)).map((t) => t.id)).toEqual([team.id]);
+  });
+
+  it("项目页不认建团工具（scope=project + create_team）→ 400", async () => {
+    const { student, project } = await scene();
+    authMock.userId = student.id;
+    const res = await commitRoute(
+      req({
+        scope: "project",
+        projectId: project.id,
+        tool: "create_team",
+        draft: { name: "不该从项目页建团" },
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await listMyTeams(student.id)).map((t) => t.name)).not.toContain(
+      "不该从项目页建团",
+    );
   });
 
   it("项目页不认标签工具（scope=project + create_label）→ 400", async () => {

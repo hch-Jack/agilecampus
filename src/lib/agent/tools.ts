@@ -7,7 +7,12 @@ import {
   listProjectTasks,
   requireTaskWrite,
 } from "@/lib/task";
-import { getTeamForMember, listTeamMembers } from "@/lib/team";
+import {
+  getTeamByInviteCode,
+  getTeamForMember,
+  getTeamMembership,
+  listTeamMembers,
+} from "@/lib/team";
 import {
   getLabelDetail,
   LABEL_NAME_MAX,
@@ -20,6 +25,7 @@ import {
 } from "@/lib/resource";
 import { formatDateTime, formatInputValue, zonedWallClockToInstant } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
+import { NAV_TARGETS, resolveNavigation } from "./navigation";
 import { AppError, ForbiddenError } from "@/lib/errors";
 import { listMyTaskActivities, listProjectActivities, type TaskActivityRow } from "@/lib/activity";
 import { listProjectComments, type ProjectCommentRow } from "@/lib/comment";
@@ -500,6 +506,26 @@ function buildBasePersonalTools(actorId: string) {
         "列出我参与的全部项目（跨团队）及任务统计，返回含 projectId。要动某个项目前先用它取回 id。无需参数。",
       inputSchema: z.object({}),
       execute: async () => listMyProjectsBrief(actorId),
+    }),
+    open_page: tool({
+      description:
+        "把用户当前页面跳到平台内的某个页面：工作台、所有项目、我的团队、消息、AI 设置，" +
+        "某个项目的看板/关系图/流程图/时间线，某条任务详情，某个团队的成员/项目/资源占用/标签。" +
+        "只在用户明确要求「打开 / 去 / 跳到 / 带我看看」某页时调用；单纯查数据（问进度、要清单）不要调它。" +
+        "这是只读动作，**立即生效、不需要确认卡**；调用后正文说「已为你打开…」即可。",
+      inputSchema: z.object({
+        target: z.enum(NAV_TARGETS).describe("要打开的页面"),
+        projectId: z
+          .uuid()
+          .optional()
+          .describe("target=project* 时必填；取自快照「我参与的项目」或 list_projects"),
+        teamId: z.uuid().optional().describe("target=team_* 时必填；取自快照「我的团队」"),
+        taskId: z.uuid().optional().describe("target=task 时必填；取自快照、list_tasks 或 get_task_detail"),
+      }),
+      execute: async (input) => {
+        const nav = await resolveNavigation(actorId, input);
+        return { __navigate: true as const, ...nav };
+      },
     }),
     query_progress: tool({
       description: "查询指定项目的进度统计：各状态任务数、里程碑概况。必须给 projectId。",
@@ -1116,6 +1142,38 @@ function buildBasePersonalTools(actorId: string) {
         });
       },
     }),
+    create_team: tool({
+      description:
+        "拟一个新建团队的草案（建团者确认后自动成为该团队管理员）。" +
+        "只在用户明确要「建一个团队 / 创建一个团队」时调用。仅产草案，需人工确认后落库。",
+      inputSchema: z.object({
+        name: z.string().describe("团队名称"),
+      }),
+      execute: async ({ name }) => {
+        const trimmed = name.trim();
+        if (!trimmed) throw new AppError("团队名称不能为空");
+        // 网页端只有「必填」这一条校验；这里同样只做 trim + 非空，别擅自加更严的限制
+        return draftEnvelope(CREATE_TEAM_TOOL, { name: trimmed });
+      },
+    }),
+    join_team: tool({
+      description:
+        "拟一个加入团队的草案：需要**用户亲口给出的邀请码**，绝不能自己编。" +
+        "只在用户说要加入某个团队并提供邀请码时调用。仅产草案，需人工确认后落库。",
+      inputSchema: z.object({
+        inviteCode: z.string().describe("用户提供的团队邀请码"),
+      }),
+      execute: async ({ inviteCode }) => {
+        const code = inviteCode.trim();
+        if (!code) throw new AppError("请提供团队邀请码");
+        const team = await getTeamByInviteCode(code);
+        if (!team) throw new AppError("邀请码无效");
+        // 已在团队里就别让用户白点一次确认；落库口 joinTeam 也会再挡一次
+        const member = await getTeamMembership(actorId, team.id);
+        if (member) throw new AppError(`你已经在该团队「${team.name}」中`);
+        return draftEnvelope(JOIN_TEAM_TOOL, { inviteCode: code, teamName: team.name });
+      },
+    }),
     create_project: tool({
       description:
         "拟一个新项目草案（挂在我指定的团队下）。必须给 teamId（取自快照「我的团队」）。仅产草案，需人工确认后落库。",
@@ -1274,7 +1332,7 @@ type FocusProjectTools = Pick<
   (typeof FOCUS_PROJECT_TOOL_NAMES)[number]
 >;
 
-/** 无焦点项目：恰好是控制台基础工具集（测试钉着这 33 件的全集） */
+/** 无焦点项目：恰好是控制台基础工具集（测试钉着这 34 件的全集） */
 export function buildPersonalTools(actorId: string): BasePersonalTools;
 /** 有焦点项目：基础工具集 + 六件项目专属工具 */
 export function buildPersonalTools(
@@ -1333,6 +1391,11 @@ export const FORWARD_MESSAGE_TOOL = "forward_message" as const;
 export const CREATE_GROUP_TOOL = "create_group_chat" as const;
 export const INVITE_GROUP_TOOL = "invite_to_group" as const;
 
+// 建团队 / 加入团队：只属于工作台助手。建团者恒为 admin、加入须凭邀请码，
+// 两件都不改项目内容，故不进 WRITE_TOOL_NAMES；项目页落库口天然拒收。
+export const CREATE_TEAM_TOOL = "create_team" as const;
+export const JOIN_TEAM_TOOL = "join_team" as const;
+
 // 团队资源占用与标签：同样只挂在工作台助手（个人 scope）。
 // 资源占用是两个独立动作（登记 / 结束），标签是三件管理 + 一件贴到任务上。
 export const CREATE_RESOURCE_USAGE_TOOL = "create_resource_usage" as const;
@@ -1352,6 +1415,8 @@ export const COMMIT_TOOL_NAMES = [
   FORWARD_MESSAGE_TOOL,
   CREATE_GROUP_TOOL,
   INVITE_GROUP_TOOL,
+  CREATE_TEAM_TOOL,
+  JOIN_TEAM_TOOL,
   CREATE_RESOURCE_USAGE_TOOL,
   END_RESOURCE_USAGE_TOOL,
   CREATE_LABEL_TOOL,

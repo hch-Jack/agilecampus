@@ -12,6 +12,7 @@ import {
 } from "@/lib/task";
 import { copyMessageAttachmentToTask, deleteAttachment } from "@/lib/attachment";
 import { createPersonalContext } from "@/lib/personal-context";
+import { createTeam, joinTeam } from "@/lib/team";
 import { notifyTaskAssigned, notifyTaskCompleted } from "@/lib/notify";
 import {
   createGroup,
@@ -30,6 +31,8 @@ import {
   CREATE_GROUP_TOOL,
   CREATE_LABEL_TOOL,
   CREATE_RESOURCE_USAGE_TOOL,
+  CREATE_TEAM_TOOL,
+  JOIN_TEAM_TOOL,
   DELETE_LABEL_TOOL,
   EDIT_TASK_LABELS_TOOL,
   END_RESOURCE_USAGE_TOOL,
@@ -393,6 +396,37 @@ export async function commitInviteToGroup(
   return { committed: 1, conflicts: [] };
 }
 
+// ------------------------------------------------------- 建团队 / 加入团队
+
+// 与网页端「创建团队」同一口径：只要求非空，不做额外的长度/字符限制。
+const createTeamSchema = z.object({
+  name: z.string().trim().min(1, "请填写团队名称"),
+});
+
+export async function commitCreateTeam(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = createTeamSchema.parse(draft);
+  await createTeam(actorId, d.name);
+  return { committed: 1, conflicts: [] };
+}
+
+// 卡片上的 teamName 只用于展示，zod 自动剥离；邀请码有效性与「已在该团队中」
+// 由 joinTeam 在落库那一刻重校 —— 拟稿到确认之间，码可能失效、人也可能已被拉进团。
+const joinTeamSchema = z.object({
+  inviteCode: z.string().trim().min(1, "请填写邀请码"),
+});
+
+export async function commitJoinTeam(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = joinTeamSchema.parse(draft);
+  await joinTeam(actorId, d.inviteCode);
+  return { committed: 1, conflicts: [] };
+}
+
 // ------------------------------------------------- 资源占用 / 标签（个人 scope）
 
 /**
@@ -545,6 +579,9 @@ export async function commitPersonalDraft(
   if (tool === FORWARD_MESSAGE_TOOL) return commitForwardMessage(actorId, draft);
   if (tool === CREATE_GROUP_TOOL) return commitCreateGroup(actorId, draft);
   if (tool === INVITE_GROUP_TOOL) return commitInviteToGroup(actorId, draft);
+  // 建团队 / 加入团队：同样没有 projectId，先于下面「拆 projectId」分派
+  if (tool === CREATE_TEAM_TOOL) return commitCreateTeam(actorId, draft);
+  if (tool === JOIN_TEAM_TOOL) return commitJoinTeam(actorId, draft);
   // 资源与标签：草案里没有 projectId（团队 / 任务 id 自带归属），必须在拆 projectId 之前分派。
   if (tool === CREATE_RESOURCE_USAGE_TOOL) return commitCreateResourceUsage(actorId, draft);
   if (tool === END_RESOURCE_USAGE_TOOL) return commitEndResourceUsage(actorId, draft);

@@ -379,6 +379,45 @@ function DraftCard({
     );
   }
 
+  if (draft.tool === "create_team") {
+    const d = data as { name?: string };
+    return (
+      <CardShell
+        title="创建团队"
+        onConfirm={() => save("create_team", d)}
+        invalid={(d.name ?? "").trim() === "" ? "团队名称不能为空" : undefined}
+      >
+        <input
+          value={d.name ?? ""}
+          onChange={(e) => setData({ ...d, name: e.target.value })}
+          placeholder="团队名称"
+          className="ac-field text-xs"
+        />
+        <p className="text-xs text-ink-faint">确认后你会成为该团队的管理员。</p>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "join_team") {
+    // 邀请码**不可在卡上改**：团队名是拟稿时按码查出来的，改了码这条预览就不作数了。
+    // 码不对就弃掉这张卡、让助手按新码重拟。
+    const d = data as { teamName?: string; inviteCode?: string };
+    return (
+      <CardShell
+        title="加入团队"
+        onConfirm={() => save("join_team", d)}
+        invalid={d.inviteCode?.trim() ? undefined : "缺少邀请码，请让助手重拟一次"}
+      >
+        <p className="text-xs text-ink">
+          团队：<span className="font-medium">{d.teamName ?? "（未知团队）"}</span>
+        </p>
+        <p className="text-xs text-ink-faint">
+          邀请码 <span className="font-mono text-ink-soft">{d.inviteCode ?? ""}</span>
+        </p>
+      </CardShell>
+    );
+  }
+
   if (draft.tool === "create_project") {
     const d = data as { name?: string; description?: string; startDate?: string; endDate?: string };
     const invalid = firstProblem([

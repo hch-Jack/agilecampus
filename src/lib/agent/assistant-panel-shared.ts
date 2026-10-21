@@ -25,3 +25,6 @@ export type AssistantPanelMessage = {
   role: "user" | "assistant";
   content: string;
 };
+
+/** 助手拟「打开某页」时随响应下发的跳转意图；面板据此自动跳转并留一个可点的入口 */
+export type AssistantNavigation = { label: string; href: string };

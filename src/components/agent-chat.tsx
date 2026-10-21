@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { DraftCards, type ChatScope, type Draft, type OptionMap } from "@/components/draft-cards";
 import { continuationOriginalText, isContinuationText } from "@/lib/agent/continuation";
+import type { AssistantNavigation } from "@/lib/agent/assistant-panel-shared";
 import { Markdown } from "@/components/markdown";
 
 /**
@@ -35,6 +38,8 @@ export type ChatMessage = {
   options?: OptionMap;
   /** 生成这条答复时带的焦点项目；续做沿用它，而不是屏幕当前项目 */
   focusProjectId?: string;
+  /** 助手替用户打开的页面；收到即跳转，并留一个可点回看的入口 */
+  navigations?: AssistantNavigation[];
 };
 
 let localSeq = 0;
@@ -92,6 +97,7 @@ export function AgentChat({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
 
   const busy = pending || deletingId !== null;
 
@@ -136,6 +142,9 @@ export function AgentChat({
         setError(data.error ?? "对话失败");
         return false;
       }
+      const navigations: AssistantNavigation[] = Array.isArray(data.navigations)
+        ? data.navigations
+        : [];
       setMessages((m) => {
         const next = [...m];
         // 按 localId 回填服务端 id —— 这样这条提问也能成对删除
@@ -152,9 +161,14 @@ export function AgentChat({
           drafts: data.drafts,
           options: data.options,
           focusProjectId: focus,
+          navigations: navigations.length > 0 ? navigations : undefined,
         });
         return next;
       });
+      // 「打开某页」立即生效：多次跳转只认最后一个（前面的还没看就被换掉了没意义）。
+      // 面板挂在 layout 里，换页不会把这段对话连同未确认的草案卡一起卸载。
+      const navTarget = navigations.at(-1);
+      if (navTarget) router.push(navTarget.href);
       // 外壳据此把「懒建出的会话」放进列表；**不**触发 remount，否则刚发的消息会消失
       if (data.conversationId) {
         onTurnPersisted?.({
@@ -314,6 +328,20 @@ export function AgentChat({
                       <p className="whitespace-pre-wrap">{m.content}</p>
                     )}
                   </div>
+                </div>
+              )}
+              {m.navigations && m.navigations.length > 0 && (
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {m.navigations.map((n) => (
+                    <Link
+                      key={n.href}
+                      href={n.href}
+                      // 助手已经替用户跳过去了；这里留一个回头再点的入口
+                      className="ac-badge bg-primary text-white hover:bg-primary-hover"
+                    >
+                      打开{n.label}
+                    </Link>
+                  ))}
                 </div>
               )}
               {m.drafts && m.drafts.length > 0 && (

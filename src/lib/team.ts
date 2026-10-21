@@ -30,6 +30,18 @@ export async function initialTeamRole(userId: string): Promise<TeamRole> {
   return user?.identity === "teacher" ? "teacher" : "student";
 }
 
+/**
+ * 按邀请码查团队 —— 只给「加入团队」的拟稿期用：卡片上要显示「加入『东吴实验室』」，
+ * 而不是一串邀请码。邀请码本身就是加入凭证，查到的团队名不构成额外泄露。
+ */
+export async function getTeamByInviteCode(inviteCode: string) {
+  const [team] = await db
+    .select({ id: teams.id, name: teams.name })
+    .from(teams)
+    .where(eq(teams.inviteCode, inviteCode));
+  return team ?? null;
+}
+
 export async function joinTeam(userId: string, inviteCode: string) {
   const [team] = await db.select().from(teams).where(eq(teams.inviteCode, inviteCode));
   if (!team) throw new AppError("邀请码无效");

@@ -137,7 +137,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 `kind='personal'` ⇒ 反之（严格按人隔离）。`/api/chat` 与 `/api/chat/commit` 的 `scope` 缺省为 `project`（老客户端不受影响）。
 `personal` 时 `projectId` 可选，含义是**焦点项目**：它只影响这一轮——提示词末尾多一段「当前项目」快照，
 工具面多放出 `list_project_activity` / `list_comments` / `list_chat_history` / `create_subtask` /
-`delete_subtask` / `delete_attachment` 六件（个人基础工具 33 件 → 39 件）——**不改变会话归属**，
+`delete_subtask` / `delete_attachment` 六件（个人基础工具 36 件 → 42 件）——**不改变会话归属**，
 落库仍是本人的个人会话（请求体可带 `conversationId` 指定；缺省落到最近一条，没有才新建）；
 权限在编排入口先按 `getProjectForUser` 校（无权 403，且不会先落一条空会话）。
 不带 `projectId` 时没有隐含项目，涉及项目的工具必须由模型在草案里显式给 `projectId`，
@@ -192,6 +192,33 @@ docker compose -f docker-compose.prod.yml up -d --build
 - 助手设置（记忆条数 + 个人上下文 + **删除全部聊天记录**）在「AI 设置」页（`/settings`），面板标题行的「设置」直达。
   重置只删本人的 personal 会话（项目共享会话不动）；面板靠 `window` 事件 `ac:assistant-reset` 立即清空。
 
+### 助手的页面跳转（`open_page`）
+
+用户说「打开工作台」「跳到赤壁演习的关系图」「带我看看东吴实验室的资源占用」时，助手用 `open_page`
+替他把右侧面板所在的页面换过去 —— 它**只换页面，不读数据**，也不产生确认卡（只读、立即生效）。
+
+- **目标是白名单枚举**（`NAV_TARGETS`）：`dashboard` / `projects` / `teams` / `messages` / `settings`，
+  项目四页（`project` / `project_graph` / `project_flow` / `project_timeline`），
+  `task`，团队四页（`team_members` / `team_projects` / `team_resources` / `team_labels`）。
+  **路径由服务端拼**（`src/lib/agent/navigation.ts`），模型只报目标与 id，不能自由发挥 URL。
+- **id 与权限当场校验**：项目页走 `getProjectForUser`、团队页走 `getTeamForMember`、任务页走
+  `getTaskDetail`（按任务实际所属项目）；无权一律 403，页面不会被打开。缺 id 报可操作的错，
+  提示先 `list_tasks` / `get_task_detail` 取回。
+- **返回形态**：工具返回 `{ __navigate: true, label, href }`；编排器把各步的跳转意图按 `href`
+  去重后随响应下发 `navigations`。面板**只跳最后一个**（连开两页没有意义），并在该条回答下留
+  「打开…」链接，方便回头再点。
+- 面板挂在 `(app)/layout.tsx` 里、跨路由不卸载，所以跳转不会丢失当前对话或未确认的草案卡。
+- 工具只在个人 scope 出现：项目助手没有「换页」的语义。
+
+### 助手的建团与入团
+
+- `create_team({ name })`：拟「创建团队」草案，确认后经 `createTeam` 落库，建团者自动成为 admin。
+- `join_team({ inviteCode })`：拟「加入团队」草案。**邀请码只能来自用户这句话**（快照里没有邀请码，
+  提示词也禁止猜测）；拟稿时先按码查出团队名，卡片显示「加入『某某团队』」，码无效或已在该团队中当场报错。
+  落库那一刻 `joinTeam` 会再校一次（拟稿到确认之间码可能失效、人也可能已被拉进团）。
+- 两者只进 `COMMIT_TOOL_NAMES`，不进 `WRITE_TOOL_NAMES`：项目 scope 的落库口天然拒收。
+  与其它写工具一样只产草案，确认前助手不得声称「已创建 / 已加入」。
+
 ### 助手的多动作与读权限
 
 - **一轮多件事**：编排器最多走 8 步工具循环（`stepCountIs(8)`，只是上限）。同一步内的多个 tool call
@@ -200,7 +227,8 @@ docker compose -f docker-compose.prod.yml up -d --build
 - **依赖新 id 的动作跨轮做**：新建任务的 id 要等用户确认落库后才存在。这类后续动作**不会自动续做**：
   卡片落库成功后出现「继续处理后续动作」，点击后客户端把「原请求 + 已落库摘要 + 未确认草案」拼成一条
   自包含消息发出去（`src/lib/agent/continuation.ts`，纯模块，客户端与服务端共用）。
-  只有会派生新 id 的工具（项目写工具、新增子任务与新建群聊）会触发它；删除类、发送/转发/邀请、个人上下文与群邀请不派生后续动作。
+  只有会派生新 id / 新可访问对象的工具（项目写工具、新增子任务、新建群聊、建团/入团）会触发它；
+  删除类、发送/转发/邀请、个人上下文与群邀请不派生后续动作。
 - **只读工具不改未读**：右侧助手（个人 scope）的 `list_message_threads` / `read_messages` 走
   `listDmMessagesReadOnly` / `listGroupMessagesReadOnly`，**不置 `read_at`、不推 `last_read_at`、不建联系人** ——
   助手看过不等于用户看过。提示词也明确要求不许谎称「已标已读」。
@@ -228,11 +256,11 @@ docker compose -f docker-compose.prod.yml up -d --build
   （`dm_attachments` 与 `task_attachments` 无外键，复制而非共享）。此后删消息不影响任务附件，
   删任务附件也不影响聊天记录；同一文件占两份存储，单文件上限仍为 10MB。
   复制同时校验：消息附件可读（私信收发双方 / 群成员）+ 目标任务可写。
-- **工具面分工**：个人 scope 基础 33 件（含附件查看、发文件、「消息文件 → 任务附件」、发送/邀请类工具，
-  以及团队资源占用与标签的 8 件）；焦点项目再放出 6 件项目专属工具
-  （动态、留言、旧助手对话、子任务新增/删除、附件删除），共 39 件。
+- **工具面分工**：个人 scope 基础 36 件（含附件查看、发文件、「消息文件 → 任务附件」、发送/邀请类工具、
+  建团/入团、页面跳转，以及团队资源占用与标签的 8 件）；焦点项目再放出 6 件项目专属工具
+  （动态、留言、旧助手对话、子任务新增/删除、附件删除），共 42 件。
   项目 scope 只认 `WRITE_TOOL_NAMES`，个人专属草案（上下文、群邀请、消息附件、发送/转发/建群/邀请进群、
-  资源占用、标签）天然不会从项目 scope 提交。
+  建团/入团、资源占用、标签）天然不会从项目 scope 提交。
 
 ### 助手的发送、转发、建群与邀请
 

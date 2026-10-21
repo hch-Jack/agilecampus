@@ -22,6 +22,8 @@ export const DRAFT_TOOL_LABELS: Record<string, string> = {
   forward_message: "转发消息",
   create_group_chat: "组建群聊",
   invite_to_group: "邀请进群",
+  create_team: "创建团队",
+  join_team: "加入团队",
   create_resource_usage: "登记资源占用",
   end_resource_usage: "结束资源占用",
   create_label: "新建标签",
@@ -46,6 +48,9 @@ const CONTINUABLE_TOOLS = new Set([
   "create_subtask",
   // 新建群聊会产生 groupId：用户可能紧接着想往这个群发消息
   "create_group_chat",
+  // 建团 / 入团会改变「我的团队」：用户可能紧接着要在这个团队里建项目、登记资源
+  "create_team",
+  "join_team",
   // 登记占用会产生 usageId：用户可能紧接着想结束它；新建标签会产生 labelId，
   // 用户可能想立刻把它贴到某个任务上
   "create_resource_usage",
@@ -158,6 +163,15 @@ export function summarizeDraft(d: DraftLike): string {
       return `邀请「${shown.length > 0 ? `${shown.join("、")}${more}` : "成员"}」进群「${
         group ? clip(group, TITLE_LIMIT) : "群聊"
       }」`;
+    }
+    case "create_team": {
+      const name = text(body.name);
+      return `新建团队「${name ? clip(name, TITLE_LIMIT) : "新团队"}」`;
+    }
+    case "join_team": {
+      // 卡片展示的是团队名（拟稿时按邀请码查得）；取不到才退回邀请码
+      const name = text(body.teamName);
+      return `加入团队「${name ? clip(name, TITLE_LIMIT) : "新团队"}」`;
     }
     case "create_resource_usage": {
       const name = text(body.resourceName);
