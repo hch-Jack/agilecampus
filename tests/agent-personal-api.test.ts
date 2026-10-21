@@ -4,7 +4,11 @@ import { createTeam, joinTeam } from "@/lib/team";
 import { createProject } from "@/lib/project";
 import { createGroup, inviteToGroup, listGroupConversations, listMyGroupInvites } from "@/lib/group-chat";
 import { listMyPersonalContext } from "@/lib/personal-context";
-import { listPersonalChatHistory, listProjectChatHistory } from "@/lib/agent/conversation";
+import {
+  findPersonalConversation,
+  listPersonalChatHistory,
+  listProjectChatHistory,
+} from "@/lib/agent/conversation";
 import { POST as chatRoute } from "@/app/api/chat/route";
 import { POST as commitRoute } from "@/app/api/chat/commit/route";
 import { resetDb } from "./helpers";
@@ -127,6 +131,48 @@ describe("POST /api/chat", () => {
       "assistant",
     ]);
     expect(await listProjectChatHistory(student.id, project.id)).toEqual([]);
+  });
+
+  it("scope=personal + projectId：焦点项目生效，仍落个人会话", async () => {
+    const { student, project } = await scene();
+    authMock.userId = student.id;
+    useScript([toolStep("list_comments", {}), textStep("留言板是空的。")]);
+
+    const res = await chatRoute(
+      req({ scope: "personal", projectId: project.id, userText: "这个项目有留言吗？" }),
+    );
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { toolTrace: { toolName: string }[] };
+    // 项目专属工具真的放出来了（没有焦点时个人工具面里没有它）
+    expect(data.toolTrace.map((t) => t.toolName)).toContain("list_comments");
+
+    expect((await listPersonalChatHistory(student.id)).map((m) => m.content)).toEqual([
+      "这个项目有留言吗？",
+      "留言板是空的。",
+    ]);
+    expect(await listProjectChatHistory(student.id, project.id)).toEqual([]);
+  });
+
+  it("scope=personal + 无权焦点的项目 → 403，且不建个人会话", async () => {
+    const { outsider, project } = await scene();
+    authMock.userId = outsider.id;
+    useScript([textStep("不该到这里")]);
+
+    const res = await chatRoute(
+      req({ scope: "personal", projectId: project.id, userText: "偷看进度" }),
+    );
+    expect(res.status).toBe(403);
+    expect(await findPersonalConversation(outsider.id)).toBeNull();
+  });
+
+  it("scope=personal + 畸形 projectId → 400（不把非法 id 当焦点发下去）", async () => {
+    const { student } = await scene();
+    authMock.userId = student.id;
+    const res = await chatRoute(
+      req({ scope: "personal", projectId: "not-a-uuid", userText: "你好" }),
+    );
+    expect(res.status).toBe(400);
+    expect(await findPersonalConversation(student.id)).toBeNull();
   });
 });
 

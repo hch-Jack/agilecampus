@@ -6,6 +6,7 @@ import { createProject } from "@/lib/project";
 import { createTask, listProjectTasks } from "@/lib/task";
 import { createPersonalContext, listMyPersonalContext } from "@/lib/personal-context";
 import {
+  findPersonalConversation,
   listConversationMessages,
   listPersonalChatHistory,
   listProjectChatHistory,
@@ -234,6 +235,80 @@ describe("runAgentTurn（个人 scope：控制台助手）", () => {
     // 越权查询在轨迹里留不下任何数据，模型拿到的也只是一句错误（编排本身照常收尾）。
     expect(trace[0].output).toBeUndefined();
     expect(result.text).toBe("查不到这个项目。");
+  });
+});
+
+// 项目页里的右侧助手：会话仍是那一条**私人**会话，`focusProjectId` 只改这一轮的视角
+// （多一段「当前项目」快照 + 6 件项目专属工具）。这三条用例分别盯提示词、归属与权限前置。
+describe("runAgentTurn（个人 scope + 焦点项目）", () => {
+  beforeEach(resetDb);
+
+  it("提示词带上焦点项目快照与说明，落库仍进个人会话", async () => {
+    const { student, project } = await scene();
+    await createTask(student.id, project.id, { title: "甲" });
+    const { model, prompts } = capturingReplay([
+      toolCallStep("list_comments", {}),
+      textStep("留言板是空的。"),
+    ]);
+    const result = await runAgentTurn({
+      actorId: student.id,
+      userText: "这个项目有留言吗？",
+      scope: { kind: "personal", focusProjectId: project.id },
+      model,
+    });
+
+    expect(result.text).toBe("留言板是空的。");
+    // 焦点工具真的调得动（不是只在提示词里提到）
+    expect((result.toolTrace as { toolName: string }[])[0].toolName).toBe("list_comments");
+
+    const prompt = JSON.stringify(prompts[0]);
+    expect(prompt).toContain(`# 当前项目：赤壁演习（projectId=${project.id}）`);
+    expect(prompt).toContain("## 当前项目（用户此刻正打开它的页面）");
+    expect(prompt).toContain("list_project_activity");
+    // 说明必须点破「list_chat_history 读的是旧共享会话」，且私聊不通知团队
+    expect(prompt).toContain("项目原来那条共享助手会话");
+    expect(prompt).toContain("队友看不到");
+    // 旧版个人说明里「用户没有绑定任何项目」与焦点矛盾，不能再出现
+    expect(prompt).not.toContain("用户没有绑定任何项目");
+    // 「没有成员段」只在**没有当前项目时**成立，句子必须带这个限定
+    expect(prompt).toContain("**没有当前项目时**，个人快照里才没有「成员」段");
+
+    // 会话归属：个人会话有这一问一答，项目共享会话一条都没建
+    expect((await listPersonalChatHistory(student.id)).map((m) => m.content)).toEqual([
+      "这个项目有留言吗？",
+      "留言板是空的。",
+    ]);
+    expect(await listProjectChatHistory(student.id, project.id)).toEqual([]);
+  });
+
+  it("无焦点的个人回合不带「当前项目」段", async () => {
+    const { student } = await scene();
+    const { model, prompts } = capturingReplay([textStep("收到。")]);
+    await runAgentTurn({
+      actorId: student.id,
+      userText: "你好",
+      scope: { kind: "personal" },
+      model,
+    });
+
+    const prompt = JSON.stringify(prompts[0]);
+    expect(prompt).not.toContain("## 当前项目（用户此刻正打开它的页面）");
+    expect(prompt).not.toContain("# 当前项目：");
+  });
+
+  it("无权焦点的项目：拒绝且不先落一条空会话", async () => {
+    const { outsider, project } = await scene();
+    await expect(
+      runAgentTurn({
+        actorId: outsider.id,
+        userText: "偷看进度",
+        scope: { kind: "personal", focusProjectId: project.id },
+        model: capturingReplay([textStep("不该到这里")]).model,
+      }),
+    ).rejects.toThrow("没有权限");
+
+    // 权限校验在 getOrCreatePersonalConversation 之前
+    expect(await findPersonalConversation(outsider.id)).toBeNull();
   });
 });
 

@@ -121,6 +121,37 @@ describe("个人会话（控制台助手）", () => {
     expect(await listPersonalChatHistory(outsider.id)).toEqual([]);
   });
 
+  it("listPersonalChatHistory 可取最近 N 条：时间正序、不丢开头的答话、不跨用户", async () => {
+    const { student, outsider } = await scene();
+    const conv = await getOrCreatePersonalConversation(student.id);
+    await persistTurn(conv.id, "甲问", "甲答", []);
+    await persistTurn(conv.id, "乙问", "乙答", []);
+    const theirs = await getOrCreatePersonalConversation(outsider.id);
+    await persistTurn(theirs.id, "别人的问", "别人的答", []);
+
+    // 默认全给，仍是时间正序
+    expect((await listPersonalChatHistory(student.id)).map((m) => m.content)).toEqual([
+      "甲问",
+      "甲答",
+      "乙问",
+      "乙答",
+    ]);
+    // 截在问答中间也照实给：这是给人看的转录，不像喂模型的上文那样丢掉开头的答话
+    expect((await listPersonalChatHistory(student.id, 3)).map((m) => m.content)).toEqual([
+      "甲答",
+      "乙问",
+      "乙答",
+    ]);
+    // 别人的会话一条都不串进来
+    expect((await listPersonalChatHistory(student.id, 99)).map((m) => m.content)).not.toContain(
+      "别人的问",
+    );
+    expect((await listPersonalChatHistory(outsider.id, 2)).map((m) => m.content)).toEqual([
+      "别人的问",
+      "别人的答",
+    ]);
+  });
+
   it("项目历史非成员被拒", async () => {
     const { outsider, project } = await scene();
     await expect(listProjectChatHistory(outsider.id, project.id)).rejects.toThrow("没有权限");

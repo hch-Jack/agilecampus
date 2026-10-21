@@ -4,13 +4,15 @@ import { personalContexts } from "@/db/schema";
 import { createUser } from "@/lib/user";
 import { createTeam, joinTeam } from "@/lib/team";
 import { createProject, createMilestone } from "@/lib/project";
-import { createTask, listProjectTasks } from "@/lib/task";
+import { createSubtask, createTask, listProjectTasks, listSubtasks } from "@/lib/task";
+import { listAttachments, uploadAttachment } from "@/lib/attachment";
 import { commitPersonalDraft } from "@/lib/agent/commit";
 import {
   ATTACH_MESSAGE_TOOL,
   buildPersonalTools,
   buildTools,
   COMMIT_TOOL_NAMES,
+  FOCUS_PROJECT_TOOL_NAMES,
   CREATE_GROUP_TOOL,
   FORWARD_MESSAGE_TOOL,
   INVITE_GROUP_TOOL,
@@ -321,5 +323,107 @@ describe("个人写工具的草案，落库口都吃得下", () => {
       id: task.id,
       assigneeId: student.id,
     });
+  });
+});
+
+// 右侧助手在项目页里会带一个「焦点项目」：不改会话归属，只多放出 6 件项目专属工具。
+// 这里钉住工具面——多放一件或少放一件都会改变模型的选择空间（25 → 31 已是有意为之）。
+describe("buildPersonalTools：焦点项目的工具面", () => {
+  beforeEach(resetDb);
+
+  it("恰好多出 6 件项目专属工具，基础工具面原样不动", async () => {
+    const { student, project } = await scene();
+    const base = buildPersonalTools(student.id);
+    const focused = buildPersonalTools(student.id, project.id);
+
+    expect(Object.keys(base)).toHaveLength(25);
+    expect(Object.keys(focused)).toHaveLength(31);
+    expect(Object.keys(focused).filter((name) => !(name in base)).sort()).toEqual(
+      [...FOCUS_PROJECT_TOOL_NAMES].sort(),
+    );
+    // 同名的读工具仍是个人版（显式 projectId），没被项目版 schema 换掉 ——
+    // 两版的描述文案不同（「指定项目」vs「该项目」），拿它当 discriminator
+    expect(focused.query_progress.description).toBe(base.query_progress.description);
+    expect(focused.list_tasks.description).toBe(base.list_tasks.description);
+    expect(focused.get_task_detail.description).toBe(base.get_task_detail.description);
+  });
+
+  it("焦点版 create_subtask 草案自带焦点 projectId，确认后落库", async () => {
+    const { owner, student, project } = await scene();
+    const parent = await createTask(owner.id, project.id, { title: "写开题报告" });
+    const tools = buildPersonalTools(student.id, project.id);
+
+    const env = (await tools.create_subtask.execute!(
+      { parentTaskId: parent.id, title: "查文献", priority: "high" as const },
+      opts,
+    )) as { __draft: true; tool: string; draft: Record<string, unknown> };
+    expect(env).toMatchObject({
+      __draft: true,
+      tool: "create_subtask",
+      draft: {
+        projectId: project.id,
+        parentTaskId: parent.id,
+        parentTitle: "写开题报告",
+        title: "查文献",
+        priority: "high",
+      },
+    });
+    // 草案就是草案
+    expect(await listSubtasks(student.id, parent.id)).toEqual([]);
+
+    // 个人落库口无需改动：projectId 就在草案里
+    await expect(commitPersonalDraft(student.id, "create_subtask", env.draft)).resolves.toEqual({
+      committed: 1,
+      conflicts: [],
+    });
+    expect((await listSubtasks(student.id, parent.id)).map((s) => s.title)).toEqual(["查文献"]);
+  });
+
+  it("焦点版 delete_subtask / delete_attachment 草案经个人落库口生效", async () => {
+    const { owner, student, project } = await scene();
+    const parent = await createTask(owner.id, project.id, { title: "父任务" });
+    const child = await createSubtask(owner.id, parent.id, { title: "子任务" });
+    const data = Buffer.from("附件正文");
+    const att = await uploadAttachment(owner.id, parent.id, {
+      filename: "报告.pdf",
+      size: data.length,
+      data,
+    });
+    const tools = buildPersonalTools(student.id, project.id);
+
+    const delSub = (await tools.delete_subtask.execute!({ taskId: child.id }, opts)) as {
+      draft: Record<string, unknown>;
+    };
+    expect(delSub.draft).toMatchObject({ projectId: project.id, taskId: child.id });
+    await commitPersonalDraft(student.id, "delete_subtask", delSub.draft);
+    expect(await listSubtasks(student.id, parent.id)).toEqual([]);
+
+    const delAtt = (await tools.delete_attachment.execute!({ attachmentId: att.id }, opts)) as {
+      draft: Record<string, unknown>;
+    };
+    expect(delAtt.draft).toMatchObject({ projectId: project.id, attachmentId: att.id });
+    await commitPersonalDraft(student.id, "delete_attachment", delAtt.draft);
+    expect(await listAttachments(student.id, parent.id)).toEqual([]);
+  });
+
+  it("焦点钉死在构造时的项目：别处的父任务与附件都过不去", async () => {
+    const { owner, student, project } = await scene();
+    // 同队的另一个项目：student 有访问权，故拒绝的理由只能是「不属于本项目」而非权限
+    const otherInTeam = await createProject(owner.id, project.teamId, { name: "同队另一个项目" });
+    const foreign = await createTask(owner.id, otherInTeam.id, { title: "别处的任务" });
+    const data = Buffer.from("别处附件");
+    const foreignAtt = await uploadAttachment(owner.id, foreign.id, {
+      filename: "别处.txt",
+      size: data.length,
+      data,
+    });
+    const tools = buildPersonalTools(student.id, project.id);
+
+    await expect(
+      tools.create_subtask.execute!({ parentTaskId: foreign.id, title: "越界子任务" }, opts),
+    ).rejects.toThrow("任务不属于该项目");
+    await expect(
+      tools.delete_attachment.execute!({ attachmentId: foreignAtt.id }, opts),
+    ).rejects.toThrow("附件不属于该项目");
   });
 });
