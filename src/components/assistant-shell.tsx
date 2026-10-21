@@ -21,8 +21,9 @@ import { projectIdFromPathname } from "@/lib/project-path";
  * 三个容易踩的点：
  * 1. 面板必须是 `<header>` 的**兄弟**：顶栏带 backdrop-blur，会成为 fixed 后代的包含块，
  *    抽屉放进去就不再相对视口定位（顶栏的「设置」弹窗因此 portal 到 body）。
- * 2. `lg:pr-[380px]` 加在**整页外层**，不能加在 `mx-auto max-w-5xl` 的内容盒上 ——
+ * 2. `lg:pr-[570px]` 加在**整页外层**，不能加在 `mx-auto max-w-5xl` 的内容盒上 ——
  *    加在内容盒里会让正文在剩余区域里不居中，顶栏右侧按钮也会被抽屉盖住。
+ *    **这个数与抽屉的 `lg:w-[570px]` 必须一致**，改宽度时两处一起改。
  * 3. 抽屉**常驻挂载**，收起时移出视口（translate + inert）。若按需卸载，`AgentChat` 的
  *    `useState(initialMessages)` 会在下次打开时重新播种，这段时间里发的消息就丢了。
  *
@@ -75,7 +76,7 @@ export function AssistantShell({
     <AssistantUiContext.Provider value={{ open, setOpen }}>
       <div
         className={`assistant-shell-push min-h-screen transition-[padding] duration-300 ease-out ${
-          open ? "lg:pr-[380px]" : ""
+          open ? "lg:pr-[570px]" : ""
         }`}
       >
         {children}
@@ -95,7 +96,7 @@ export function AssistantShell({
         aria-label="AI 助手"
         aria-hidden={!open}
         inert={!open}
-        className={`assistant-panel fixed inset-y-0 right-0 z-40 flex w-full max-w-[420px] flex-col border-l border-line bg-surface shadow-pop transition-transform duration-300 ease-out lg:w-[380px] ${
+        className={`assistant-panel fixed inset-y-0 right-0 z-40 flex w-full max-w-[630px] flex-col border-l border-line bg-surface shadow-pop transition-transform duration-300 ease-out lg:w-[570px] ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >
