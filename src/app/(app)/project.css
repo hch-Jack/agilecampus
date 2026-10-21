@@ -271,6 +271,19 @@ body.proj-cosmic .ac-modal-in {
   animation: ac-modal-in .3s cubic-bezier(.22, .72, .28, 1) both !important;
 }
 
+/* —— 新手教程小窗的换步动画：内容淡入上浮，同款曲线 ——
+   弹窗内元素被 [role="dialog"] * 的 animation:none 禁掉，星空主题下需同款 !important 恢复 */
+@keyframes ac-step-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.ac-step-in {
+  animation: ac-step-in .25s cubic-bezier(.22, .72, .28, 1) both;
+}
+body.proj-cosmic .ac-step-in {
+  animation: ac-step-in .25s cubic-bezier(.22, .72, .28, 1) both !important;
+}
+
 /* —— 6. 任务卡：追光 + 3D 微倾斜 —— */
 body.proj-cosmic .proj-card {
   position: relative;
