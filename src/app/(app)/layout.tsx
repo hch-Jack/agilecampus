@@ -64,7 +64,9 @@ export default async function AppLayout({
         initialMessages={assistant.messages}
       >
         <TzSync auto={timeZonePref === AUTO_TIMEZONE} />
-        <header className="sticky top-0 z-20 flex items-center justify-between border-b border-line bg-surface/85 px-6 py-3 backdrop-blur">
+        {/* app-topbar 只给宇宙主题的「顶栏深色玻璃」认（project.css）；页面里的 <header>
+            是各自的标题区，别被那条规则顺带刷成黑框。 */}
+        <header className="app-topbar sticky top-0 z-20 flex items-center justify-between border-b border-line bg-surface/85 px-6 py-3 backdrop-blur">
           <div className="flex items-center gap-6">
             {/* 徽标回欢迎页（整屏的时钟页），不是工作台 */}
             <Link href="/welcome" className="flex items-center gap-2">
