@@ -47,3 +47,6 @@ next-env.d.ts
 # 本机 agent 工具配置（.agents/ 与 .claude/skills/ 内容重复）
 /.agents/
 /.claude/launch.json
+
+# 本地 compose 覆盖文件（端口改 5433 等），不入库
+docker-compose.override.yml

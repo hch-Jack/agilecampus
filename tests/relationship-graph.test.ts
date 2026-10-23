@@ -298,12 +298,15 @@ describe("computeVisibleEdges", () => {
       chartWidth,
     });
     expect(edges).toHaveLength(1);
-    // a: 1/1→1/12（截止日 +1），右缘 110px；b: 1/20 起，左缘 190px
+    // a: 1/1→1/12（截止日 +1），右缘 110px；x2 为箭头尖端贴的 b 横条左缘 190px
     expect(edges[0].x1).toBe(110);
-    expect(edges[0].x2).toBe(188);
+    expect(edges[0].x2).toBe(190);
     expect(edges[0].y1).toBe(20);
     expect(edges[0].y2).toBe(60);
-    expect(edges[0].path.startsWith("M 110 20 C")).toBe(true);
+    // 单条出边保持行中心（扇出 0）；线停在箭头底边 182，三角形补完最后 8px 贴条
+    expect(edges[0].path).toBe(
+      "M 110 20 L 116 20 Q 122 20 122 26 L 122 54 Q 122 60 128 60 L 182 60",
+    );
   });
 
   it("跳过自环", () => {
@@ -362,7 +365,7 @@ describe("computeVisibleEdges", () => {
     expect(edges).toEqual([]);
   });
 
-  it("后向依赖生成抬升曲线，端点仍然正确", () => {
+  it("后向依赖从后置横条右缘进入，竖距最短不绕行", () => {
     const edges = computeVisibleEdges({
       dependencies: [{ predecessorId: "b", successorId: "a" }],
       rows: rowsOf(a, b),
@@ -371,15 +374,18 @@ describe("computeVisibleEdges", () => {
       chartWidth,
     });
     expect(edges).toHaveLength(1);
-    // b: 1/20→1/31，右缘 300px；a: 1/1 起，左缘钳到 2px
+    // b: 1/20→1/31，右缘 300px；a: 1/1→1/12，右缘 110px。
+    // 时间倒挂：竖段贴在 312，线停在箭头底边 118，尖端向左贴上 a 的右缘 110
     expect(edges[0].x1).toBe(300);
     expect(edges[0].x2).toBe(2);
     expect(edges[0].y1).toBe(60);
     expect(edges[0].y2).toBe(20);
-    expect(edges[0].path.startsWith("M 300 60 C")).toBe(true);
+    expect(edges[0].path).toBe(
+      "M 300 60 L 306 60 Q 312 60 312 54 L 312 26 Q 312 20 306 20 L 118 20",
+    );
   });
 
-  it("多条后向依赖使用不同抬升车道", () => {
+  it("重复的依赖沿锚点扇开，路径互不相同", () => {
     const duplicate = [
       { predecessorId: "b", successorId: "a" },
       { predecessorId: "b", successorId: "a" },
@@ -392,7 +398,271 @@ describe("computeVisibleEdges", () => {
       chartWidth,
     });
     expect(edges).toHaveLength(2);
+    // 出/入锚点各沿横条高度 ±6 扇开，两条线不重叠
+    expect(edges[0].path.startsWith("M 300 54 L")).toBe(true);
+    expect(edges[1].path.startsWith("M 300 66 L")).toBe(true);
     expect(edges[0].path).not.toBe(edges[1].path);
+  });
+
+  it("同一前置的多条出边沿横条高度扇开锚点", () => {
+    const c1 = task("c1", {
+      sortOrder: 2,
+      startDate: "2026-01-25",
+      dueDate: "2026-02-05",
+    });
+    const edges = computeVisibleEdges({
+      dependencies: [
+        { predecessorId: "a", successorId: "b" },
+        { predecessorId: "a", successorId: "c1" },
+      ],
+      rows: rowsOf(a, b, c1),
+      min,
+      span,
+      chartWidth,
+    });
+    expect(edges).toHaveLength(2);
+    // 后置行号小的锚点在上：a 行中心 20 ± 6
+    expect(edges[0].path.startsWith("M 110 14 L")).toBe(true);
+    expect(edges[1].path.startsWith("M 110 26 L")).toBe(true);
+    expect(edges[0].path).not.toBe(edges[1].path);
+  });
+
+  it("同一后置的多条入边沿横条高度扇开锚点", () => {
+    const c2 = task("c2", {
+      sortOrder: 2,
+      startDate: "2026-01-25",
+      dueDate: "2026-02-05",
+    });
+    const edges = computeVisibleEdges({
+      dependencies: [
+        { predecessorId: "a", successorId: "c2" },
+        { predecessorId: "b", successorId: "c2" },
+      ],
+      rows: rowsOf(a, b, c2),
+      min,
+      span,
+      chartWidth,
+    });
+    expect(edges).toHaveLength(2);
+    // 前置行号小的锚点在上：c2 行中心 100 ± 6；
+    // b→c2 时间倒挂（c2 左缘 240 < b 右缘 312），线停在底边 368、尖端贴右缘 360
+    expect(edges[0].path.endsWith("L 232 94")).toBe(true);
+    expect(edges[1].path.endsWith("L 368 106")).toBe(true);
+  });
+
+  it("同一出发列的前向边共享车道，行中心与锚点使路径互异", () => {
+    const d = task("d", {
+      sortOrder: 1,
+      startDate: "2026-01-06",
+      dueDate: "2026-01-11",
+    });
+    const c3 = task("c3", {
+      sortOrder: 2,
+      startDate: "2026-01-25",
+      dueDate: "2026-02-05",
+    });
+    const edges = computeVisibleEdges({
+      dependencies: [
+        { predecessorId: "a", successorId: "c3" },
+        { predecessorId: "d", successorId: "c3" },
+      ],
+      rows: rowsOf(a, d, c3),
+      min,
+      span,
+      chartWidth,
+    });
+    expect(edges).toHaveLength(2);
+    // a 右缘 110、d 右缘 110 → 同一默认车道 122（d 行横条 [50,110] 不挡道），
+    // 两行中心不同、入边锚点扇开，路径自然分开
+    expect(edges[0].path.startsWith("M 110 20 L 116 20 Q 122 20 122 26")).toBe(
+      true,
+    );
+    expect(edges[1].path.startsWith("M 110 60 L 116 60 Q 122 60 122 66")).toBe(
+      true,
+    );
+    expect(edges[0].path).not.toBe(edges[1].path);
+  });
+
+  it("肘形线的转角数量：前向、后向各 2 个", () => {
+    const forward = computeVisibleEdges({
+      dependencies: [{ predecessorId: "a", successorId: "b" }],
+      rows: rowsOf(a, b),
+      min,
+      span,
+      chartWidth,
+    });
+    const e = task("e", {
+      sortOrder: 0,
+      startDate: "2026-01-01",
+      dueDate: "2026-01-20",
+    });
+    const f = task("f", {
+      sortOrder: 1,
+      startDate: "2026-01-05",
+      dueDate: "2026-01-08",
+    });
+    const backward = computeVisibleEdges({
+      dependencies: [{ predecessorId: "e", successorId: "f" }],
+      rows: rowsOf(e, f),
+      min,
+      span,
+      chartWidth,
+    });
+    expect((forward[0].path.match(/Q/g) ?? []).length).toBe(2);
+    expect((backward[0].path.match(/Q/g) ?? []).length).toBe(2);
+  });
+
+  it("紧前向间距收缩末段圆角", () => {
+    const g = task("g", {
+      sortOrder: 1,
+      startDate: "2026-01-14",
+      dueDate: "2026-01-20",
+    });
+    const edges = computeVisibleEdges({
+      dependencies: [{ predecessorId: "a", successorId: "g" }],
+      rows: rowsOf(a, g),
+      min,
+      span,
+      chartWidth,
+    });
+    // g 横条左缘 130、线停底边 122：间距不足，车道收到前置右缘外 2px（112），
+    // 出横条 2px 短截被圆角吞掉（零长度 L 跳过），圆角后余 4px 直线到 122
+    expect(edges[0].path).toBe(
+      "M 110 20 Q 112 20 112 22 L 112 54 Q 112 60 118 60 L 122 60",
+    );
+  });
+
+  it("紧间距下多条前向边共享车道，靠锚点扇开", () => {
+    const h1 = task("h1", {
+      sortOrder: 1,
+      startDate: "2026-01-14",
+      dueDate: "2026-01-18",
+    });
+    const h2 = task("h2", {
+      sortOrder: 2,
+      startDate: "2026-01-14",
+      dueDate: "2026-01-18",
+    });
+    const edges = computeVisibleEdges({
+      dependencies: [
+        { predecessorId: "a", successorId: "h1" },
+        { predecessorId: "a", successorId: "h2" },
+      ],
+      rows: rowsOf(a, h1, h2),
+      min,
+      span,
+      chartWidth,
+    });
+    // 间距不足（线停底边 122），车道收到 112；出边锚点沿 a 横条高度 20 ± 6 扇开
+    expect(edges[0].path).toBe(
+      "M 110 14 Q 112 14 112 16 L 112 54 Q 112 60 118 60 L 122 60",
+    );
+    expect(edges[1].path).toBe(
+      "M 110 26 Q 112 26 112 28 L 112 94 Q 112 100 118 100 L 122 100",
+    );
+  });
+
+  it("竖向车道避让中间横条，从空档处通过", () => {
+    const b2 = task("b2", {
+      sortOrder: 1,
+      startDate: "2026-01-13",
+      dueDate: "2026-01-20",
+    });
+    const c = task("c", {
+      sortOrder: 2,
+      startDate: "2026-01-30",
+      dueDate: "2026-02-09",
+    });
+    const edges = computeVisibleEdges({
+      dependencies: [{ predecessorId: "a", successorId: "c" }],
+      rows: rowsOf(a, b2, c),
+      min,
+      span,
+      chartWidth,
+    });
+    // b2 横条 [120,200] 挡住 122–200 的默认车道，搜索步进到 206 通过；
+    // c 横条左缘 290，线停在底边 282
+    expect(edges[0].path).toBe(
+      "M 110 20 L 200 20 Q 206 20 206 26 L 206 94 Q 206 100 212 100 L 282 100",
+    );
+  });
+
+  it("同目标的两条后向边共享车道，入边锚点沿横条高度扇开", () => {
+    const d = task("d", {
+      sortOrder: 1,
+      startDate: "2026-01-06",
+      dueDate: "2026-01-11",
+    });
+    const c = task("c", {
+      sortOrder: 2,
+      startDate: "2026-01-02",
+      dueDate: "2026-01-04",
+    });
+    const edges = computeVisibleEdges({
+      dependencies: [
+        { predecessorId: "a", successorId: "c" },
+        { predecessorId: "d", successorId: "c" },
+      ],
+      rows: rowsOf(a, d, c),
+      min,
+      span,
+      chartWidth,
+    });
+    // 两前置右缘同为 110 → 共享车道 122（d 横条 [50,110] 不挡道）；
+    // 都贴 c 横条 [10,40] 右缘 40（线停底边 48），入边锚点在 c 行中心 ± 6 扇开
+    expect(edges[0].path).toBe(
+      "M 110 20 L 116 20 Q 122 20 122 26 L 122 88 Q 122 94 116 94 L 48 94",
+    );
+    expect(edges[1].path).toBe(
+      "M 110 60 L 116 60 Q 122 60 122 66 L 122 100 Q 122 106 116 106 L 48 106",
+    );
+  });
+
+  it("后向边后置横条伸得更远时，车道仍守在箭头底边右侧、末段向左画", () => {
+    // g2: 1/8→1/25，横条 [70,250] 比前置 a 的右缘 110 更靠右；
+    // 若兜底车道落到底边 258 左侧，末段会向右画、箭头反向
+    const g2 = task("g2", {
+      sortOrder: 1,
+      startDate: "2026-01-08",
+      dueDate: "2026-01-25",
+    });
+    const edges = computeVisibleEdges({
+      dependencies: [{ predecessorId: "a", successorId: "g2" }],
+      rows: rowsOf(a, g2),
+      min,
+      span,
+      chartWidth,
+    });
+    expect(edges[0].backward).toBe(true);
+    // 车道在底边右侧 272（250 + 箭头 8 + 整直线 14），末段 272 → 258 向左，
+    // 尖端向左贴上 g2 横条右缘 250
+    expect(edges[0].path).toBe(
+      "M 110 20 L 266 20 Q 272 20 272 26 L 272 54 Q 272 60 266 60 L 258 60",
+    );
+  });
+
+  it("布局确定性：同输入两次调用一致，输入顺序决定输出顺序", () => {
+    const c4 = task("c4", {
+      sortOrder: 2,
+      startDate: "2026-01-25",
+      dueDate: "2026-02-05",
+    });
+    const deps = [
+      { predecessorId: "a", successorId: "b" },
+      { predecessorId: "a", successorId: "c4" },
+      { predecessorId: "b", successorId: "a" },
+    ];
+    const shared = { rows: rowsOf(a, b, c4), min, span, chartWidth };
+    expect(computeVisibleEdges({ dependencies: deps, ...shared })).toEqual(
+      computeVisibleEdges({ dependencies: deps, ...shared }),
+    );
+    const reversed = computeVisibleEdges({
+      dependencies: [...deps].reverse(),
+      ...shared,
+    });
+    expect(
+      reversed.map((edge) => `${edge.predecessorId}-${edge.successorId}`),
+    ).toEqual(["b-a", "a-c4", "a-b"]);
   });
 
   it("跳过不在行集合中的端点", () => {

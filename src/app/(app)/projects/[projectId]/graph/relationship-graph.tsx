@@ -159,7 +159,8 @@ export function RelationshipGraph({
   return (
     <div className="space-y-4">
       {chartVisible ? (
-        <div className="ac-card overflow-hidden" role="region" aria-label="任务关系甘特图">
+        <div className="ac-card isolate overflow-hidden" role="region" aria-label="任务关系甘特图">
+          {/* isolate：卡内 z-30 的吸附标签列只在卡内比较，滚到顶栏下方时不再盖住导航 */}
           <p className="sr-only">
             关系图：{chartRows.length} 个已排期任务，按父子层级排列；横条的位置和宽度表示起止日期；
             箭头表示前置任务到后置任务的依赖。点击任务可查看详情。
@@ -256,27 +257,55 @@ export function RelationshipGraph({
                     focusable="false"
                   >
                     <defs>
+                      {/* 箭头朝向写死在 marker 上（orient 0 = 尖朝右 / 180 = 尖朝左），
+                          按边的前向/后向选择，不靠路径末端切线——即使末段退化也永不反向。
+                          refX=0：三角底边对齐路径终点（线停在底边），
+                          尖端沿朝向再走 8px，正好贴在横条边缘上 */}
                       <marker
-                        id="graph-dep-arrow"
+                        id="graph-dep-arrow-r"
                         viewBox="0 0 8 8"
-                        refX="7"
+                        refX="0"
                         refY="4"
                         markerWidth="8"
                         markerHeight="8"
                         markerUnits="userSpaceOnUse"
-                        orient="auto-start-reverse"
+                        orient="0"
                       >
                         <path d="M0,0 L8,4 L0,8 z" className="fill-ink-faint" />
                       </marker>
                       <marker
-                        id="graph-dep-arrow-hot"
+                        id="graph-dep-arrow-r-hot"
                         viewBox="0 0 8 8"
-                        refX="7"
+                        refX="0"
                         refY="4"
                         markerWidth="8"
                         markerHeight="8"
                         markerUnits="userSpaceOnUse"
-                        orient="auto-start-reverse"
+                        orient="0"
+                      >
+                        <path d="M0,0 L8,4 L0,8 z" className="fill-accent" />
+                      </marker>
+                      <marker
+                        id="graph-dep-arrow-l"
+                        viewBox="0 0 8 8"
+                        refX="0"
+                        refY="4"
+                        markerWidth="8"
+                        markerHeight="8"
+                        markerUnits="userSpaceOnUse"
+                        orient="180"
+                      >
+                        <path d="M0,0 L8,4 L0,8 z" className="fill-ink-faint" />
+                      </marker>
+                      <marker
+                        id="graph-dep-arrow-l-hot"
+                        viewBox="0 0 8 8"
+                        refX="0"
+                        refY="4"
+                        markerWidth="8"
+                        markerHeight="8"
+                        markerUnits="userSpaceOnUse"
+                        orient="180"
                       >
                         <path d="M0,0 L8,4 L0,8 z" className="fill-accent" />
                       </marker>
@@ -286,6 +315,13 @@ export function RelationshipGraph({
                         activeHoveredId !== null &&
                         (edge.predecessorId === activeHoveredId ||
                           edge.successorId === activeHoveredId);
+                      const marker = edge.backward
+                        ? hot
+                          ? "url(#graph-dep-arrow-l-hot)"
+                          : "url(#graph-dep-arrow-l)"
+                        : hot
+                          ? "url(#graph-dep-arrow-r-hot)"
+                          : "url(#graph-dep-arrow-r)";
                       return (
                         <path
                           key={`${edge.predecessorId}-${edge.successorId}`}
@@ -295,9 +331,7 @@ export function RelationshipGraph({
                           className={
                             hot ? "stroke-accent" : "stroke-ink-faint opacity-60"
                           }
-                          markerEnd={
-                            hot ? "url(#graph-dep-arrow-hot)" : "url(#graph-dep-arrow)"
-                          }
+                          markerEnd={marker}
                         />
                       );
                     })}
