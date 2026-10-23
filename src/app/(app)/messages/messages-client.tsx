@@ -100,7 +100,20 @@ function AttachmentLink({
   const [previewing, setPreviewing] = useState(false);
   const url = `/api/dm/attachments/${att.id}`;
   const kind = detectPreviewKind(att.filename, att.mimeType);
-  const icon = kind === "image" ? "🖼️" : kind === "video" ? "🎬" : kind === "audio" ? "🎵" : "📄";
+  const icon =
+    kind === "image"
+      ? "🖼️"
+      : kind === "video"
+        ? "🎬"
+        : kind === "audio"
+          ? "🎵"
+          : kind === "word"
+            ? "📝"
+            : kind === "excel"
+              ? "📊"
+              : kind === "pdf"
+                ? "📕"
+                : "📄";
 
   return (
     <div className="mt-1">

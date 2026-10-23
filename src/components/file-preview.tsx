@@ -7,6 +7,7 @@ import {
   detectPreviewKind,
   renderMimeFor,
 } from "@/lib/file-preview";
+import type { SheetTable } from "@/lib/file-preview-office";
 
 /** 预览目标：url 是现成的下载路由（带会话鉴权），组件内按需取内容 */
 export type PreviewFile = {
@@ -35,6 +36,10 @@ function kindLabel(kind: ReturnType<typeof detectPreviewKind>): string {
       return "音频";
     case "text":
       return "文本";
+    case "word":
+      return "Word 文档";
+    case "excel":
+      return "Excel 表格";
     default:
       return "文件";
   }
@@ -55,10 +60,14 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [text, setText] = useState<string | null>(null);
   const [truncated, setTruncated] = useState(false);
+  const [wordHtml, setWordHtml] = useState<string | null>(null);
+  const [sheets, setSheets] = useState<SheetTable[] | null>(null);
+  const [activeSheet, setActiveSheet] = useState(0);
   const [error, setError] = useState("");
   // 弹窗随打开全新挂载（file 在挂载期内不变），加载中 = 需要取内容但内容未到位
   const needsFetch = kind !== "image" && kind !== "unsupported";
-  const loading = needsFetch && blobUrl === null && text === null && !error;
+  const loading =
+    needsFetch && blobUrl === null && text === null && wordHtml === null && sheets === null && !error;
 
   // Esc 关闭；打开期间锁背景滚动
   useEffect(() => {
@@ -89,13 +98,25 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
           const capped = buf.byteLength > TEXT_PREVIEW_MAX_BYTES;
           setText(decodeTextWithFallback(capped ? buf.slice(0, TEXT_PREVIEW_MAX_BYTES) : buf));
           setTruncated(capped);
+        } else if (kind === "word" || kind === "excel") {
+          // Office 解析库（mammoth/SheetJS）体积大，动态 import 独立 chunk，只在此时加载
+          const office = await import("@/lib/file-preview-office");
+          if (cancelled) return;
+          if (kind === "word") {
+            setWordHtml(await office.docxToHtml(buf));
+          } else {
+            setSheets(await office.excelToSheets(buf));
+          }
         } else {
           // 用补正后的 Content-Type 重建 blob，浏览器才会启用 PDF/媒体内置渲染
           objectUrl = URL.createObjectURL(new Blob([buf], { type: renderMime ?? "application/octet-stream" }));
           setBlobUrl(objectUrl);
         }
       } catch {
-        if (!cancelled) setError("内容加载失败，可下载后查看");
+        if (!cancelled)
+          setError(
+            kind === "word" || kind === "excel" ? "文档解析失败，可下载后查看" : "内容加载失败，可下载后查看",
+          );
       }
     })();
     return () => {
@@ -189,6 +210,42 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
               <pre className="whitespace-pre-wrap break-words rounded-field border border-line bg-surface p-3 font-mono text-xs leading-relaxed text-ink">
                 {text}
               </pre>
+            </div>
+          ) : kind === "word" && wordHtml !== null ? (
+            // 内容已过 sanitize（见 file-preview-office.ts），正文转义 + 去脚本节点
+            <div
+              className="h-full w-full overflow-auto rounded-field border border-line bg-surface p-6 text-sm leading-relaxed text-ink [&_a]:text-primary [&_a]:underline [&_h1]:mb-2 [&_h1]:text-xl [&_h1]:font-bold [&_h2]:mb-2 [&_h2]:text-lg [&_h2]:font-bold [&_h3]:mb-1.5 [&_h3]:text-base [&_h3]:font-semibold [&_h4]:mb-1.5 [&_h4]:font-semibold [&_img]:max-w-full [&_li]:ml-5 [&_ol]:my-2 [&_ol]:list-decimal [&_p]:my-2 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-line [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-line [&_th]:bg-sunken [&_th]:px-2 [&_th]:py-1 [&_ul]:my-2 [&_ul]:list-disc"
+              dangerouslySetInnerHTML={{ __html: wordHtml }}
+            />
+          ) : kind === "excel" && sheets !== null ? (
+            <div className="flex h-full w-full flex-col">
+              {sheets.length > 1 && (
+                <div className="flex flex-wrap gap-1 pb-2">
+                  {sheets.map((s, i) => (
+                    <button
+                      key={s.name}
+                      type="button"
+                      onClick={() => setActiveSheet(i)}
+                      className={`rounded-field px-2.5 py-1 text-xs ${
+                        i === activeSheet
+                          ? "bg-primary text-white"
+                          : "border border-line bg-surface text-ink-soft hover:border-primary hover:text-primary"
+                      }`}
+                    >
+                      {s.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {sheets[activeSheet]?.truncated && (
+                <p className="pb-2 text-xs text-ink-faint">
+                  工作表过大，仅显示前 2000 行，下载可查看全部数据
+                </p>
+              )}
+              <div
+                className="min-h-0 w-full flex-1 overflow-auto rounded-field border border-line bg-surface [&_table]:border-collapse [&_table]:text-xs [&_td]:max-w-72 [&_td]:truncate [&_td]:border [&_td]:border-line [&_td]:px-2 [&_td]:py-1 [&_td]:whitespace-nowrap"
+                dangerouslySetInnerHTML={{ __html: sheets[activeSheet]?.html ?? "" }}
+              />
             </div>
           ) : (
             <div className="text-center">
