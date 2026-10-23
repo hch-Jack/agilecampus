@@ -111,9 +111,8 @@ describe("normalizeLayoutDoc", () => {
 
     const clock = find(normalized, "clock")!;
     expect(clock.x).toBe(6);
-    // 5.8 取整为 5，随后向上压缩（看板缩到最小高度后腾出了位置）
-    expect(Number.isInteger(clock.y)).toBe(true);
-    expect(clock.y).toBeLessThanOrEqual(5);
+    // 5.8 取整为 5；布局不做自动回填，坐标原样保留
+    expect(clock.y).toBe(5);
     expect(clock.w).toBe(DASHBOARD_WIDGETS.clock.defaultSize.w);
     expect(clock.h).toBe(DASHBOARD_WIDGETS.clock.defaultSize.h);
   });
@@ -189,7 +188,7 @@ describe("normalizeLayoutDoc", () => {
 });
 
 describe("moveWidget", () => {
-  it("拖到空位：目标占住新格子，原位置被压缩掉", () => {
+  it("拖到空位：目标占住新格子，其他卡片不动", () => {
     const moved = moveWidget(DEFAULT_DASHBOARD_LAYOUT, "clock", 0, 0);
     // 默认布局里没有 clock，不应有任何变化
     expect(moved).toBe(DEFAULT_DASHBOARD_LAYOUT);
@@ -198,6 +197,15 @@ describe("moveWidget", () => {
     const movedClock = moveWidget(withClock, "clock", 8, 0);
     expect(find(movedClock, "clock")).toMatchObject({ x: 8, y: 0, w: 3, h: 2 });
     assertNoOverlap(movedClock.items);
+  });
+
+  it("可以留白：往下方拖不会被自动吸回", () => {
+    const moved = moveWidget(DEFAULT_DASHBOARD_LAYOUT, "activity_feed", 0, 24);
+    const feed = find(moved, "activity_feed")!;
+    expect(feed).toMatchObject({ x: 0, y: 24 });
+    // 其他卡片原地不动，中间的空行保留
+    expect(find(moved, "task_board")).toMatchObject({ x: 0, y: 2 });
+    assertNoOverlap(moved.items);
   });
 
   it("拖到别人头上：目标优先，旧卡下移（含级联）", () => {
@@ -255,12 +263,12 @@ describe("addWidget / removeWidget", () => {
     assertNoOverlap(added.items);
   });
 
-  it("删卡后向上压缩", () => {
+  it("删卡不牵动其他卡片（留白由用户自己决定）", () => {
     const withClock = addWidget(DEFAULT_DASHBOARD_LAYOUT, "clock");
     const before = find(withClock, "clock")!;
     const removed = removeWidget(withClock, "task_board");
     const after = find(removed, "clock")!;
-    expect(after.y).toBeLessThan(before.y);
+    expect(after.y).toBe(before.y);
     assertNoOverlap(removed.items);
   });
 

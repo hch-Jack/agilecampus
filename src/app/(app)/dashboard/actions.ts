@@ -15,7 +15,7 @@ export type SaveDashboardLayoutResult = { ok: true } | { error: string };
 
 /**
  * 卡片数量上限：目录只有 15 张，留一点余量给未来版本；同时挡住超大数组。
- * （服务端 normalize 会去重、夹取、压缩，这里先把明显不像布局的输入挡在门外。）
+ * （服务端 normalize 会去重、夹取、消解重叠，这里先把明显不像布局的输入挡在门外。）
  */
 const MAX_ITEMS = 30;
 
@@ -43,7 +43,7 @@ const envelopeSchema = z.object({
  * 保存当前用户的工作台布局。
  *
  * - 身份只从 session 取，绝不接受客户端传入的 userId；
- * - 坐标/尺寸的最终裁决权在 `normalizeLayoutDoc`（夹取、去重、统计互斥、压缩），
+ * - 坐标/尺寸的最终裁决权在 `normalizeLayoutDoc`（夹取、去重、统计互斥、碰撞消解），
  *   这里只做结构与明显越界的校验；
  * - **不 revalidate**：客户端正处在编辑态，整页回流会用服务端旧数据覆盖本地未保存的改动。
  */

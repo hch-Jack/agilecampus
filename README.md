@@ -138,11 +138,13 @@ docker compose -f docker-compose.prod.yml up -d --build
 `{ v: 1, items: [{ id, x, y, w, h, config? }] }` = 用户布局，`items: []` = 主动把卡片删空。
 列刻意不标类型（照 `messages.tool_calls` 先例），读写在 `src/lib/dashboard-layout-store.ts` 收口，
 进出都过一次 `normalizeLayoutDoc`：坏数据回落默认、未知/重复 id 丢弃、尺寸与坐标夹取、
-碰撞下移后向上压缩。
+重叠卡片向下推开（不自动回填空隙，允许留白）。
 
 - **纯函数引擎** `src/lib/dashboard-layout.ts` 不碰 IO、不引 zod，客户端拖拽预览与服务端落库共用同一套规则；
   zod 只在 server action `src/app/(app)/dashboard/actions.ts` 校验信封，身份只取 session，不接受客户端 userId。
-- **拖拽语义**：拖到哪格占哪格，其余卡片让位后整体向上压缩；缩放不低于目录里的最小尺寸、不超出 12 列。
+- **拖拽语义**：拖到哪格占哪格，重叠的卡片向下让位；位置按放下时算，可以自由留白（删卡也不牵动其他卡片）。
+  缩放不低于目录里的最小尺寸、不超出 12 列。拖动 / 缩放引起的位置变化走 FLIP 过渡（180ms），
+  被拖的那张卡自己不做动画，避免落后于指针。
 - **统计两种表示互斥**：「任务概览」（四合一）与四张单项统计卡只能存在一组；添加一种会自动移除另一种。
 - **保存不 revalidate**：编辑态下整页数据回流会用服务端旧数据覆盖本地未保存布局。请求串行 + latest-wins，
   飞行期间的新改动合并成待发；失败保留本地布局，工具栏可重试。

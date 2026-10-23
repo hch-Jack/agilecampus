@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -79,10 +80,67 @@ export function DashboardGrid({
     };
   }, []);
 
+  /**
+   * FLIP 过渡：CSS 里 grid-row / grid-column 没法做动画（Chromium 不插值），
+   * 所以在每次布局更新前记下每张卡相对网格的视觉位置，渲染后先把卡片「拉回」旧位置，
+   * 再动画归位 —— 被拖动 / 缩放的那张卡自己不做动画，否则会落后于指针。
+   * 用相对网格的坐标，避免拖拽时页面向下自动滚动把位移算进动画里。
+   */
+  const prevRects = useRef(new Map<string, { x: number; y: number }>());
+
+  function measureRelativeToGrid(): Map<string, { x: number; y: number }> {
+    const rects = new Map<string, { x: number; y: number }>();
+    const grid = gridRef.current;
+    if (!grid) return rects;
+    const gridRect = grid.getBoundingClientRect();
+    grid.querySelectorAll<HTMLElement>("[data-widget-id]").forEach((node) => {
+      const id = node.dataset.widgetId;
+      if (!id) return;
+      const rect = node.getBoundingClientRect();
+      rects.set(id, { x: rect.left - gridRect.left, y: rect.top - gridRect.top });
+    });
+    return rects;
+  }
+
   function applyLayout(next: DashboardLayoutDoc) {
+    prevRects.current = measureRelativeToGrid();
     layoutRef.current = next;
     setLayout(next);
   }
+
+  useLayoutEffect(() => {
+    const before = prevRects.current;
+    prevRects.current = new Map();
+    const grid = gridRef.current;
+    if (!grid || before.size === 0) return;
+
+    const nodes = grid.querySelectorAll<HTMLElement>("[data-widget-id]");
+    // 先清掉上一轮仍在飞的过渡，否则量到的是动画中途的位置
+    nodes.forEach((node) =>
+      node.getAnimations().forEach((animation) => {
+        if (animation.id === "dashboard-flip") animation.cancel();
+      }),
+    );
+
+    const gridRect = grid.getBoundingClientRect();
+    nodes.forEach((node) => {
+      if (node.classList.contains("dashboard-widget-active")) return;
+      const id = node.dataset.widgetId;
+      const prev = id ? before.get(id) : undefined;
+      if (!prev) return;
+      const rect = node.getBoundingClientRect();
+      const dx = prev.x - (rect.left - gridRect.left);
+      const dy = prev.y - (rect.top - gridRect.top);
+      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return;
+      node.animate(
+        [
+          { transform: `translate(${dx}px, ${dy}px)` },
+          { transform: "translate(0px, 0px)" },
+        ],
+        { id: "dashboard-flip", duration: 180, easing: "cubic-bezier(0.2, 0, 0, 1)" },
+      );
+    });
+  }, [layout]);
 
   /**
    * 串行 + latest-wins：同一时刻只发一个请求；飞行期间的新布局合并成「待发」，

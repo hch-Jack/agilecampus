@@ -1,4 +1,4 @@
-// 工作台自定义布局的纯函数引擎：目录、默认布局、归一化、移动/缩放/增删与压缩。
+// 工作台自定义布局的纯函数引擎：目录、默认布局、归一化、移动/缩放/增删与碰撞消解。
 // 客户端（拖拽预览）与服务端（读库、落库校验）共用，故这里不碰 IO、不 import zod。
 
 export const GRID_COLUMNS = 12;
@@ -286,19 +286,13 @@ function resolveOverlaps(items: DashboardLayoutItem[]): DashboardLayoutItem[] {
   return placed;
 }
 
-/** 向上压缩：按 y,x 顺序，每张卡尽量上移 */
-function compact(items: DashboardLayoutItem[]): DashboardLayoutItem[] {
-  const placed: DashboardLayoutItem[] = [];
-  for (const item of [...items].sort(byPosition)) {
-    let y = item.y;
-    while (y > 0 && !placed.some((other) => overlap({ ...item, y: y - 1 }, other))) y -= 1;
-    placed.push({ ...item, y });
-  }
-  return placed;
-}
-
+/**
+ * 布局规则是**自由留白**：只消解重叠，不自动回填空隙。
+ * 用户把卡片拖到下方、或在两张卡之间留白，位置就按放下时算；
+ * 删卡也不牵动其他卡片（想收拢就手动拖，或「恢复默认」）。
+ */
 function layoutFrom(items: DashboardLayoutItem[]): DashboardLayoutDoc {
-  return { v: 1, items: compact(resolveOverlaps(items)) };
+  return { v: 1, items: resolveOverlaps(items) };
 }
 
 /** 统计合并卡与四张单项互斥；合并卡优先 */
@@ -313,6 +307,7 @@ function applyStatsExclusivity(items: DashboardLayoutItem[]): DashboardLayoutIte
  * - null / 非 v1 / 结构不对 → 默认布局
  * - 空 items 保留为空（用户主动删光）
  * - 非空但一项都认不出 → 视为脏数据，回落默认
+ * - 坐标原样保留（允许留白），只把重叠项向下推开
  */
 export function normalizeLayoutDoc(raw: unknown): DashboardLayoutDoc {
   if (!raw || typeof raw !== "object") return defaultDoc();
@@ -370,7 +365,7 @@ export function resizeWidget(
   return layoutFrom([resized, ...others]);
 }
 
-/** 添加：已存在则原样返回；追加到现有内容下一行，随后压缩 */
+/** 添加：已存在则原样返回；追加到现有内容下一行 */
 export function addWidget(doc: DashboardLayoutDoc, id: DashboardWidgetId): DashboardLayoutDoc {
   if (doc.items.some((item) => item.id === id)) return doc;
 
