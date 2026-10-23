@@ -238,7 +238,7 @@ export function ActivityFeed({
         <p className="mt-2 text-sm text-ink-faint">暂无动态</p>
       ) : (
         <ul
-          className={`mt-2 space-y-1.5 overflow-y-auto pr-1 ${
+          className={`ac-scroll-hidden mt-2 space-y-1.5 overflow-y-auto pr-1 ${
             fill ? "min-h-0 flex-1" : "max-h-[35vh]"
           }`}
         >

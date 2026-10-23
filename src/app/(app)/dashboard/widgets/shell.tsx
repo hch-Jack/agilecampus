@@ -35,7 +35,7 @@ export function WidgetShell({
       <div
         className={
           scroll
-            ? "mt-2 min-h-0 flex-1 overflow-y-auto pr-1"
+            ? "ac-scroll-hidden mt-2 min-h-0 flex-1 overflow-y-auto pr-1"
             : "mt-2 flex min-h-0 flex-1 flex-col"
         }
       >

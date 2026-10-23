@@ -77,7 +77,7 @@ export function NoteWidget({
         <button
           type="button"
           onClick={() => setEditing(true)}
-          className="mt-2 flex min-h-0 flex-1 items-start overflow-y-auto whitespace-pre-wrap break-words text-left text-sm text-ink-soft transition-colors hover:text-ink"
+          className="ac-scroll-hidden mt-2 flex min-h-0 flex-1 items-start overflow-y-auto whitespace-pre-wrap break-words text-left text-sm text-ink-soft transition-colors hover:text-ink"
         >
           {text || <span className="text-ink-faint">点这里记点什么…</span>}
         </button>

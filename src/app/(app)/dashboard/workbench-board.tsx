@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, useOptimistic, useTransition } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useOptimistic,
+  useTransition,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -49,6 +56,65 @@ const COLUMNS = [
   { key: "done", label: "已完成", tone: "text-done" },
 ] as const;
 
+// 卡片正文（标题 + 项目/优先级/截止 + 子任务进度）。拖拽浮层也复用它，
+// 保证浮层宽度与内容同卡片一致，不会比静止时瘦一圈。
+function WorkbenchCardBody({
+  task,
+  today,
+  onTitleClick,
+}: {
+  task: WorkbenchTask;
+  today: string;
+  onTitleClick?: (e: ReactMouseEvent<HTMLAnchorElement>) => void;
+}) {
+  const canWrite = WRITE_ROLES.includes(task.role);
+  const overdue = task.dueDate && task.dueDate < today;
+  const dueToday = task.dueDate === today;
+
+  return (
+    <>
+      <Link
+        href={`/projects/${task.projectId}/tasks/${task.id}`}
+        onClick={onTitleClick}
+        className="font-medium text-ink hover:text-primary"
+      >
+        {task.title}
+      </Link>
+      <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
+        <span className="ac-badge bg-primary-soft text-primary">{task.projectName}</span>
+        {!canWrite && <span className="ac-badge bg-sunken text-ink-faint">只读</span>}
+        <span className={`ac-badge ${PRIORITY_BADGE[task.priority] ?? "bg-low-soft text-low"}`}>
+          {task.priority}
+        </span>
+        {task.dueDate &&
+          (overdue ? (
+            <span className="ac-badge bg-high-soft text-high">{task.dueDate} 逾期</span>
+          ) : dueToday ? (
+            <span className="ac-badge bg-medium-soft text-medium">今天截止</span>
+          ) : (
+            <span className="text-ink-faint">截止 {task.dueDate}</span>
+          ))}
+      </p>
+      {task.subTotal != null && task.subTotal > 0 && (
+        <div className="mt-2">
+          <p className="text-xs text-ink-faint">
+            子任务 <span className="tabular-nums">{task.subDone ?? 0}/{task.subTotal}</span>
+          </p>
+          {/* 动态宽度须内联 style（Tailwind 不生成拼接类名），先例 projects/page.tsx */}
+          <div className="mt-1 h-1 overflow-hidden rounded-full bg-sunken">
+            <div
+              className="h-full rounded-full bg-done"
+              style={{
+                width: `${Math.round(((task.subDone ?? 0) / task.subTotal) * 100)}%`,
+              }}
+            />
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function WorkbenchCard({
   task,
   today,
@@ -76,9 +142,6 @@ function WorkbenchCard({
     }
   }, [isDragging]);
 
-  const overdue = task.dueDate && task.dueDate < today;
-  const dueToday = task.dueDate === today;
-
   return (
     <div
       ref={setNodeRef}
@@ -99,49 +162,16 @@ function WorkbenchCard({
       className={`ac-card proj-card p-3 text-sm transition ${isDragging ? "dragging" : ""}`}
     >
       <div {...listeners} {...attributes}>
-        <Link
-          href={`/projects/${task.projectId}/tasks/${task.id}`}
-          onClick={(e) => {
+        <WorkbenchCardBody
+          task={task}
+          today={today}
+          onTitleClick={(e) => {
             if (suppressClickRef.current) {
               e.preventDefault();
               suppressClickRef.current = false;
             }
           }}
-          className="font-medium text-ink hover:text-primary"
-        >
-          {task.title}
-        </Link>
-        <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
-          <span className="ac-badge bg-primary-soft text-primary">{task.projectName}</span>
-          {!canWrite && <span className="ac-badge bg-sunken text-ink-faint">只读</span>}
-          <span className={`ac-badge ${PRIORITY_BADGE[task.priority] ?? "bg-low-soft text-low"}`}>
-            {task.priority}
-          </span>
-          {task.dueDate &&
-            (overdue ? (
-              <span className="ac-badge bg-high-soft text-high">{task.dueDate} 逾期</span>
-            ) : dueToday ? (
-              <span className="ac-badge bg-medium-soft text-medium">今天截止</span>
-            ) : (
-              <span className="text-ink-faint">截止 {task.dueDate}</span>
-            ))}
-        </p>
-        {task.subTotal != null && task.subTotal > 0 && (
-          <div className="mt-2">
-            <p className="text-xs text-ink-faint">
-              子任务 <span className="tabular-nums">{task.subDone ?? 0}/{task.subTotal}</span>
-            </p>
-            {/* 动态宽度须内联 style（Tailwind 不生成拼接类名），先例 projects/page.tsx */}
-            <div className="mt-1 h-1 overflow-hidden rounded-full bg-sunken">
-              <div
-                className="h-full rounded-full bg-done"
-                style={{
-                  width: `${Math.round(((task.subDone ?? 0) / task.subTotal) * 100)}%`,
-                }}
-              />
-            </div>
-          </div>
-        )}
+        />
       </div>
     </div>
   );
@@ -163,7 +193,7 @@ function Column({
   return (
     <div
       ref={setNodeRef}
-      className={`proj-column min-h-40 space-y-2 rounded-xl border border-line p-3 transition-colors ${
+      className={`proj-column ac-scroll-hidden min-h-40 space-y-2 rounded-xl border border-line p-3 transition-colors ${
         isOver ? "drop" : ""
       }`}
     >
@@ -200,6 +230,8 @@ export function WorkbenchBoard({
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
   const [activeTask, setActiveTask] = useState<WorkbenchTask | null>(null);
+  // 浮层宽度取被拖卡片的实际宽度：看板卡随工作台网格缩放，不能写死 262px
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
   const [optimisticTasks, moveOptimistic] = useOptimistic(
     tasks,
     (current, move: { taskId: string; patch: ColumnPatch }) =>
@@ -212,10 +244,12 @@ export function WorkbenchBoard({
   function handleDragStart(event: DragStartEvent) {
     const task = optimisticTasks.find((t) => t.id === String(event.active.id));
     setActiveTask(task ?? null);
+    setDragWidth(event.active.rect.current.initial?.width ?? null);
   }
 
   function handleDragEnd(event: DragEndEvent) {
     setActiveTask(null);
+    setDragWidth(null);
     const taskId = String(event.active.id);
     const over = event.over?.id;
     if (!over) return;
@@ -298,7 +332,7 @@ export function WorkbenchBoard({
 
         {error && <p className="mt-1 text-sm text-high">{error}</p>}
 
-        <div className="workbench-board-content mt-2 min-h-0 flex-1">
+        <div className="workbench-board-content ac-scroll-hidden mt-2 min-h-0 flex-1">
           <div className="workbench-columns grid gap-4">
             {COLUMNS.map((col) => (
               <Column
@@ -321,12 +355,11 @@ export function WorkbenchBoard({
       </div>
       <DragOverlay dropAnimation={null}>
         {activeTask ? (
-          <div className="ac-card proj-card proj-ghost w-[262px] p-3 text-sm">
-            <p className="font-medium text-ink">{activeTask.title}</p>
-            <p className="mt-1 text-xs text-ink-soft">
-              {activeTask.projectName}
-              {activeTask.dueDate ? ` · 截止 ${activeTask.dueDate}` : ""}
-            </p>
+          <div
+            className="ac-card proj-card proj-ghost w-[262px] p-3 text-sm"
+            style={dragWidth ? { width: dragWidth } : undefined}
+          >
+            <WorkbenchCardBody task={activeTask} today={today} />
           </div>
         ) : null}
       </DragOverlay>

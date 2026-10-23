@@ -9,6 +9,7 @@ import {
   type RefObject,
 } from "react";
 import {
+  DASHBOARD_WIDGETS,
   GRID_COLUMNS,
   GRID_GAP,
   GRID_ROW_HEIGHT,
@@ -33,6 +34,9 @@ type Session = {
   /** 按下瞬间卡片已有的视觉偏移（上一轮 FLIP 还没飞完时抓住它，别让它跳一下） */
   offsetX: number;
   offsetY: number;
+  /** 缩放起点：卡片的实际渲染宽高（px），拖动时按它连续算出想要的尺寸 */
+  baseW: number;
+  baseH: number;
   /** 按下那一刻的布局；每次移动都从它重算，避免往返拖动把别的卡越挤越远 */
   snapshot: DashboardLayoutDoc;
   latest: DashboardLayoutDoc;
@@ -47,6 +51,39 @@ function readVisualOffset(node: HTMLElement): { x: number; y: number } {
   if (!transform || transform === "none") return { x: 0, y: 0 };
   const matrix = new DOMMatrixReadOnly(transform);
   return { x: matrix.m41, y: matrix.m42 };
+}
+
+/**
+ * 拖动预览时把被拖的卡片钉在起点：网格基底不动，只有 transform 跟手。
+ * 否则每次跨格都要等 React 提交新位置，而 transform 已经按新格子写好了，
+ * 中间会有一两帧按旧格子偏移，看起来就是闪跳。
+ */
+function pinMovedItem(doc: DashboardLayoutDoc, id: DashboardWidgetId, x: number, y: number) {
+  return {
+    v: doc.v,
+    items: doc.items.map((it) => (it.id === id ? { ...it, x, y } : it)),
+  };
+}
+
+/** 缩放松手 / 取消：把显式像素尺寸动画回吸附后的格子尺寸，再交还给网格。 */
+function settleResize(s: Session, commit: boolean) {
+  const node = s.node;
+  if (!node) return;
+  const rect = node.getBoundingClientRect();
+  const target = (commit ? s.latest : s.snapshot).items.find((it) => it.id === s.id);
+  node.style.removeProperty("width");
+  node.style.removeProperty("height");
+  if (!target) return;
+  const toW = target.w * s.colStep - GRID_GAP;
+  const toH = target.h * s.rowStep - GRID_GAP;
+  if (Math.abs(rect.width - toW) < 0.5 && Math.abs(rect.height - toH) < 0.5) return;
+  node.animate(
+    [
+      { width: `${rect.width}px`, height: `${rect.height}px` },
+      { width: `${toW}px`, height: `${toH}px` },
+    ],
+    { id: "dashboard-resize", duration: 160, easing: "cubic-bezier(0.2, 0, 0, 1)" },
+  );
 }
 
 /**
@@ -87,12 +124,19 @@ export function useGridInteraction({
       const rowStep = GRID_ROW_HEIGHT + GRID_GAP;
       const snapshot = getLayout();
       const node = (event.currentTarget as HTMLElement).closest<HTMLElement>("[data-widget-id]");
-      // 上一轮 FLIP 还没飞完就再次按下时先收掉，否则动画会盖住这次的亚格子 transform；
-      // 把当时的视觉偏移记下来当作起点，卡片就不会瞬移
+      // 上一轮 FLIP / 尺寸收尾还没飞完就再次按下时先收掉，否则动画会盖住这次的视觉位移
+      const startRect = node?.getBoundingClientRect();
       const { x: offsetX, y: offsetY } = node ? readVisualOffset(node) : { x: 0, y: 0 };
       node?.getAnimations().forEach((animation) => {
-        if (animation.id === "dashboard-flip") animation.cancel();
+        if (animation.id === "dashboard-flip" || animation.id === "dashboard-resize") {
+          animation.cancel();
+        }
       });
+      // 缩放从「当前看到的尺寸」起算；先写成显式像素，收掉动画时卡片才不会跳一下
+      if (mode === "resize" && node && startRect) {
+        node.style.width = `${startRect.width}px`;
+        node.style.height = `${startRect.height}px`;
+      }
 
       const session: Session = {
         id,
@@ -104,6 +148,8 @@ export function useGridInteraction({
         node,
         offsetX,
         offsetY,
+        baseW: startRect?.width ?? 0,
+        baseH: startRect?.height ?? 0,
         snapshot,
         latest: snapshot,
         colStep,
@@ -145,10 +191,19 @@ export function useGridInteraction({
         const s = sessionRef.current;
         if (!s) return;
         cleanup();
-        // 即使吸附位置没变也提交一次：让 DashboardGrid 的 FLIP 收掉亚格子位移，
+        if (!s.moved) {
+          if (s.mode === "resize" && s.node) {
+            s.node.style.removeProperty("width");
+            s.node.style.removeProperty("height");
+          }
+          return;
+        }
+        // 缩放松手先把尺寸滑回吸附尺寸；拖动则由 DashboardGrid 的 FLIP 收掉位移
+        if (s.mode === "resize") settleResize(s, commit);
+        // 即使吸附位置没变也提交一次：让 FLIP 收掉亚格子位移，
         // 卡片从鼠标处滑入格子，而不是瞬间跳回去
-        if (s.moved && commit) onCommit(s.latest);
-        else if (s.moved) onPreview(s.snapshot);
+        if (commit) onCommit(s.latest);
+        else onPreview(s.snapshot);
       }
 
       function onMove(ev: PointerEvent) {
@@ -170,12 +225,19 @@ export function useGridInteraction({
 
         if (dx !== 0 || dy !== 0) s.moved = true;
 
-        // 亚格子位移：网格仍按整格吸附，但被拖的卡片用 transform 补上那不到一格的差距，
-        // 于是鼠标移动时卡片连续跟手，松手后再滑入吸附位（FLIP 收尾）。
+        // 拖动：卡片钉在起点，transform 就是完整的指针位移，连续跟手。
+        // 缩放：宽高按指针连续算出来（夹在最小/最大尺寸内），网格吸附只用于别人让位。
         if (s.mode === "move" && s.node) {
-          const residualX = s.offsetX + dx - dc * s.colStep;
-          const residualY = s.offsetY + dy - dr * s.rowStep;
-          s.node.style.transform = `translate3d(${residualX}px, ${residualY}px, 0)`;
+          s.node.style.transform = `translate3d(${s.offsetX + dx}px, ${s.offsetY + dy}px, 0)`;
+        } else if (s.mode === "resize" && s.node && s.baseW > 0 && s.baseH > 0) {
+          const min = DASHBOARD_WIDGETS[s.id].minSize;
+          const minW = min.w * s.colStep - GRID_GAP;
+          const maxW = (GRID_COLUMNS - s.startItem.x) * s.colStep - GRID_GAP;
+          const minH = min.h * s.rowStep - GRID_GAP;
+          const width = Math.min(Math.max(s.baseW + dx, minW), maxW);
+          const height = Math.max(s.baseH + dy, minH);
+          s.node.style.width = `${width}px`;
+          s.node.style.height = `${height}px`;
         }
 
         // 吸附位置没变就不触发重渲染，省掉每个像素都重排一遍的开销
@@ -190,7 +252,13 @@ export function useGridInteraction({
           prevActive.h !== nextActive.h;
 
         s.latest = next;
-        if (changed) onPreview(next);
+        if (changed) {
+          onPreview(
+            s.mode === "move"
+              ? pinMovedItem(next, s.id, s.startItem.x, s.startItem.y)
+              : next,
+          );
+        }
 
         // 靠近视口上下边缘时自动滚动，让长布局也能拖到屏幕外
         const edge = 64;
