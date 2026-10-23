@@ -42,9 +42,9 @@ export function NoteWidget({
   const text = config?.text ?? "";
 
   return (
-    <div className="flex h-full min-h-0 flex-col p-3">
+    <div className="dw-note flex h-full min-h-0 flex-col p-3">
       <div className="flex shrink-0 items-center justify-between gap-2">
-        <h2 className="font-display text-sm font-semibold text-ink">便签</h2>
+        <h2 className="dw-shell-title font-display text-sm font-semibold text-ink">便签</h2>
         {!editing && (
           <button
             type="button"
@@ -196,7 +196,7 @@ export function ClockWidget({
   }
 
   return (
-    <div className="ac-scroll-hidden flex h-full min-h-0 flex-col overflow-y-auto p-3">
+    <div className="dw-clock ac-scroll-hidden flex h-full min-h-0 flex-col overflow-y-auto p-3">
       <div className="my-auto">
         {setting ? (
           <div className="space-y-2">
@@ -261,7 +261,7 @@ export function ClockWidget({
         ) : (
           <>
             <div className="flex items-start justify-between gap-2">
-              <p className="font-display text-3xl font-semibold tabular-nums text-ink">
+              <p className="dw-clock-time font-display text-3xl font-semibold tabular-nums text-ink">
                 {parts ? `${parts.hh}:${parts.mm}:${parts.ss}` : "--:--:--"}
               </p>
               <button
@@ -272,12 +272,14 @@ export function ClockWidget({
                 设置
               </button>
             </div>
-            <p className="mt-1 text-xs text-ink-faint">
+            <p className="dw-clock-date mt-1 text-xs text-ink-faint">
               {parts ? parts.dateLabel : "按你的时区显示"}
             </p>
-            {lunarText && <p className="mt-0.5 text-xs text-ink-faint">{lunarText}</p>}
+            {lunarText && (
+              <p className="dw-clock-lunar mt-0.5 text-xs text-ink-faint">{lunarText}</p>
+            )}
             {zones.length > 0 && now && (
-              <ul className="mt-2 space-y-0.5 border-t border-line pt-2">
+              <ul className="dw-clock-zones mt-2 space-y-0.5 border-t border-line pt-2">
                 {zones.map((zone) => (
                   <li
                     key={zone}
@@ -351,7 +353,7 @@ export function CountdownWidget({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col justify-center p-3">
+    <div className="dw-countdown flex h-full min-h-0 flex-col justify-center p-3">
       {setting ? (
         <div className="space-y-2">
           <input
@@ -399,10 +401,12 @@ export function CountdownWidget({
           </div>
           {target ? (
             <>
-              <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-ink">
+              <p className="dw-countdown-value mt-1 font-display text-2xl font-semibold tabular-nums text-ink">
                 {now ? (target.getTime() - now.getTime() > 0 ? formatRemaining(target.getTime() - now.getTime()) : "已到达") : "计算中…"}
               </p>
-              <p className="mt-1 text-[11px] text-ink-faint">目标 {formatDateTime(tz, target)}</p>
+              <p className="dw-countdown-target mt-1 text-[11px] text-ink-faint">
+                目标 {formatDateTime(tz, target)}
+              </p>
             </>
           ) : (
             <p className="mt-1 text-sm text-ink-faint">点「设置」定一个目标时间</p>

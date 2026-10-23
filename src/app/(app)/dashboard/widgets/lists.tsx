@@ -19,14 +19,14 @@ export function MyProjectsWidget({ projects }: { projects: DashboardProject[] })
       {projects.length === 0 ? (
         <WidgetEmpty>还没有加入任何项目</WidgetEmpty>
       ) : (
-        <ul className="space-y-2.5">
+        <ul className="dw-list">
           {projects.slice(0, 8).map((project) => {
             const pct = project.taskTotal > 0 ? Math.round((project.doneCount / project.taskTotal) * 100) : 0;
             return (
               <li key={project.id}>
                 <Link href={`/projects/${project.id}`} className="group block">
                   <div className="flex items-baseline justify-between gap-2">
-                    <span className="truncate text-sm font-medium text-ink group-hover:text-primary">
+                    <span className="dw-item-title truncate text-sm font-medium text-ink group-hover:text-primary">
                       {project.name}
                     </span>
                     <span className="shrink-0 text-[11px] tabular-nums text-ink-faint">
@@ -63,7 +63,7 @@ export function UpcomingWidget({
       {tasks.length === 0 ? (
         <WidgetEmpty>没有待截止的任务</WidgetEmpty>
       ) : (
-        <ul className="space-y-2">
+        <ul className="dw-list">
           {tasks.map((task) => {
             const overdue = task.dueDate < today;
             const dueToday = task.dueDate === today;
@@ -71,7 +71,7 @@ export function UpcomingWidget({
               <li key={task.id} className="text-sm">
                 <Link
                   href={`/projects/${task.projectId}/tasks/${task.id}`}
-                  className="line-clamp-2 font-medium text-ink hover:text-primary"
+                  className="dw-item-title line-clamp-2 font-medium text-ink hover:text-primary"
                 >
                   {task.title}
                 </Link>
@@ -104,14 +104,16 @@ export function MyTeamsWidget({ teams }: { teams: DashboardTeam[] }) {
       {teams.length === 0 ? (
         <WidgetEmpty>还没有加入团队</WidgetEmpty>
       ) : (
-        <ul className="space-y-2.5">
+        <ul className="dw-list">
           {teams.slice(0, 8).map((team) => (
             <li key={team.id}>
               <Link
                 href={`/teams/${team.id}/projects`}
                 className="flex items-center justify-between gap-2 text-sm"
               >
-                <span className="truncate font-medium text-ink hover:text-primary">{team.name}</span>
+                <span className="dw-item-title truncate font-medium text-ink hover:text-primary">
+                  {team.name}
+                </span>
                 <span className="ac-badge shrink-0 bg-primary-soft text-primary">
                   {ROLE_LABEL[team.role]}
                 </span>
@@ -136,21 +138,21 @@ export function MessagesWidget({ messages }: { messages: DashboardMessages }) {
 
   return (
     <WidgetShell title="消息" href="/messages" scroll={false}>
-      <div className="grid grid-cols-3 gap-2">
+      <div className="dw-tile-grid">
         {items.map((item) => (
           <Link
             key={item.key}
             href="/messages"
-            className="rounded-lg border border-line bg-surface px-2 py-2 text-center transition-colors hover:border-primary/50"
+            className="dw-tile rounded-lg border border-line bg-surface px-2 py-2 text-center transition-colors hover:border-primary/50"
           >
             <p
-              className={`font-display text-xl font-semibold tabular-nums ${
+              className={`dw-tile-value font-display text-xl font-semibold tabular-nums ${
                 item.value > 0 ? "text-high" : "text-ink"
               }`}
             >
               {item.value}
             </p>
-            <p className="text-[11px] text-ink-faint">{item.label}</p>
+            <p className="dw-tile-label text-[11px] text-ink-faint">{item.label}</p>
           </Link>
         ))}
       </div>
@@ -168,15 +170,15 @@ const QUICK_LINKS = [
 export function QuickLinksWidget() {
   return (
     <WidgetShell title="快捷入口" scroll={false}>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="dw-links">
         {QUICK_LINKS.map((link) => (
           <Link
             key={link.href}
             href={link.href}
-            className="rounded-lg border border-line bg-surface px-3 py-2 transition-colors hover:border-primary/50"
+            className="dw-link rounded-lg border border-line bg-surface px-3 py-2 transition-colors hover:border-primary/50"
           >
-            <p className="text-sm font-medium text-ink">{link.label}</p>
-            <p className="truncate text-[11px] text-ink-faint">{link.hint}</p>
+            <p className="dw-link-title text-sm font-medium text-ink">{link.label}</p>
+            <p className="dw-link-hint truncate text-[11px] text-ink-faint">{link.hint}</p>
           </Link>
         ))}
       </div>

@@ -410,7 +410,9 @@ export function DashboardGrid({
         <div>
           <h1 className="font-display text-2xl font-semibold text-ink">工作台</h1>
           <p className="mt-0.5 text-xs text-ink-faint">
-            把常用信息收进一页；编辑模式可自由拖动、缩放与增删卡片
+            {editing
+              ? "拖动卡片移动 · 拖右下角缩放 · 左右虚线内都可放置"
+              : "把常用信息收进一页；编辑模式可自由拖动、缩放与增删卡片"}
           </p>
         </div>
 
@@ -503,6 +505,7 @@ export function DashboardGrid({
           </div>
         ) : (
           <div ref={gridRef} className="dashboard-grid">
+            {editing && <div className="dashboard-edit-frame" aria-hidden />}
             {ordered.map((item) => (
               <WidgetFrame
                 key={item.id}

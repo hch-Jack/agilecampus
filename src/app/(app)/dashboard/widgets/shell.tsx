@@ -20,9 +20,9 @@ export function WidgetShell({
   scroll?: boolean;
 }) {
   return (
-    <div className="flex h-full min-h-0 flex-col p-3">
+    <div className="dw-shell flex h-full min-h-0 flex-col p-3">
       <div className="flex shrink-0 items-center justify-between gap-2">
-        <h2 className="font-display text-sm font-semibold text-ink">{title}</h2>
+        <h2 className="dw-shell-title font-display text-sm font-semibold text-ink">{title}</h2>
         {href && (
           <Link
             href={href}
@@ -35,8 +35,8 @@ export function WidgetShell({
       <div
         className={
           scroll
-            ? "ac-scroll-hidden mt-2 min-h-0 flex-1 overflow-y-auto pr-1"
-            : "mt-2 flex min-h-0 flex-1 flex-col"
+            ? "dw-shell-body ac-scroll-hidden mt-2 min-h-0 flex-1 overflow-y-auto pr-1"
+            : "dw-shell-body mt-2 flex min-h-0 flex-1 flex-col"
         }
       >
         {children}

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   createContext,
@@ -356,7 +355,7 @@ export function AssistantShell({
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >
-        <div className="flex min-h-0 flex-1 flex-col gap-2 p-4">
+        <div className="flex min-h-0 flex-1 flex-col gap-3 p-4 lg:px-5">
           <AssistantConversations
             conversations={conversations}
             activeId={activeId}
@@ -385,14 +384,12 @@ export function AssistantShell({
               placeholder="问点什么，或交代一句让我记住…"
               actions={
                 <>
-                  <Link href="/settings" className="ac-btn-ghost text-xs">
-                    设置
-                  </Link>
                   <button
                     type="button"
                     onClick={() => setOpen(false)}
                     aria-label="收起助手"
-                    className="grid h-7 w-7 place-items-center rounded-field text-ink-faint transition-colors hover:bg-sunken hover:text-ink"
+                    title="收起助手"
+                    className="grid h-8 w-8 place-items-center rounded-field text-ink-faint transition-colors hover:bg-sunken hover:text-ink"
                   >
                     <svg
                       viewBox="0 0 24 24"

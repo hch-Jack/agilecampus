@@ -244,8 +244,12 @@ export function AgentChat({
     <section className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex shrink-0 items-start justify-between gap-2">
         <div className="min-w-0">
-          <h2 className="font-medium text-ink">{title}</h2>
-          {subtitle && <p className="mt-0.5 text-xs text-ink-faint">{subtitle}</p>}
+          <h2 className="font-display text-[15px] font-semibold tracking-tight text-ink">
+            {title}
+          </h2>
+          {subtitle && (
+            <p className="mt-1 text-xs leading-relaxed text-ink-faint">{subtitle}</p>
+          )}
         </div>
         {actions && <div className="flex shrink-0 items-center gap-1.5">{actions}</div>}
       </div>
@@ -254,7 +258,7 @@ export function AgentChat({
           草案行尾的删除键曾因此点不到。留出稳定槽位，滚动条出现与否都不压按钮。 */}
       <div
         ref={listRef}
-        className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-3 [scrollbar-gutter:stable]"
+        className="min-h-0 flex-1 space-y-2.5 overflow-y-auto pr-3 [scrollbar-gutter:stable]"
       >
         {messages.map((m, i) => {
           // 「继续处理后续动作」发出去的是写给模型的提示词（原请求复述 + 续做规矩），

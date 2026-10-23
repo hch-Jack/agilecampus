@@ -280,10 +280,10 @@ export function FocusTimerWidget({ instanceId }: { instanceId: string }) {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col justify-center p-3">
-      <div className="flex items-center justify-between gap-2">
+    <div className="dw-focus flex h-full min-h-0 flex-col justify-center p-3">
+      <div className="dw-focus-head flex items-center justify-between gap-2">
         <p className="text-xs text-ink-soft">{label}</p>
-        <div className="flex shrink-0 items-center gap-1 text-[11px]">
+        <div className="dw-focus-switch flex shrink-0 items-center gap-1 text-[11px]">
           <button
             type="button"
             onClick={() => switchPhase("focus")}
@@ -305,14 +305,14 @@ export function FocusTimerWidget({ instanceId }: { instanceId: string }) {
         </div>
       </div>
 
-      <p className="mt-1 font-display text-3xl font-semibold tabular-nums text-ink">
+      <p className="dw-focus-time mt-1 font-display text-3xl font-semibold tabular-nums text-ink">
         {ready ? formatClock(remaining) : "--:--"}
       </p>
-      <p className="mt-0.5 text-[11px] text-ink-faint">
+      <p className="dw-focus-hint mt-0.5 text-[11px] text-ink-faint">
         {finished ? "完成！休息一下" : running ? "进行中…" : "准备好就开始"}
       </p>
 
-      <div className="mt-2 flex flex-wrap gap-2">
+      <div className="dw-focus-actions mt-2 flex flex-wrap gap-2">
         {running ? (
           <button type="button" onClick={pause} className="ac-btn-ghost px-3 py-1 text-xs">
             暂停
