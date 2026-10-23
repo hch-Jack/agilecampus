@@ -33,7 +33,7 @@ export type GroupInfo = {
   ownerId: string;
   amOwner: boolean;
   memberCount: number;
-  // joinedAt 升序——群主即最早入群者，天然排第一
+  // 群主排第一，其余按入群时间；同批入群的 joinedAt 相同，再按 userId 兜底
   members: GroupMemberView[];
 };
 
@@ -134,7 +134,13 @@ export async function getGroupInfo(actorId: string, groupId: string): Promise<Gr
     .from(dmGroupMembers)
     .innerJoin(users, eq(dmGroupMembers.userId, users.id))
     .where(eq(dmGroupMembers.groupId, groupId))
-    .orderBy(asc(dmGroupMembers.joinedAt));
+    // 群主排第一；同一事务建的群 joinedAt 全都相同（now() 在事务内固定），
+    // 所以必须再用 userId 兜底，否则成员顺序不确定（测试曾因此偶发失败）。
+    .orderBy(
+      sql`${dmGroupMembers.userId} = ${group.ownerId} desc`,
+      asc(dmGroupMembers.joinedAt),
+      asc(dmGroupMembers.userId),
+    );
 
   return {
     id: group.id,

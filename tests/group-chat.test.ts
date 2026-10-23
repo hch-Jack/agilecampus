@@ -58,8 +58,11 @@ describe("createGroup / getGroupInfo（经 openGroupConversation）", () => {
     expect(ownerView.group.ownerId).toBe(owner.id);
     expect(ownerView.group.amOwner).toBe(true);
     expect(ownerView.group.memberCount).toBe(3);
-    // joinedAt 升序：群主排第一
-    expect(ownerView.group.members.map((m) => m.userId)).toEqual([owner.id, b.id, c.id]);
+    // 群主排第一；其余两人同一事务入群、joinedAt 相同，顺序由 userId 兜底，
+    // 故只断言成员集合，不依赖插入顺序
+    const memberIds = ownerView.group.members.map((m) => m.userId);
+    expect(memberIds[0]).toBe(owner.id);
+    expect(memberIds.slice(1).sort()).toEqual([b.id, c.id].sort());
 
     const bView = await openGroupConversation(b.id, groupId);
     expect(bView.group.amOwner).toBe(false);
