@@ -111,9 +111,11 @@ function AttachmentLink({
             ? "📝"
             : kind === "excel"
               ? "📊"
-              : kind === "pdf"
-                ? "📕"
-                : "📄";
+              : kind === "ppt"
+                ? "📽️"
+                : kind === "pdf"
+                  ? "📕"
+                  : "📄";
 
   return (
     <div className="mt-1">

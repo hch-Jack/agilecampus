@@ -53,6 +53,15 @@ describe("detectPreviewKind", () => {
     expect(detectPreviewKind("老文档.doc", "application/msword")).toBe("unsupported");
   });
 
+  it("PPT 判定：pptx→ppt，旧版二进制 .ppt 不支持", () => {
+    expect(detectPreviewKind("汇报.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation")).toBe(
+      "ppt",
+    );
+    expect(detectPreviewKind("汇报.pptx", null)).toBe("ppt");
+    expect(detectPreviewKind("老幻灯.ppt", null)).toBe("unsupported");
+    expect(detectPreviewKind("老幻灯.ppt", "application/vnd.ms-powerpoint")).toBe("unsupported");
+  });
+
   it("text/html 仍按文本源码预览（不内联渲染）", () => {
     expect(detectPreviewKind("index.html", "text/html")).toBe("text");
   });

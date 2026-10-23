@@ -16,6 +16,7 @@ export type PreviewKind =
   | "text"
   | "word"
   | "excel"
+  | "ppt"
   | "unsupported";
 
 const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "ico", "avif"]);
@@ -30,10 +31,12 @@ const TEXT_EXTS = new Set([
   "cs", "go", "rs", "php", "sql", "sh", "bat", "ps1", "html", "htm", "css", "scss",
   "less", "vue", "svelte",
 ]);
-// Office 在线预览：docx 走 mammoth 转 HTML，xlsx/xls 等走 SheetJS 转表格。
-// 旧版二进制 .doc 无可靠的纯 JS 渲染方案，不支持预览（提示下载）。
+// Office 在线预览：docx 走 mammoth 转 HTML，xlsx/xls 等走 SheetJS 转表格，
+// pptx 走 pptx-preview 渲染幻灯片。旧版二进制 .doc / .ppt 无可靠的纯 JS
+// 渲染方案，不支持预览（提示下载）。
 const WORD_EXTS = new Set(["docx"]);
 const EXCEL_EXTS = new Set(["xlsx", "xlsm", "xlsb", "xls"]);
+const PPT_EXTS = new Set(["pptx"]);
 
 function extOf(filename: string): string {
   const dot = filename.lastIndexOf(".");
@@ -67,6 +70,12 @@ export function detectPreviewKind(
     EXCEL_EXTS.has(ext)
   ) {
     return "excel";
+  }
+  if (
+    mime.startsWith("application/vnd.openxmlformats-officedocument.presentationml") ||
+    PPT_EXTS.has(ext)
+  ) {
+    return "ppt";
   }
   // text/html 按文本展示源码；application/json、+xml、+json 等 API 常见类型也归文本
   if (
