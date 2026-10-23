@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { IdentityBadge } from "@/components/badges";
+import { FilePreviewModal } from "@/components/file-preview";
+import { detectPreviewKind } from "@/lib/file-preview";
 // 类型从 lib 走 `import type`（编译期擦除），不经 "use server" 的 actions 文件中转
 import type { DmConversation, DmMessageView, DmPeer } from "@/lib/dm";
 import type {
@@ -87,25 +89,70 @@ function UnreadBadge({ count }: { count: number }) {
   );
 }
 
+// 附件条：点击文件名/缩略图在线预览（弹窗内可预览图片/PDF/音视频/文本），⬇ 单独下载
 function AttachmentLink({
   att,
   mine,
 }: {
-  att: { id: string; filename: string; size: number };
+  att: { id: string; filename: string; mimeType?: string | null; size: number };
   mine: boolean;
 }) {
+  const [previewing, setPreviewing] = useState(false);
+  const url = `/api/dm/attachments/${att.id}`;
+  const kind = detectPreviewKind(att.filename, att.mimeType);
+  const icon = kind === "image" ? "🖼️" : kind === "video" ? "🎬" : kind === "audio" ? "🎵" : "📄";
+
   return (
-    <a
-      href={`/api/dm/attachments/${att.id}`}
-      className={`mt-1 flex items-center gap-1.5 rounded-field px-2 py-1.5 text-xs underline-offset-2 hover:underline ${
-        mine ? "bg-primary-hover text-white" : "bg-surface text-primary"
-      }`}
-      download
-    >
-      <span aria-hidden>📄</span>
-      <span className="max-w-48 truncate">{att.filename}</span>
-      <span className={mine ? "text-white/70" : "text-ink-faint"}>{fmtSize(att.size)}</span>
-    </a>
+    <div className="mt-1">
+      {kind === "image" && (
+        <button
+          type="button"
+          onClick={() => setPreviewing(true)}
+          className="block max-w-full overflow-hidden rounded-field"
+          title="点击预览大图"
+        >
+          {/* 缩略图直接走下载路由（浏览器带会话 cookie、按 URL 缓存），lazy 避免整页会话的图一次性全拉 */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={url}
+            alt={att.filename}
+            loading="lazy"
+            className="max-h-60 max-w-full object-cover"
+          />
+        </button>
+      )}
+      <div
+        className={`flex items-center gap-1.5 rounded-field px-2 py-1.5 text-xs ${
+          kind === "image" ? "mt-1" : ""
+        } ${mine ? "bg-primary-hover text-white" : "bg-surface text-primary"}`}
+      >
+        <button
+          type="button"
+          onClick={() => setPreviewing(true)}
+          className="flex min-w-0 items-center gap-1.5 text-left hover:underline"
+          title="在线预览"
+        >
+          <span aria-hidden>{icon}</span>
+          <span className="max-w-48 truncate">{att.filename}</span>
+        </button>
+        <span className={mine ? "text-white/70" : "text-ink-faint"}>{fmtSize(att.size)}</span>
+        <a
+          href={url}
+          download={att.filename}
+          className={`ml-auto shrink-0 px-1 hover:underline ${mine ? "text-white/70" : "text-ink-faint"}`}
+          aria-label={`下载 ${att.filename}`}
+          title="下载"
+        >
+          ⬇
+        </a>
+      </div>
+      {previewing && (
+        <FilePreviewModal
+          file={{ url, filename: att.filename, mimeType: att.mimeType ?? null, size: att.size }}
+          onClose={() => setPreviewing(false)}
+        />
+      )}
+    </div>
   );
 }
 

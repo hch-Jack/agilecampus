@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
+import { FilePreviewModal } from "@/components/file-preview";
 import { formatShortDateTime } from "@/lib/time";
 import {
   uploadAttachmentAction,
@@ -84,6 +85,7 @@ function AttachmentRow({
     deleteAttachmentAction,
     null,
   );
+  const [previewing, setPreviewing] = useState(false);
 
   return (
     <li className="flex items-center gap-2 rounded px-1 py-1 hover:bg-sunken">
@@ -94,6 +96,15 @@ function AttachmentRow({
           {formatShortDateTime(timeZone, attachment.createdAt)}
         </span>
       </div>
+
+      {/* 在线预览：图片/PDF/音视频/文本免下载查看，其余格式弹窗内提示下载 */}
+      <button
+        type="button"
+        onClick={() => setPreviewing(true)}
+        className="text-xs text-primary underline"
+      >
+        预览
+      </button>
 
       {/* 下载走 GET 路由（always attachment 响应），与 server action 写路径分离 */}
       <a
@@ -122,6 +133,18 @@ function AttachmentRow({
       )}
 
       {deleteState?.error && <p className="text-xs text-high">{deleteState.error}</p>}
+
+      {previewing && (
+        <FilePreviewModal
+          file={{
+            url: `/api/attachments/${attachment.id}`,
+            filename: attachment.filename,
+            mimeType: attachment.mimeType,
+            size: attachment.size,
+          }}
+          onClose={() => setPreviewing(false)}
+        />
+      )}
     </li>
   );
 }

@@ -176,7 +176,8 @@ export type DmMessageView = {
   content: string;
   readAt: string | null; // 我发的消息：对方是否已读
   createdAt: string;
-  attachment: { id: string; filename: string; size: number } | null;
+  // mimeType 供前端判定在线预览方式（图片/PDF/文本…），可能为空则按扩展名兜底
+  attachment: { id: string; filename: string; mimeType: string | null; size: number } | null;
 };
 
 export type DmThread = {
@@ -214,6 +215,7 @@ async function loadDmThread(
       createdAt: dmMessages.createdAt,
       attachmentId: dmAttachments.id,
       attachmentFilename: dmAttachments.filename,
+      attachmentMimeType: dmAttachments.mimeType,
       attachmentSize: dmAttachments.size,
     })
     .from(dmMessages)
@@ -249,6 +251,7 @@ async function loadDmThread(
         ? {
             id: r.attachmentId,
             filename: r.attachmentFilename ?? "未命名文件",
+            mimeType: r.attachmentMimeType ?? null,
             size: r.attachmentSize ?? 0,
           }
         : null,
