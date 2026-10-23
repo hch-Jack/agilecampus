@@ -12,6 +12,7 @@ import {
 } from "@/lib/task";
 import { copyMessageAttachmentToTask, deleteAttachment } from "@/lib/attachment";
 import { createPersonalContext } from "@/lib/personal-context";
+import { createTeam, joinTeam } from "@/lib/team";
 import { notifyTaskAssigned, notifyTaskCompleted } from "@/lib/notify";
 import {
   createGroup,
@@ -20,16 +21,29 @@ import {
   respondToGroupInvite,
 } from "@/lib/group-chat";
 import { forwardChatMessage, sendChatMessage } from "@/lib/chat-transfer";
+import { createResourceUsage, endResourceUsage } from "@/lib/resource";
+import { createLabel, deleteLabel, renameLabel, setTaskLabels } from "@/lib/label";
+import { zonedWallClockToInstant } from "@/lib/time";
+import { resolveUserTimeZone } from "@/lib/time-pref";
 import { AppError, ForbiddenError } from "@/lib/errors";
 import {
   ATTACH_MESSAGE_TOOL,
   CREATE_GROUP_TOOL,
+  CREATE_LABEL_TOOL,
+  CREATE_RESOURCE_USAGE_TOOL,
+  CREATE_TEAM_TOOL,
+  JOIN_TEAM_TOOL,
+  DELETE_LABEL_TOOL,
+  EDIT_TASK_LABELS_TOOL,
+  END_RESOURCE_USAGE_TOOL,
   FORWARD_MESSAGE_TOOL,
   INVITE_GROUP_TOOL,
+  labelColorSchema,
   personalContextDraftSchema,
   RESPOND_INVITE_TOOL,
   SAVE_CONTEXT_TOOL,
   SEND_MESSAGE_TOOL,
+  UPDATE_LABEL_TOOL,
   type CommitToolName,
   type WriteToolName,
 } from "./tools";
@@ -382,6 +396,160 @@ export async function commitInviteToGroup(
   return { committed: 1, conflicts: [] };
 }
 
+// ------------------------------------------------------- 建团队 / 加入团队
+
+// 与网页端「创建团队」同一口径：只要求非空，不做额外的长度/字符限制。
+const createTeamSchema = z.object({
+  name: z.string().trim().min(1, "请填写团队名称"),
+});
+
+export async function commitCreateTeam(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = createTeamSchema.parse(draft);
+  await createTeam(actorId, d.name);
+  return { committed: 1, conflicts: [] };
+}
+
+// 卡片上的 teamName 只用于展示，zod 自动剥离；邀请码有效性与「已在该团队中」
+// 由 joinTeam 在落库那一刻重校 —— 拟稿到确认之间，码可能失效、人也可能已被拉进团。
+const joinTeamSchema = z.object({
+  inviteCode: z.string().trim().min(1, "请填写邀请码"),
+});
+
+export async function commitJoinTeam(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = joinTeamSchema.parse(draft);
+  await joinTeam(actorId, d.inviteCode);
+  return { committed: 1, conflicts: [] };
+}
+
+// ------------------------------------------------- 资源占用 / 标签（个人 scope）
+
+/**
+ * 资源占用的时间在草案里是**用户本地墙面时间**（`YYYY-MM-DDTHH:mm`），
+ * 与卡片上的 `<input type="datetime-local">` 同形。落库前按用户时区换算成绝对时刻 ——
+ * 绝不 `new Date(墙上时间)`：那会按服务器时区解释，用户看到的 14:00 可能存成 06:00。
+ * 拟稿时已经换算过一次并校验过格式，这里仍要重新换算：卡片上的输入框可被用户改。
+ */
+function parseWallClockTime(tz: string, value: string, label: string) {
+  try {
+    return zonedWallClockToInstant(tz, value);
+  } catch {
+    throw new AppError(`${label}格式无效，请用 YYYY-MM-DDTHH:mm（如 2026-11-01T14:00）`);
+  }
+}
+
+// 结束时间留空（卡片清空输入框会送空串）与 null、undefined 同义：仍在占用。
+const resourceUsageDraftSchema = z.object({
+  teamId: z.uuid(),
+  resourceName: z.string().min(1),
+  purpose: z.string().nullable().optional(),
+  startTime: z.string().min(1),
+  endTime: z.string().nullable().optional(),
+});
+
+export async function commitCreateResourceUsage(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = resourceUsageDraftSchema.parse(draft);
+  const tz = await resolveUserTimeZone(actorId);
+  const start = parseWallClockTime(tz, d.startTime, "开始时间");
+  const endValue = d.endTime?.trim() || null;
+  const end = endValue ? parseWallClockTime(tz, endValue, "结束时间") : null;
+  if (end && end.getTime() <= start.getTime())
+    throw new AppError("结束时间须晚于开始时间");
+
+  // 团队归属、「结束晚于开始」与资源名非空在 lib 里再校一次
+  await createResourceUsage(actorId, d.teamId, {
+    resourceName: d.resourceName,
+    purpose: d.purpose ?? null,
+    startTime: start,
+    endTime: end,
+  });
+  return { committed: 1, conflicts: [] };
+}
+
+const endResourceUsageSchema = z.object({ usageId: z.uuid() });
+
+// 「本人或团队 admin」「仍在占用」由 lib/endResourceUsage 以 UPDATE ... WHERE end_time IS NULL 收口
+export async function commitEndResourceUsage(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = endResourceUsageSchema.parse(draft);
+  await endResourceUsage(actorId, d.usageId);
+  return { committed: 1, conflicts: [] };
+}
+
+// 标签名长度、去重与 admin 权限都在 lib 里；这里只把卡片数据还原成调用参数。
+const createLabelSchema = z.object({
+  teamId: z.uuid(),
+  name: z.string().min(1),
+  color: labelColorSchema.optional(),
+});
+
+export async function commitCreateLabel(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = createLabelSchema.parse(draft);
+  await createLabel(actorId, d.teamId, { name: d.name, color: d.color });
+  return { committed: 1, conflicts: [] };
+}
+
+const updateLabelSchema = z.object({
+  labelId: z.uuid(),
+  // 卡片把名称框清空 = 不改名；只换色时不该被当成「改成空名」
+  name: z
+    .string()
+    .optional()
+    .transform((v) => (v?.trim() ? v : undefined)),
+  color: labelColorSchema.optional(),
+});
+
+export async function commitUpdateLabel(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = updateLabelSchema.parse(draft);
+  if (d.name === undefined && d.color === undefined)
+    throw new AppError("请至少给出新的名称或颜色");
+  await renameLabel(actorId, d.labelId, { name: d.name, color: d.color });
+  return { committed: 1, conflicts: [] };
+}
+
+const deleteLabelSchema = z.object({ labelId: z.uuid() });
+
+export async function commitDeleteLabel(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = deleteLabelSchema.parse(draft);
+  await deleteLabel(actorId, d.labelId);
+  return { committed: 1, conflicts: [] };
+}
+
+// 卡片勾选的是**最终集合**：落库走 setTaskLabels 的全量替换（同一事务），
+// 标签归属与任务写权限由 lib 重校，不信任草案里的 labels 展示字段。
+const editTaskLabelsSchema = z.object({
+  taskId: z.uuid(),
+  labelIds: z.array(z.uuid()),
+});
+
+export async function commitEditTaskLabels(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = editTaskLabelsSchema.parse(draft);
+  await setTaskLabels(actorId, d.taskId, d.labelIds);
+  return { committed: 1, conflicts: [] };
+}
+
 // 与项目版的 createProjectSchema 共用字段定义：个人版只是多一个团队 id，
 // 免得两处各写一份、日后加字段时只改一边
 const personalCreateProjectSchema = createProjectSchema.extend({ teamId: z.uuid() });
@@ -411,6 +579,16 @@ export async function commitPersonalDraft(
   if (tool === FORWARD_MESSAGE_TOOL) return commitForwardMessage(actorId, draft);
   if (tool === CREATE_GROUP_TOOL) return commitCreateGroup(actorId, draft);
   if (tool === INVITE_GROUP_TOOL) return commitInviteToGroup(actorId, draft);
+  // 建团队 / 加入团队：同样没有 projectId，先于下面「拆 projectId」分派
+  if (tool === CREATE_TEAM_TOOL) return commitCreateTeam(actorId, draft);
+  if (tool === JOIN_TEAM_TOOL) return commitJoinTeam(actorId, draft);
+  // 资源与标签：草案里没有 projectId（团队 / 任务 id 自带归属），必须在拆 projectId 之前分派。
+  if (tool === CREATE_RESOURCE_USAGE_TOOL) return commitCreateResourceUsage(actorId, draft);
+  if (tool === END_RESOURCE_USAGE_TOOL) return commitEndResourceUsage(actorId, draft);
+  if (tool === CREATE_LABEL_TOOL) return commitCreateLabel(actorId, draft);
+  if (tool === UPDATE_LABEL_TOOL) return commitUpdateLabel(actorId, draft);
+  if (tool === DELETE_LABEL_TOOL) return commitDeleteLabel(actorId, draft);
+  if (tool === EDIT_TASK_LABELS_TOOL) return commitEditTaskLabels(actorId, draft);
 
   if (tool === "create_project") {
     // teamId 是 uuid 形状，与下面那四类同理：缺了/填成了团队名就说清楚，别甩一句「草案格式无效」

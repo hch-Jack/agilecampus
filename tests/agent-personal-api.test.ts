@@ -1,10 +1,20 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createUser } from "@/lib/user";
-import { createTeam, joinTeam } from "@/lib/team";
+import { createTeam, joinTeam, listMyTeams } from "@/lib/team";
 import { createProject } from "@/lib/project";
+import { listTeamResourceUsages } from "@/lib/resource";
+import { listTeamLabels } from "@/lib/label";
 import { createGroup, inviteToGroup, listGroupConversations, listMyGroupInvites } from "@/lib/group-chat";
 import { listMyPersonalContext } from "@/lib/personal-context";
-import { listPersonalChatHistory, listProjectChatHistory } from "@/lib/agent/conversation";
+import {
+  countPersonalConversations,
+  findPersonalConversation,
+  listPersonalChatHistory,
+  listPersonalConversationMessages,
+  listProjectChatHistory,
+  persistTurn,
+  startPersonalConversation,
+} from "@/lib/agent/conversation";
 import { POST as chatRoute } from "@/app/api/chat/route";
 import { POST as commitRoute } from "@/app/api/chat/commit/route";
 import { resetDb } from "./helpers";
@@ -126,6 +136,140 @@ describe("POST /api/chat", () => {
       "user",
       "assistant",
     ]);
+    expect(await listProjectChatHistory(student.id, project.id)).toEqual([]);
+  });
+
+  it("scope=personal + projectId：焦点项目生效，仍落个人会话", async () => {
+    const { student, project } = await scene();
+    authMock.userId = student.id;
+    useScript([toolStep("list_comments", {}), textStep("留言板是空的。")]);
+
+    const res = await chatRoute(
+      req({ scope: "personal", projectId: project.id, userText: "这个项目有留言吗？" }),
+    );
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { toolTrace: { toolName: string }[] };
+    // 项目专属工具真的放出来了（没有焦点时个人工具面里没有它）
+    expect(data.toolTrace.map((t) => t.toolName)).toContain("list_comments");
+
+    expect((await listPersonalChatHistory(student.id)).map((m) => m.content)).toEqual([
+      "这个项目有留言吗？",
+      "留言板是空的。",
+    ]);
+    expect(await listProjectChatHistory(student.id, project.id)).toEqual([]);
+  });
+
+  it("scope=personal + 无权焦点的项目 → 403，且不建个人会话", async () => {
+    const { outsider, project } = await scene();
+    authMock.userId = outsider.id;
+    useScript([textStep("不该到这里")]);
+
+    const res = await chatRoute(
+      req({ scope: "personal", projectId: project.id, userText: "偷看进度" }),
+    );
+    expect(res.status).toBe(403);
+    expect(await findPersonalConversation(outsider.id)).toBeNull();
+  });
+
+  it("scope=personal + 畸形 projectId → 400（不把非法 id 当焦点发下去）", async () => {
+    const { student } = await scene();
+    authMock.userId = student.id;
+    const res = await chatRoute(
+      req({ scope: "personal", projectId: "not-a-uuid", userText: "你好" }),
+    );
+    expect(res.status).toBe(400);
+    expect(await findPersonalConversation(student.id)).toBeNull();
+  });
+
+  it("响应带回会话与轮次 id（客户端据此寻址和成对删除）", async () => {
+    const { student } = await scene();
+    authMock.userId = student.id;
+    useScript([textStep("在。")]);
+
+    const res = await chatRoute(req({ scope: "personal", userText: "在吗" }));
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as Record<string, unknown>;
+    expect(typeof data.conversationId).toBe("string");
+    expect(data.conversationTitle).toBe("在吗");
+    expect(typeof data.conversationCreatedAt).toBe("string");
+    expect(data.lastMessageAt).toMatch(/T.*Z$/);
+    expect(typeof data.turnId).toBe("string");
+    expect(typeof data.userMessageId).toBe("string");
+    expect(typeof data.assistantMessageId).toBe("string");
+  });
+
+  it("open_page 的跳转意图随响应下发 navigations", async () => {
+    const { student, project } = await scene();
+    authMock.userId = student.id;
+    useScript([
+      toolStep("open_page", { target: "project", projectId: project.id }),
+      textStep("已为你打开赤壁演习。"),
+    ]);
+
+    const res = await chatRoute(req({ scope: "personal", userText: "打开赤壁演习" }));
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { navigations: { label: string; href: string }[] };
+    // 路径与标签都由服务端生成，模型只报了目标与 id
+    expect(data.navigations).toEqual([
+      { label: "赤壁演习", href: `/projects/${project.id}` },
+    ]);
+  });
+
+  it("scope=personal + conversationId：落指定会话，最近一条不被追加", async () => {
+    const { student } = await scene();
+    authMock.userId = student.id;
+    const older = await startPersonalConversation(student.id);
+    await persistTurn(older.id, "旧问", "旧答", []);
+    const latest = await startPersonalConversation(student.id);
+    await persistTurn(latest.id, "较新问", "较新答", []);
+
+    useScript([textStep("好的。")]);
+    const res = await chatRoute(
+      req({ scope: "personal", conversationId: older.id, userText: "追加到旧会话" }),
+    );
+    expect(res.status).toBe(200);
+
+    expect(
+      (await listPersonalConversationMessages(student.id, older.id)).map((m) => m.content),
+    ).toEqual(["旧问", "旧答", "追加到旧会话", "好的。"]);
+    expect(
+      (await listPersonalConversationMessages(student.id, latest.id)).map((m) => m.content),
+    ).toEqual(["较新问", "较新答"]);
+  });
+
+  it("别人的 / 畸形的 conversationId 都被拒，且不新建", async () => {
+    const { student, owner } = await scene();
+    authMock.userId = student.id;
+    const theirs = await startPersonalConversation(owner.id);
+    useScript([textStep("不该到这里")]);
+
+    const foreign = await chatRoute(
+      req({ scope: "personal", conversationId: theirs.id, userText: "偷看" }),
+    );
+    expect(foreign.status).toBe(403);
+
+    const malformed = await chatRoute(
+      req({ scope: "personal", conversationId: "not-a-uuid", userText: "你好" }),
+    );
+    expect(malformed.status).toBe(400);
+
+    expect(await countPersonalConversations(student.id)).toBe(0);
+  });
+
+  it("scope=project 带 conversationId → 400（项目共享会话不走这套）", async () => {
+    const { student, project } = await scene();
+    authMock.userId = student.id;
+    useScript([textStep("不该到这里")]);
+
+    const res = await chatRoute(
+      req({
+        scope: "project",
+        projectId: project.id,
+        conversationId: "3f0f2a7e-8b1c-4d8e-9f00-123456789abc",
+        userText: "你好",
+      }),
+    );
+    expect(res.status).toBe(400);
     expect(await listProjectChatHistory(student.id, project.id)).toEqual([]);
   });
 });
@@ -274,5 +418,92 @@ describe("POST /api/chat/commit", () => {
     );
     expect(res.status).toBe(200);
     expect((await res.json()).committed).toBe(2);
+  });
+
+  it("个人 scope 的资源占用草案：墙面时间按用户时区落库", async () => {
+    const { student, team } = await scene();
+    authMock.userId = student.id;
+    const res = await commitRoute(
+      req({
+        scope: "personal",
+        tool: "create_resource_usage",
+        draft: {
+          teamId: team.id,
+          teamName: "东吴实验室", // 展示字段，落库 zod 剥掉
+          resourceName: "GPU-01",
+          purpose: "训练模型",
+          startTime: "2026-11-01T09:30",
+          endTime: "2026-11-01T11:00",
+        },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).committed).toBe(1);
+
+    const { usages } = await listTeamResourceUsages(student.id, team.id);
+    // 默认时区 Asia/Shanghai：09:30 当地 = 01:30Z
+    expect(usages[0].startTime.toISOString()).toBe("2026-11-01T01:30:00.000Z");
+    expect(usages[0].endTime?.toISOString()).toBe("2026-11-01T03:00:00.000Z");
+  });
+
+  it("scope=personal + create_team：确认后建团，发起人为 admin", async () => {
+    const { student } = await scene();
+    authMock.userId = student.id;
+    const res = await commitRoute(
+      req({ scope: "personal", tool: "create_team", draft: { name: "  新团队  " } }),
+    );
+    expect(res.status).toBe(200);
+
+    const names = (await listMyTeams(student.id)).map((t) => [t.name, t.role]);
+    expect(names).toEqual(expect.arrayContaining([["新团队", "admin"]]));
+  });
+
+  it("scope=personal + join_team：凭邀请码入团", async () => {
+    const { team } = await scene();
+    const latecomer = await makeUser("late@example.com");
+    authMock.userId = latecomer.id;
+    const res = await commitRoute(
+      req({
+        scope: "personal",
+        tool: "join_team",
+        // teamName 是卡片展示字段，落库 zod 剥掉
+        draft: { inviteCode: team.inviteCode, teamName: "伪造的团队名" },
+      }),
+    );
+    expect(res.status).toBe(200);
+
+    expect((await listMyTeams(latecomer.id)).map((t) => t.id)).toEqual([team.id]);
+  });
+
+  it("项目页不认建团工具（scope=project + create_team）→ 400", async () => {
+    const { student, project } = await scene();
+    authMock.userId = student.id;
+    const res = await commitRoute(
+      req({
+        scope: "project",
+        projectId: project.id,
+        tool: "create_team",
+        draft: { name: "不该从项目页建团" },
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await listMyTeams(student.id)).map((t) => t.name)).not.toContain(
+      "不该从项目页建团",
+    );
+  });
+
+  it("项目页不认标签工具（scope=project + create_label）→ 400", async () => {
+    const { owner, project, team } = await scene();
+    authMock.userId = owner.id;
+    const res = await commitRoute(
+      req({
+        scope: "project",
+        projectId: project.id,
+        tool: "create_label",
+        draft: { teamId: team.id, name: "论文" },
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await listTeamLabels(owner.id, team.id)).map((l) => l.name)).toEqual([]);
   });
 });

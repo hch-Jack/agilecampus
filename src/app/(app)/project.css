@@ -146,8 +146,10 @@ body.proj-cosmic .ac-identity-student {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16), 0 0 0 1px rgba(156, 196, 245, .5);
 }
 
-/* —— 4. 顶栏深色玻璃 —— */
-body.proj-cosmic header {
+/* —— 4. 顶栏深色玻璃 ——
+   只认顶栏的 .app-topbar：页面自己的标题也常用 <header>（工作台、AI 配置、任务页…），
+   早先裸选 header 会给标题区凭空刷一块深色底 + 下边框，看着像标题底下多了个黑框。 */
+body.proj-cosmic .app-topbar {
   background-color: rgba(20, 26, 44, .72);
   border-bottom: 1px solid var(--color-line);
   backdrop-filter: blur(16px);
@@ -380,4 +382,20 @@ body.proj-cosmic .nav-unread-badge {
    这里改用与卡片同色系的近不透明深蓝。 */
 body.proj-cosmic .graph-sticky {
   background-color: rgba(14, 19, 34, 0.96);
+}
+
+/* —— 12. 右侧 AI 助手面板 —— */
+/* 宇宙主题的 --color-surface 只有 45% 不透明度，铺在页面内容上会透底、字也糊。
+   面板单独压厚，并保留一层模糊让边缘与星空背景过渡。浅色主题用 bg-surface（纯白）。 */
+body.proj-cosmic .assistant-panel {
+  background-color: rgba(14, 19, 34, 0.94);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+/* 挤压/滑入都用 transition（不是 animation），这里一并尊重减弱动态偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .assistant-panel,
+  .assistant-shell-push {
+    transition: none !important;
+  }
 }

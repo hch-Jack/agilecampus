@@ -6,15 +6,15 @@ import {
   deleteContextAction,
   toggleContextVisibilityAction,
   type ContextState,
-} from "@/app/(app)/dashboard/actions";
+} from "@/app/(app)/settings/actions";
 
 /**
- * 我的个人上下文：一张列表 + 一行新增。**嵌在助手卡片的「设置」面板里**渲染
- * （见 `agent-chat.tsx` 的 `settings`），故自带背景与边框由外层给，这里只排内容。
+ * 我的个人上下文：一张列表 + 一行新增。渲染在「AI配置」页的「AI 助手」一节里，
+ * 背景与边框由外层卡片给，这里只排内容。
  *
- * 「项目可见」是默认值，因为它意味着**队友可以通过项目助手看到这条**——界面必须说清楚，
- * 否则就是拿别人的信息去换助手的聪明。故每条都挂着可见性徽章（点一下即切换），
- * 新增表单上也有说明。
+ * 「项目可见」是默认值，因为它意味着**这条会进入项目共享上下文**（队友在项目里问 AI 时
+ * 能间接看到）——界面必须说清楚，否则就是拿别人的信息去换助手的聪明。故每条都挂着可见性
+ * 徽章（点一下即切换），新增表单上也有说明。
  */
 
 export interface ContextRow {
@@ -35,14 +35,15 @@ export function PersonalContextCard({ items }: { items: ContextRow[] }) {
       <div>
         <h3 className="text-sm font-medium text-ink">我的个人上下文</h3>
         <p className="mt-0.5 text-xs text-ink-faint">
-          助手据此了解你在做什么；「项目可见」的条目，队友问项目助手时也会看到
+          助手据此了解你在做什么；「项目可见」的条目会进入项目的共享上下文（队友可见），「仅自己」只有你看得到。
+          每条下方的两个按钮可随时切换。
         </p>
       </div>
 
       {items.length === 0 ? (
         <p className="text-sm text-ink-soft">
           还没记什么。写一条吧，比如「我在做遥感图像分割，每周三下午有课」——
-          也可以直接跟下面的助手说，让它拟好草案你来确认。
+          也可以直接跟右侧的 AI 助手说，让它拟好草案你来确认。
         </p>
       ) : (
         <ul className="divide-y divide-line">
@@ -50,25 +51,39 @@ export function PersonalContextCard({ items }: { items: ContextRow[] }) {
             <li key={it.id} className="flex items-start justify-between gap-3 py-2">
               <div className="min-w-0">
                 <p className="whitespace-pre-wrap text-sm text-ink">{it.content}</p>
-                <form action={toggleContextVisibilityAction} className="mt-1">
-                  <input type="hidden" name="id" value={it.id} />
-                  <input
-                    type="hidden"
-                    name="visibility"
-                    value={it.visibility === "shared" ? "private" : "shared"}
-                  />
-                  <button
-                    type="submit"
-                    title="点击切换可见性"
-                    className={`ac-badge ${
-                      it.visibility === "shared"
-                        ? "bg-primary-soft text-primary"
-                        : "bg-sunken text-ink-soft"
-                    }`}
+                {/* 可见性做成两枚按钮直接选，而不是「点一下徽章翻转」：
+                    当前值一目了然，想改成哪一档就点哪一档。每枚按钮各带一张表单、
+                    用隐藏域传目标值，不依赖 submitter 的 name/value 语义。 */}
+                <div className="mt-1.5 flex items-center gap-2">
+                  <span className="text-xs text-ink-faint">可见性</span>
+                  <div
+                    role="group"
+                    aria-label="可见性"
+                    className="inline-flex rounded-field border border-line bg-sunken p-0.5"
                   >
-                    {it.visibility === "shared" ? "项目可见" : "仅自己"}
-                  </button>
-                </form>
+                    {(["shared", "private"] as const).map((visibility) => {
+                      const active = it.visibility === visibility;
+                      return (
+                        <form key={visibility} action={toggleContextVisibilityAction}>
+                          <input type="hidden" name="id" value={it.id} />
+                          <input type="hidden" name="visibility" value={visibility} />
+                          <button
+                            type="submit"
+                            aria-pressed={active}
+                            title={active ? "当前可见性" : undefined}
+                            className={`rounded-[6px] px-2 py-0.5 text-xs transition-colors ${
+                              active
+                                ? "bg-primary-soft font-medium text-primary"
+                                : "text-ink-soft hover:text-ink"
+                            }`}
+                          >
+                            {visibility === "shared" ? "项目可见" : "仅自己"}
+                          </button>
+                        </form>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
               <form action={deleteContextAction}>
                 <input type="hidden" name="id" value={it.id} />

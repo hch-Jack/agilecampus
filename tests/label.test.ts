@@ -5,7 +5,9 @@ import { createProject } from "@/lib/project";
 import { createTask, listProjectTasks } from "@/lib/task";
 import {
   createLabel,
+  getLabelDetail,
   listTeamLabels,
+  listTeamLabelsWithUsage,
   renameLabel,
   deleteLabel,
   setTaskLabels,
@@ -81,6 +83,71 @@ describe("listTeamLabels", () => {
   it("非成员读取被拒", async () => {
     const { outsider, team } = await scene();
     await expect(listTeamLabels(outsider.id, team.id)).rejects.toThrow("没有权限");
+  });
+});
+
+describe("listTeamLabelsWithUsage", () => {
+  beforeEach(resetDb);
+
+  it("带团队名与每标签的任务数（没贴任务的标签为 0）", async () => {
+    const { owner, team, student, teacher } = await scene();
+    const project = await createProject(owner.id, team.id, { name: "赤壁演习" });
+    const t1 = await createTask(student.id, project.id, { title: "甲" });
+    const t2 = await createTask(student.id, project.id, { title: "乙" });
+    const paper = await createLabel(owner.id, team.id, { name: "论文" });
+    const code = await createLabel(owner.id, team.id, { name: "代码" });
+    await setTaskLabels(student.id, t1.id, [paper.id]);
+    await setTaskLabels(student.id, t2.id, [paper.id]);
+
+    const out = await listTeamLabelsWithUsage(teacher.id, team.id);
+    expect(out.teamId).toBe(team.id);
+    expect(out.teamName).toBe("东吴实验室");
+    expect(out.role).toBe("teacher");
+    expect(out.labels).toEqual([
+      { id: code.id, name: "代码", color: "slate", usageCount: 0 },
+      { id: paper.id, name: "论文", color: "slate", usageCount: 2 },
+    ]);
+  });
+
+  it("非成员被拒，团队不存在则报不存在", async () => {
+    const { outsider, student, team } = await scene();
+    await expect(listTeamLabelsWithUsage(outsider.id, team.id)).rejects.toThrow("没有权限");
+    await expect(
+      listTeamLabelsWithUsage(student.id, "00000000-0000-4000-8000-000000000000"),
+    ).rejects.toThrow("团队不存在");
+  });
+});
+
+describe("getLabelDetail", () => {
+  beforeEach(resetDb);
+
+  it("成员可读，带团队名 / 使用数 / canManage（仅 admin）", async () => {
+    const { owner, team, student } = await scene();
+    const project = await createProject(owner.id, team.id, { name: "赤壁演习" });
+    const task = await createTask(student.id, project.id, { title: "甲" });
+    const label = await createLabel(owner.id, team.id, { name: "论文", color: "red" });
+    await setTaskLabels(student.id, task.id, [label.id]);
+
+    const asOwner = await getLabelDetail(owner.id, label.id);
+    expect(asOwner).toMatchObject({
+      id: label.id,
+      teamId: team.id,
+      teamName: "东吴实验室",
+      name: "论文",
+      color: "red",
+      usageCount: 1,
+      canManage: true,
+    });
+    expect((await getLabelDetail(student.id, label.id)).canManage).toBe(false);
+  });
+
+  it("非成员读被拒，不存在的 id 报不存在", async () => {
+    const { owner, outsider, team } = await scene();
+    const label = await createLabel(owner.id, team.id, { name: "论文" });
+    await expect(getLabelDetail(outsider.id, label.id)).rejects.toThrow("没有权限");
+    await expect(
+      getLabelDetail(owner.id, "00000000-0000-4000-8000-000000000000"),
+    ).rejects.toThrow("标签不存在");
   });
 });
 

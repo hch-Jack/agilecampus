@@ -1,10 +1,14 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { IdentityBadge } from "@/components/badges";
+import { AssistantShell, AssistantToggle } from "@/components/assistant-shell";
+import { getAssistantPanelData } from "@/lib/agent/conversation";
+import { ASSISTANT_CONVERSATION_COOKIE } from "@/lib/agent/assistant-panel-shared";
 import { AUTO_TIMEZONE, DEFAULT_TIMEZONE, formatDateTime, listTimeZones } from "@/lib/time";
 import { getTimeZonePref, resolveUserTimeZone } from "@/lib/time-pref";
 import { userAvatarUrl } from "@/lib/user";
@@ -37,17 +41,32 @@ export default async function AppLayout({
     .from(users)
     .where(eq(users.id, session.user.id));
   const identity = row?.identity ?? null;
-  const tz = await resolveUserTimeZone(session.user.id);
   const avatarUrl = userAvatarUrl(session.user.id, row?.avatarUpdatedAt ?? null);
 
-  // 时区偏好为「跟随浏览器」时，才需要客户端把本机时区报到 cookie 里
-  const timeZonePref = await getTimeZonePref(session.user.id);
+  // 时区偏好为「跟随浏览器」时，才需要客户端把本机时区报到 cookie 里。
+  // 助手面板的数据一次性取好（只读，不建会话）：会话列表 + 上次看的那条 + 其最近 200 条消息。
+  // cookie 只是「上次看的是哪条」的提示，lib 会校验归属；面板在每个页面都常驻，别让它无限膨胀。
+  const cookieStore = await cookies();
+  const preferredConversationId =
+    cookieStore.get(ASSISTANT_CONVERSATION_COOKIE)?.value ?? null;
+
+  const [tz, timeZonePref, assistant] = await Promise.all([
+    resolveUserTimeZone(session.user.id),
+    getTimeZonePref(session.user.id),
+    getAssistantPanelData(session.user.id, preferredConversationId),
+  ]);
 
   return (
     <ProjTheme>
-      <div className="min-h-screen">
+      <AssistantShell
+        initialConversations={assistant.conversations}
+        initialActiveId={assistant.activeId}
+        initialMessages={assistant.messages}
+      >
         <TzSync auto={timeZonePref === AUTO_TIMEZONE} />
-        <header className="sticky top-0 z-20 flex items-center justify-between border-b border-line bg-surface/85 px-6 py-3 backdrop-blur">
+        {/* app-topbar 只给宇宙主题的「顶栏深色玻璃」认（project.css）；页面里的 <header>
+            是各自的标题区，别被那条规则顺带刷成黑框。 */}
+        <header className="app-topbar sticky top-0 z-20 flex items-center justify-between border-b border-line bg-surface/85 px-6 py-3 backdrop-blur">
           <div className="flex items-center gap-6">
             {/* 徽标回欢迎页（整屏的时钟页），不是工作台 */}
             <Link href="/welcome" className="flex items-center gap-2">
@@ -62,6 +81,7 @@ export default async function AppLayout({
             <NavLinks />
           </div>
           <div className="flex items-center gap-3">
+            <AssistantToggle />
             <IdentityBadge identity={identity} className="hidden sm:inline-flex" />
             {avatarUrl ? (
               // 有头像显图片；proj-avatar 类只在宇宙主题里有样式（描边光晕），图片沿用同一圈。
@@ -104,7 +124,7 @@ export default async function AppLayout({
           </div>
         </header>
         <div className="mx-auto max-w-5xl p-6">{children}</div>
-      </div>
+      </AssistantShell>
     </ProjTheme>
   );
 }

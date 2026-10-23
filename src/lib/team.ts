@@ -30,6 +30,18 @@ export async function initialTeamRole(userId: string): Promise<TeamRole> {
   return user?.identity === "teacher" ? "teacher" : "student";
 }
 
+/**
+ * 按邀请码查团队 —— 只给「加入团队」的拟稿期用：卡片上要显示「加入『东吴实验室』」，
+ * 而不是一串邀请码。邀请码本身就是加入凭证，查到的团队名不构成额外泄露。
+ */
+export async function getTeamByInviteCode(inviteCode: string) {
+  const [team] = await db
+    .select({ id: teams.id, name: teams.name })
+    .from(teams)
+    .where(eq(teams.inviteCode, inviteCode));
+  return team ?? null;
+}
+
 export async function joinTeam(userId: string, inviteCode: string) {
   const [team] = await db.select().from(teams).where(eq(teams.inviteCode, inviteCode));
   if (!team) throw new AppError("邀请码无效");
@@ -78,6 +90,25 @@ export async function requireTeamRole(
   const member = await getTeamMembership(userId, teamId, opts);
   if (!member || !allowed.includes(member.role)) throw new ForbiddenError();
   return member;
+}
+
+/**
+ * 取团队名与本人的角色 —— 给助手工具用：快照里只给了 teamId，草案卡要展示团队名，
+ * 拟稿时也要知道是不是 admin。
+ *
+ * 先查团队再查成员：团队不存在与「不是成员」是两件事。前者报「团队不存在」（id 来自快照，
+ * 走到这里通常意味着已解散），后者一律 ForbiddenError，与其它 lib 的越权口径一致。
+ */
+export async function getTeamForMember(userId: string, teamId: string) {
+  const [team] = await db
+    .select({ id: teams.id, name: teams.name })
+    .from(teams)
+    .where(eq(teams.id, teamId));
+  if (!team) throw new AppError("团队不存在");
+
+  const member = await getTeamMembership(userId, teamId);
+  if (!member) throw new ForbiddenError();
+  return { id: team.id, name: team.name, role: member.role };
 }
 
 // 无权限前置：调用方须已校验访问权（如 getProjectForUser / requireTeamRole）后再调用

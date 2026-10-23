@@ -366,8 +366,9 @@ export type MessageRole = (typeof messageRoleEnum.enumValues)[number];
 
 // 会话两种形态，同表承载 —— messages 只认 conversationId，分表就得把这条外键劈成两半。
 // project：项目助手（项目页），**全员共享**，projectId 必填、ownerId 为空。
-// personal：控制台助手（工作台），**严格按 ownerId 隔离**，projectId 为空。
-// 两者由下面的 CHECK 与唯一索引共同围住，库层面就不可能出现「既是项目又是个人」的脏行。
+// personal：控制台助手（右侧面板），**严格按 ownerId 隔离**，projectId 为空；
+//          同一用户可以有多条（会话列表），由下面的 CHECK 保证形态、ownerId 普通索引保查询。
+// 两者由 CHECK 围住，库层面就不可能出现「既是项目又是个人」的脏行。
 export const conversationKindEnum = pgEnum("conversation_kind", ["project", "personal"]);
 export type ConversationKind = (typeof conversationKindEnum.enumValues)[number];
 
@@ -382,13 +383,15 @@ export const conversations = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     title: text("title"),
+    // 最近一次落消息的时间，会话列表据此按「最近用过」排序；
+    // 可空 —— 老数据没有，回落到 createdAt（见 lib/agent/conversation.ts 的排序）。
+    lastMessageAt: dbTimestamp("last_message_at"),
     createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [
     index("conversations_project_idx").on(t.projectId),
-    // ownerId 为 NULL 的行（项目会话）互不相犯：PG 的唯一索引视多个 NULL 为彼此不同，
-    // 于是「项目会话不限条数、个人会话每人恰一条」这一个索引就全包了。
-    uniqueIndex("conversations_owner_unique").on(t.ownerId),
+    // 普通索引：每人可以有多条个人会话，不再唯一。
+    index("conversations_owner_idx").on(t.ownerId),
     check(
       "conversations_scope_chk",
       sql`(${t.kind} = 'project' AND ${t.projectId} IS NOT NULL AND ${t.ownerId} IS NULL)
@@ -407,9 +410,15 @@ export const messages = pgTable(
     role: messageRoleEnum("role").notNull(),
     content: text("content").notNull(),
     toolCalls: jsonb("tool_calls"),
+    // 一轮问答（user + assistant）共用这个 id：删一条就能精确删掉整轮。
+    // 可空 —— 老数据没有，删除时退回按原始 created_at 配对（微秒只存在于库里，别经 JS Date）。
+    turnId: uuid("turn_id"),
     createdAt: dbTimestampNow("created_at").notNull(),
   },
-  (t) => [index("messages_conversation_idx").on(t.conversationId)],
+  (t) => [
+    index("messages_conversation_idx").on(t.conversationId),
+    index("messages_turn_idx").on(t.conversationId, t.turnId),
+  ],
 );
 
 // ------------------------------------------------------- 个人上下文

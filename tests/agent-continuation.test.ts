@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   buildContinuationText,
+  continuationOriginalText,
   isContinuableTool,
+  isContinuationText,
   summarizeDraft,
 } from "@/lib/agent/continuation";
 
@@ -109,6 +111,64 @@ describe("summarizeDraft", () => {
     ).toBe("群邀请「未知群聊」拒绝");
   });
 
+  it("资源占用与标签摘要带团队 / 资源名 / 标签名", () => {
+    expect(
+      summarizeDraft({
+        tool: "create_resource_usage",
+        draft: {
+          teamName: "东吴实验室",
+          resourceName: "GPU-01",
+          startTime: "2026-11-01T14:00",
+          endTime: "2026-11-01T16:00",
+        },
+      }),
+    ).toBe("登记占用「GPU-01」（东吴实验室） 2026-11-01T14:00 → 2026-11-01T16:00");
+    expect(
+      summarizeDraft({
+        tool: "create_resource_usage",
+        draft: { resourceName: "GPU-01", startTime: "2026-11-01T14:00" },
+      }),
+    ).toBe("登记占用「GPU-01」 2026-11-01T14:00 起");
+    expect(
+      summarizeDraft({ tool: "end_resource_usage", draft: { resourceName: "GPU-01" } }),
+    ).toBe("结束占用「GPU-01」");
+    expect(
+      summarizeDraft({
+        tool: "create_label",
+        draft: { name: "论文", teamName: "东吴实验室" },
+      }),
+    ).toBe("新建标签「论文」（东吴实验室）");
+    expect(
+      summarizeDraft({
+        tool: "update_label",
+        draft: { currentName: "论文", name: "小论文" },
+      }),
+    ).toBe("修改标签「论文」 → 「小论文」");
+    expect(
+      summarizeDraft({ tool: "update_label", draft: { currentName: "论文" } }),
+    ).toBe("修改标签「论文」");
+    expect(summarizeDraft({ tool: "delete_label", draft: { name: "论文" } })).toBe(
+      "删除标签「论文」",
+    );
+    expect(
+      summarizeDraft({
+        tool: "edit_task_labels",
+        draft: { taskTitle: "写开题报告", labelIds: ["a", "b"] },
+      }),
+    ).toBe("任务标签「写开题报告」（2 个）");
+  });
+
+  it("建团 / 入团摘要带团队名", () => {
+    expect(summarizeDraft({ tool: "create_team", draft: { name: "东吴实验室" } })).toBe(
+      "新建团队「东吴实验室」",
+    );
+    expect(summarizeDraft({ tool: "create_team", draft: {} })).toBe("新建团队「新团队」");
+    expect(
+      summarizeDraft({ tool: "join_team", draft: { teamName: "东吴实验室", inviteCode: "abc" } }),
+    ).toBe("加入团队「东吴实验室」");
+    expect(summarizeDraft({ tool: "join_team", draft: {} })).toBe("加入团队「新团队」");
+  });
+
   it("认不出的工具退回工具名，不抛错", () => {
     expect(summarizeDraft({ tool: "future_tool", draft: {} })).toBe("future_tool");
   });
@@ -125,6 +185,10 @@ describe("isContinuableTool", () => {
       "create_milestone",
       "create_subtask",
       "create_group_chat",
+      "create_team",
+      "join_team",
+      "create_resource_usage",
+      "create_label",
     ]) {
       expect(isContinuableTool(t), t).toBe(true);
     }
@@ -137,6 +201,10 @@ describe("isContinuableTool", () => {
     expect(isContinuableTool("send_message")).toBe(false);
     expect(isContinuableTool("forward_message")).toBe(false);
     expect(isContinuableTool("invite_to_group")).toBe(false);
+    expect(isContinuableTool("end_resource_usage")).toBe(false);
+    expect(isContinuableTool("update_label")).toBe(false);
+    expect(isContinuableTool("delete_label")).toBe(false);
+    expect(isContinuableTool("edit_task_labels")).toBe(false);
   });
 });
 
@@ -175,5 +243,38 @@ describe("buildContinuationText", () => {
     expect(text).toContain("原请求：「（未记录）」");
     expect(text).toContain("已落库：无");
     expect(text).toContain("不要改动它们）：无");
+  });
+});
+
+describe("continue 提示词的识别", () => {
+  const prompt = buildContinuationText({
+    originalText: "建两个任务，再给第一个加后置",
+    committed: [],
+    remaining: [],
+  });
+
+  it("提示词以标记开头，普通提问不算", () => {
+    expect(isContinuationText(prompt)).toBe(true);
+    expect(isContinuationText("  \n" + prompt)).toBe(true);
+    expect(isContinuationText("把这个拆成任务")).toBe(false);
+    expect(isContinuationText("[继续上一轮请求]")).toBe(false);
+  });
+
+  it("续做提示词能取回最初的原请求；普通提问原样返回", () => {
+    expect(continuationOriginalText(prompt)).toBe("建两个任务，再给第一个加后置");
+    expect(continuationOriginalText("把这个拆成任务")).toBe("把这个拆成任务");
+  });
+
+  it("原请求含换行或「」时也取得回来", () => {
+    const tricky = buildContinuationText({
+      originalText: "第一行\n第二行「引用」还在",
+      committed: [{ tool: "create_milestone", draft: { title: "中期答辩" } }],
+      remaining: [],
+    });
+    expect(continuationOriginalText(tricky)).toBe("第一行 第二行「引用」还在");
+  });
+
+  it("缺原请求行时返回空串，交给调用方回落", () => {
+    expect(continuationOriginalText("【继续上一轮请求】\n随便什么")).toBe("");
   });
 });

@@ -6,7 +6,7 @@ import { createTask } from "@/lib/task";
 import { createPersonalContext } from "@/lib/personal-context";
 import { sendDm } from "@/lib/dm";
 import { createGroup, inviteToGroup, sendGroupMessage } from "@/lib/group-chat";
-import { buildProjectSnapshot } from "@/lib/agent/snapshot";
+import { buildFocusProjectSnapshot, buildProjectSnapshot } from "@/lib/agent/snapshot";
 import { buildPersonalSnapshot } from "@/lib/agent/personal-snapshot";
 import { resetDb } from "./helpers";
 
@@ -182,5 +182,54 @@ describe("buildPersonalSnapshot", () => {
     expect(snap).toContain("手上 30 个待办");
     expect(snap).toContain("另有 10 个未列出");
     expect(snap).not.toContain("待办编号第29个");
+  });
+});
+
+// 焦点项目段接在个人快照之后（项目页里右侧助手用）。它与 buildProjectSnapshot 的差别都是
+// 刻意的：不重复日期行、不塞任务明细（list_tasks 可现查）、成员与共享上下文照旧给 id。
+describe("buildFocusProjectSnapshot", () => {
+  beforeEach(resetDb);
+
+  it("含项目名、id、成员、共享上下文与里程碑；不带日期行与任务明细", async () => {
+    const { owner, student, project } = await scene();
+    await createTask(student.id, project.id, { title: "写开题报告", assigneeId: student.id });
+    await createMilestone(owner.id, project.id, { title: "中期答辩" });
+    await createPersonalContext(student.id, [{ content: "在准备中期答辩" }]);
+    await createPersonalContext(owner.id, [{ content: "私事勿外传", visibility: "private" }]);
+
+    const snap = await buildFocusProjectSnapshot(student.id, project.id);
+    expect(snap).toContain(`# 当前项目：赤壁演习（projectId=${project.id}）`);
+    expect(snap).toContain("## 成员");
+    expect(snap).toContain(`id=${student.id}`);
+    expect(snap).toContain("## 里程碑");
+    expect(snap).toContain("中期答辩");
+    expect(snap).toContain("student：在准备中期答辩");
+    expect(snap).not.toContain("私事勿外传");
+
+    // 任务统计照给，明细留给 list_tasks / 个人快照的「我的待办」
+    expect(snap).toContain("任务统计：共 1 个");
+    expect(snap).not.toContain("写开题报告");
+    // 日期行由排在前面的个人快照负责，这一段不重复
+    expect(snap).not.toContain("今天是");
+  });
+
+  it("非成员被拒", async () => {
+    const outsider = await makeUser("outsider@example.com");
+    const { project } = await scene();
+    await expect(buildFocusProjectSnapshot(outsider.id, project.id)).rejects.toThrow("没有权限");
+  });
+
+  it("里程碑过多时降级掉里程碑明细，成员段恒留且不超预算", async () => {
+    const { owner, student, project } = await scene();
+    for (let i = 0; i < 60; i++) {
+      await createMilestone(owner.id, project.id, {
+        title: `里程碑编号第${i}个用于撑爆快照上限的冗长标题填充填充填充`,
+      });
+    }
+    const snap = await buildFocusProjectSnapshot(student.id, project.id);
+    expect(snap).not.toContain("## 里程碑");
+    expect(snap).not.toContain("里程碑编号第59个");
+    expect(snap).toContain(`id=${student.id}`);
+    expect(snap.length).toBeLessThanOrEqual(2500);
   });
 });

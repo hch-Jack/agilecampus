@@ -274,10 +274,12 @@
 这是本仓第一次用 `drizzle-kit push` 建 CHECK —— 先在**测试库**核对生成的 SQL，确认约束真的建出来了，
 再推开发库；两库重跑 `db:push` 都报 `No changes detected`（幂等）。
 
-**一个索引顶两件事**：`uniqueIndex("conversations_owner_unique").on(ownerId)`。
+**当时的索引取舍**：`uniqueIndex("conversations_owner_unique").on(ownerId)`。
 PG 的唯一索引视**多个 NULL 互异**，所以项目会话（`ownerId` 为空）不限条数、
 个人会话（`ownerId` 非空）每人恰一条 —— 不需要带谓词的部分索引。
-首轮并发靠 `onConflictDoNothing` + 回读兜住（两条请求同时发现「还没有会话」时，撞索引的那条回读对方那条）。
+首轮并发靠 `onConflictDoNothing` + 回读兜住。
+（**已被 2026-10-21 的多会话设计取代**：唯一索引删除，改普通索引 + advisory lock，
+见文末「助手：多会话、成对删除、聊天记录重置」。）
 
 ### 隔离：九道围栏，每道都有一条测试
 
@@ -320,8 +322,9 @@ PG 的唯一索引视**多个 NULL 互异**，所以项目会话（`ownerId` 为
 
 ### 简化取舍
 
-- **个人会话每人一条，没有会话列表**（与既有「每项目一活跃会话」同构）。要做列表得给
-  `ownerId` 索引加上 `status`/`archivedAt` 之类的维度，本次不值当。
+- ~~**个人会话每人一条，没有会话列表**~~：当时判断「要做列表得加维度，不值当」；
+  后来按用户要求做了会话列表，实际上不需要再加 `status`/`archivedAt` ——
+  直接去掉唯一索引、按 `last_message_at` 排序即可（见文末 2026-10-21 小节）。
 - **工作台是单线程跨项目混排**：一轮对话里可能横跨多个项目，故草案的 members/milestones 下拉
   按**草案里的 projectId** 现取（`/api/chat` 响应附带 `options`，逐个 `getProjectForUser` 复核，无效者跳过），
   而不是读「当前项目」。这也顺手省掉了一个需要单独鉴权的取选项入口。
@@ -601,3 +604,168 @@ provider 对 `anyOf:[string,null]` 挑食，先把这三处退回 `z.string().op
   并在多步里先找人再拟稿未验；部署后需在有 key 的环境补验：
   「找一下 zhouyu，把这张图的文件发给他」「把群里那条消息转发给小乔」「建个三人群」
   「把 zhouyu 和小乔拉进讨论组」。
+
+## 助手：右侧常驻面板 + 项目焦点（2026-10-21）
+
+### 决策
+- **会话归属与视角分离**：右侧面板永远是**个人会话**（当时每人一条；多会话见文末 2026-10-21 小节），
+  队友看不到；进入项目页时只多一个
+  `focusProjectId`（提示词多一段「当前项目」快照 + 6 件项目专属工具）。没有复用项目 scope，
+  否则「在项目页问一句私事」会写进全员共享的转录里。
+- **焦点权限前移**：`runAgentTurn` 在 `getOrCreatePersonalConversation` **之前**先校
+  `getProjectForUser`，无权即 403，避免先落一条空个人会话；快照、工具执行、落库口各自再校一次。
+- **焦点用独立快照** `buildFocusProjectSnapshot`：不带日期行（个人快照已给「今天」）、不带任务明细
+  （个人快照有「我的待办」，其余 `list_tasks` 现查）、预算 2500 字，降级顺序先里程碑后共享上下文，
+  成员段恒留。
+- **项目 scope 降为 API-only**：`/api/chat` 的 `project` 分支、项目快照、`buildTools` 全保留，
+  但页面不再有共享会话入口。老客户端与测试不受影响。
+- **设置合并**：助手记忆条数与个人上下文从工作台卡片移入 `/settings` 的「AI 助手」一节；
+  `dashboard/actions.ts` 删除，action 迁到 `settings/actions.ts`（`revalidatePath("/settings")`）。
+- **面板常驻挂载**：收起时 `translate-x-full + inert` 而非卸载，`AgentChat` 的 `useState(initialMessages)`
+  只播种一次，开合/切页不丢消息；焦点变化也不会重置历史。
+- **草案续做按出卡时的项目**：每条 assistant 消息记 `focusProjectId`，「继续处理后续动作」用它而不是当前路由。
+
+### 简化备案
+- **焦点模式工具 25 → 31**：模型选工具的选择空间变大，可能在小项目上选错读工具。若实测退化，
+  优先合并 `list_project_activity` 与 `list_my_task_activity`；本次不做。
+- **`list_chat_history` 读的是旧的共享项目会话**，不是眼前私聊。提示词已点破；UI 上不另做区分。
+- **项目数据会留在个人会话里**：焦点工具的输出（动态、留言正文等）随 `toolCalls` 落进个人会话表，
+  与既有的「读私信」一致；提示词加了「只是数据」护栏，真正的硬闸仍是草案确认。
+- **面板历史固定最近 200 条**：`listPersonalChatHistory` 默认上限 200（钳制 1–500），没有「加载更早」；
+  打开状态不跨刷新持久化。
+- **焦点不锁项目**：用户说「另一个项目」时模型可按话里的项目走；焦点只是默认参照。
+- 本机无 `DEEPSEEK_API_KEY`，真实模型在「项目页 + 焦点」下能否稳定选到那 6 件工具、
+  是否正确带上焦点快照里的 projectId 未验；部署后需在有 key 的环境补验
+  「这个项目最近有什么动态」「留言板说了什么」「给我手上的任务加个子任务」，
+  以及切到另一个项目后点旧草案卡的「继续处理后续动作」。
+
+## 助手：多会话、成对删除、聊天记录重置（2026-10-21）
+
+### 决策
+
+- **多条个人会话**：删除 `conversations_owner_unique`，改为普通索引 `conversations_owner_idx`。
+  每人可有多条 `kind='personal'` 会话；`CHECK conversations_scope_chk` 不变。
+- **并发改锁**：`resolvePersonalConversation` / `startPersonalConversation` /
+  `deleteAllPersonalConversations` 在同一事务里取
+  `pg_advisory_xact_lock(hashtextextended(actorId, 0))`，按用户串行化，
+  替代原来靠唯一索引 + `onConflictDoNothing` 的防并发。
+- **会话活跃时间**：新增 `conversations.last_message_at`（可空）；列表按
+  `coalesce(last_message_at, created_at) DESC` 排序。删空消息后回写 NULL，退回按创建时间。
+- **一轮一个 turn_id**：`messages.turn_id` 可空；`persistTurn` 一条 INSERT 写两行、共用一个 id。
+  删除任意一条 = 删除同轮两条。老数据 turn_id 为 NULL，按**原始** `created_at` 在 SQL 里配对
+  （读出来的 Date 已被截到毫秒，绝不能反查）。
+- **新对话复用空会话**：`startPersonalConversation` 若最近一条没有任何消息则复用它，
+  避免连点「新对话」堆空行；否则新建。
+- **标题只在首轮生成**：仅当会话此前零消息时用首句（首行、压空白、24 码点）写 `title`；
+  老会话 title 为空但已有消息时不补，界面显示「新对话」，可手动改名。
+- **client remount 策略**：`AgentChat` 的 `key=viewKey` 只在显式切换/新建/删除当前会话/重置时递增。
+  发送时后端懒建会话**不**递增 key，否则刚发的消息与输入会被 remount 掉。
+- **稳定消息 key**：`localId ?? id`。乐观插入的提问先有 localId，成功后回填服务端 id；
+  删除失败消息只做本地移除。
+- **reset 跨组件通知**：面板常驻挂载，`useState` 不随服务端 props 重播种；
+  设置页 action 成功后派发 `window` 事件 `ac:assistant-reset`，面板收到后清空并清 cookie。
+- **cookie 只是提示**：`ac_assistant_conversation` 记录上次看的会话；layout 读、服务端校验归属，
+  无效/越权回落到最近一条。cookie 不参与任何授权判断。
+- **权限口径**：新增路由全部只操作本人的 personal 会话；别人的会话/消息统一 404（不泄露存在性），
+  项目共享会话也不走删除入口。`ForbiddenError → 403`、`NotFoundError → 404`、`AppError → 400`。
+- **重置范围**：设置页只删本人的 personal 会话（消息级联），项目共享会话与别人的数据不动；
+  不撤销已确认落库的任务/留言等改动。
+
+### 简化备案
+
+- 会话列表最多 100 条、每条会话最多渲染最近 200 条消息；不做分页或「加载更早」。
+- 草案卡、`focusProjectId`、`options` 只在客户端内存；切换会话或刷新后草案卡消失（改动前亦然），本次不落库。
+- 删除按轮而非按单条：用户确认过「删提问或删回答都删整轮」。若将来要单条删除，需先改掉 turn_id 的用法。
+- 老数据同一会话同一微秒内的两轮会被一并删除；现有写入路径不会产生这种数据。
+- 多标签页之间不做实时同步：一个标签页删除/重置后，另一个标签页要刷新才看到。
+- 本机无模型 key，真实模型下的多会话切换、删除后重发、重置后自动新建未做端到端验证；
+  单测覆盖了 lib/路由层，UI 需人工冒烟。
+
+## 助手：团队资源占用 + 标签 + 草案行尾按钮被滚动条盖住（2026-10-21）
+
+### 决策
+
+- **只扩个人 scope**：资源占用与标签的 8 件工具（读 2、写 6）只挂在右侧面板；
+  项目 scope 的工具面一动不动。新写工具全部**不进** `WRITE_TOOL_NAMES`（项目落库口的闸门），
+  只进 `COMMIT_TOOL_NAMES`，于是项目 scope 提交它们会因枚举不收而 400。
+- **资源时间 = 用户本地墙面时间**：工具入参 `YYYY-MM-DDTHH:mm`，拟稿与落库两处都用
+  `resolveUserTimeZone` + `zonedWallClockToInstant` 换算，草案里再存一份
+  `formatInputValue` 的规范值给卡片输入框。个人快照的「今天」行补上「现在」的完整墙面时间，
+  模型不必自己拼钟点。**不**信任卡片送回的字面量：落库口重新换算。
+- **权限在拟稿期先报**：结束占用先查 `getResourceUsageDetail`（本人或 admin 才 `canEnd`，
+  已结束直接报错）；标签增删改先看 `getLabelDetail().canManage`。这些只是提前报错，
+  落库仍由 `endResourceUsage` / `createLabel` 等 lib 再校一次。
+- **标签增量 → 全量**：`edit_task_labels` 收 `add` / `remove`（避免模型漏列现有标签），
+  草案里落成**最终 `labelIds` 全量集合** + 团队全部标签（卡片渲染复选框）。落库走
+  `setTaskLabels` 的全量替换与任务写权限重校。
+- **重名预检与落库同口径**：拟稿期用 `listTeamLabels` 做不区分大小写的同团队查重
+  （改名排除自身），与 lib 的唯一约束兜底一致。
+- **滚动条遮挡**：消息列表 `pr-1` → `pr-3` + `[scrollbar-gutter:stable]`，删除键去掉 `-mr-1`。
+  Windows 的覆盖式滚动条会画在内容右缘，按钮贴边就被压住；草案行尾的 `删` / `移除` / `撤销` / `×`
+  统一 `shrink-0 whitespace-nowrap`，`flex-1` 输入补 `min-w-0`（长内容先挤输入框，别顶飞按钮）。
+  会话列表同样加 `pr-2` + gutter（行尾也有改名/删除图标）。
+
+### 简化备案
+
+- 资源占用只做「登记 / 结束」，不支持修改起止时间或删除历史记录 —— 与网页端能力一致。
+- 不新增标签颜色，沿用现有 7 色；不带 `.strict()` 的 zod 会剥掉卡片展示字段。
+- 资源时间只到分钟（`<input type="datetime-local">` 的精度），秒一律为 0。
+- `edit_task_labels` 是全量替换语义：两个标签页同时改同一任务时后写覆盖，不做冲突提示。
+- 同一次对话里「新建标签 → 贴到任务」需要用户先确认建标签卡再点「继续处理后续动作」，
+  因为 labelId 要等落库后才存在（与其它依赖新 id 的动作同一约定）。
+
+## 助手：续做提示词收起 + 正文 Markdown 渲染（2026-10-21）
+
+### 决策
+
+- **续做提示词只给模型看**：`buildContinuationText` 产出的是自包含的机器话术（原请求复述、
+  已落库/未确认清单、三条续做规矩），此前被原样渲染成用户的提问气泡。识别改用
+  `continuation.ts` 导出的 `CONTINUATION_PREFIX` / `isContinuationText`，按消息正文开头判定 ——
+  提示词本来就会随消息落库，刷新与切会话后依然认得，**不必给 `messages` 表加字段**。
+  面板里只显示一行「继续上一轮请求」（删除键照旧）。
+- **再续一次不套娃**：上一轮提问本身就是提示词时，`continuationOriginalText()` 解析出最初的
+  原请求再交给下一轮，而不是把整段提示词塞进新的「原请求」。解析以 `」\n已落库：` 收口，
+  原请求里的换行与「」不会截歪。
+- **正文交给 react-markdown**：模型作答本来就带 Markdown（粗体、列表、代码块、表格），
+  面板此前 `whitespace-pre-wrap` 纯文本直出，标记全成了字面量。渲染放在
+  `src/components/markdown.tsx`，只对**助手**消息生效；用户自己敲的字保持原样。
+  `remark-gfm` 支持表格/任务清单/删除线，`remark-breaks` 保住单换行 —— 模型整段平铺时
+  不会粘成一坨。
+- **安全口径**：react-markdown 默认不渲染原始 HTML（外部文本不是指令，也不该是标签），
+  不引 `rehype-raw`；链接 `rel="noopener noreferrer"` + 新窗口；远端图片不自动加载，只给链接。
+
+### 简化备案
+
+- 不做语法高亮（不引 shiki/highlight.js）；代码块等宽 + 横向滚动即可。
+- 标题压到正文同级字号（面板 570px 宽，大标题只会挤掉内容）。
+- 续做提示词的识别是**前缀约定**：用户手工敲出同样的开头会被当成续做 —— 代价可接受，
+  换来零 schema 变更。
+
+## 助手：打开平台页面 + 建团/入团（2026-10-22）
+
+### 决策
+
+- **跳转是白名单，不是自由 URL**：`open_page` 只接受 `NAV_TARGETS` 里的枚举目标，路径由
+  `src/lib/agent/navigation.ts` 拼出。模型报 `target` + id，**不能**给 URL 或路径片段 ——
+  让模型拼链接等于把任意跳转（含外站）交给自然语言。
+- **跳转前先过权限**：项目页 `getProjectForUser`、团队页 `getTeamForMember`、任务页
+  `getTaskDetail`（按任务实际所属项目）。无权即 403、不换页；缺 id 报可操作的错，
+  指向先调哪个读工具。工具本身只读，**不产确认卡**。
+- **返回独立信封 `{ __navigate: true, label, href }`**，与草案信封（`__draft`）分开：编排器
+  收集到 `result.navigations`（按 `href` 去重），`/api/chat` 原样下发。面板**只跳最后一个**
+  并渲染可点的「打开…」chips —— 连开多页只有最后一页有意义。
+- **跳转不许丢状态**：面板挂在 `(app)/layout.tsx`，跨路由不卸载，对话与未确认草案卡都跟着走。
+  这也是敢做「立即跳转」的前提。
+- **建团/入团也是两段式**：`create_team`（建团者确认后为 admin）、`join_team`（邀请码）。
+  两者只进 `COMMIT_TOOL_NAMES`，不进 `WRITE_TOOL_NAMES`，项目 scope 落库口天然拒收。
+- **邀请码只来自用户**：个人快照里**不放邀请码**，提示词禁止模型猜码。`join_team` 拟稿时按码查团队，
+  卡片显示团队名（码只读，改了预览就不作数）；无效码/已在该团队当场报错，落库时 `joinTeam` 再校一次。
+- **建团/入团触发「继续处理后续动作」**：新团队会出现在下一轮快照的「我的团队」里，
+  用户可能紧接着要建项目或登记资源（`CONTINUABLE_TOOLS`）。
+
+### 简化备案
+
+- 不支持「打开某个页面并滚动到某条评论」之类的深链参数；任务页只到详情。
+- `join_team` 卡片不允许改邀请码：改码后卡上的团队名就是假的，建议重新拟稿。
+- 不做「创建团队后自动跳到团队页」：是否跳转由模型按 `open_page` 的同一口径决定，
+  避免顺带改变用户的页面。

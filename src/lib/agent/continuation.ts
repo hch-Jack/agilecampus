@@ -22,6 +22,14 @@ export const DRAFT_TOOL_LABELS: Record<string, string> = {
   forward_message: "转发消息",
   create_group_chat: "组建群聊",
   invite_to_group: "邀请进群",
+  create_team: "创建团队",
+  join_team: "加入团队",
+  create_resource_usage: "登记资源占用",
+  end_resource_usage: "结束资源占用",
+  create_label: "新建标签",
+  update_label: "修改标签",
+  delete_label: "删除标签",
+  edit_task_labels: "任务标签",
 };
 
 /**
@@ -40,6 +48,13 @@ const CONTINUABLE_TOOLS = new Set([
   "create_subtask",
   // 新建群聊会产生 groupId：用户可能紧接着想往这个群发消息
   "create_group_chat",
+  // 建团 / 入团会改变「我的团队」：用户可能紧接着要在这个团队里建项目、登记资源
+  "create_team",
+  "join_team",
+  // 登记占用会产生 usageId：用户可能紧接着想结束它；新建标签会产生 labelId，
+  // 用户可能想立刻把它贴到某个任务上
+  "create_resource_usage",
+  "create_label",
 ]);
 
 export function isContinuableTool(tool: string): boolean {
@@ -149,6 +164,52 @@ export function summarizeDraft(d: DraftLike): string {
         group ? clip(group, TITLE_LIMIT) : "群聊"
       }」`;
     }
+    case "create_team": {
+      const name = text(body.name);
+      return `新建团队「${name ? clip(name, TITLE_LIMIT) : "新团队"}」`;
+    }
+    case "join_team": {
+      // 卡片展示的是团队名（拟稿时按邀请码查得）；取不到才退回邀请码
+      const name = text(body.teamName);
+      return `加入团队「${name ? clip(name, TITLE_LIMIT) : "新团队"}」`;
+    }
+    case "create_resource_usage": {
+      const name = text(body.resourceName);
+      const team = text(body.teamName);
+      const start = text(body.startTime);
+      const end = text(body.endTime);
+      return `登记占用「${name ? clip(name, TITLE_LIMIT) : "资源"}」${
+        team ? `（${clip(team, TITLE_LIMIT)}）` : ""
+      }${start ? ` ${start}${end ? ` → ${end}` : " 起"}` : ""}`;
+    }
+    case "end_resource_usage": {
+      const name = text(body.resourceName);
+      return `结束占用「${name ? clip(name, TITLE_LIMIT) : "资源"}」`;
+    }
+    case "create_label": {
+      const name = text(body.name);
+      const team = text(body.teamName);
+      return `新建标签「${name ? clip(name, TITLE_LIMIT) : "标签"}」${
+        team ? `（${clip(team, TITLE_LIMIT)}）` : ""
+      }`;
+    }
+    case "update_label": {
+      const from = text(body.currentName);
+      const to = text(body.name);
+      return `修改标签「${from ? clip(from, TITLE_LIMIT) : "标签"}」${
+        to && to !== from ? ` → 「${clip(to, TITLE_LIMIT)}」` : ""
+      }`;
+    }
+    case "delete_label": {
+      const name = text(body.name);
+      return `删除标签「${name ? clip(name, TITLE_LIMIT) : "标签"}」`;
+    }
+    case "edit_task_labels": {
+      const title = text(body.taskTitle);
+      return `任务标签「${title ? clip(title, TITLE_LIMIT) : "任务"}」（${
+        list(body.labelIds).length
+      } 个）`;
+    }
     case "save_personal_context":
       return `个人上下文（${list(body.entries).length} 条）`;
     case "respond_group_invite": {
@@ -159,6 +220,35 @@ export function summarizeDraft(d: DraftLike): string {
     default:
       return DRAFT_TOOL_LABELS[d.tool] ?? d.tool;
   }
+}
+
+/**
+ * 「继续处理后续动作」提示词的开头。
+ *
+ * 这句话是**机器写给模型看的**（原请求复述 + 续做规矩），界面上不该原样展开 —— 用户只需要
+ * 知道「正在继续上一轮」。识别靠开头这行标记：它随消息一起落库，刷新后同样能认出来，
+ * 不必给消息表加字段。
+ */
+export const CONTINUATION_PREFIX = "【继续上一轮请求】";
+
+export function isContinuationText(text: string): boolean {
+  return text.trimStart().startsWith(CONTINUATION_PREFIX);
+}
+
+/**
+ * 从续做提示词里取回**最初那句人话**。
+ *
+ * 续做提示词自己又可能被当成「上一轮提问」再续一次；此时要复述的是最初的原请求，
+ * 而不是把整段机器话术再套一层。取不到就返回空串，让调用方回落。
+ */
+export function continuationOriginalText(text: string): string {
+  if (!isContinuationText(text)) return text.trim();
+  // 原请求本身可能含换行或「」——用后面那几行的行首标记收口，避免截在正文中间
+  const start = text.indexOf("原请求：「");
+  if (start < 0) return "";
+  const bodyStart = start + "原请求：「".length;
+  const end = text.indexOf("」\n已落库：", bodyStart);
+  return (end < 0 ? "" : text.slice(bodyStart, end)).trim();
 }
 
 /**
@@ -176,7 +266,7 @@ export function buildContinuationText(params: {
   const remaining =
     params.remaining.length > 0 ? params.remaining.map(summarizeDraft).join("、") : "无";
 
-  return `【继续上一轮请求】
+  return `${CONTINUATION_PREFIX}
 原请求：「${original}」
 已落库：${committed}
 上一轮已展示但尚未确认的草案（不要重复生成，也不要改动它们）：${remaining}

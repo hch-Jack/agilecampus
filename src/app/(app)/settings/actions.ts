@@ -18,6 +18,20 @@ import {
   updateUserTimeZone,
 } from "@/lib/user";
 import { createApiToken, revokeApiToken } from "@/lib/api-token";
+import {
+  CONTEXT_MAX_LENGTH,
+  createPersonalContext,
+  deletePersonalContext,
+  setPersonalContextVisibility,
+} from "@/lib/personal-context";
+import { setAiHistoryLimit } from "@/lib/agent/memory";
+import { deleteAllPersonalConversations } from "@/lib/agent/conversation";
+import { ASSISTANT_CONVERSATION_COOKIE } from "@/lib/agent/assistant-panel-shared";
+import {
+  AI_HISTORY_LIMIT_DEFAULT,
+  AI_HISTORY_LIMIT_MAX,
+  AI_HISTORY_LIMIT_MIN,
+} from "@/lib/agent/history-limit";
 import { AppError } from "@/lib/errors";
 import { AUTO_TIMEZONE, TZ_COOKIE, TZ_COOKIE_MAX_AGE, isValidTimeZone } from "@/lib/time";
 
@@ -222,5 +236,128 @@ export async function revokeTokenAction(formData: FormData) {
 
   const id = z.uuid().parse(formData.get("id"));
   await revokeApiToken(session.user.id, id);
+  revalidatePath("/settings");
+}
+
+// ------------------------------------------------------------------ 助手设置
+// 原先长在工作台助手卡片的「设置」面板里；助手改成右侧常驻面板后，这两块并入本页
+// （用户要求「把其设置合并到 AI 设置里面」）。改动只影响助手的下一轮，不涉及缓存，
+// 故 revalidate 本页即可。
+//
+// 身份一律取自 session，`userId` 由 lib 按 actorId 落 —— 表单里没有、也不接受身份字段。
+// 内容校验（长度、可见性白名单、零宽字符归一）在 lib/personal-context.ts 收口，
+// 这里只把 AppError 翻译成界面上的一句话。
+
+export type ContextState = { ok: true } | { error: string } | null;
+
+const addContextSchema = z.object({
+  content: z.string().trim().min(1, "请写点什么").max(CONTEXT_MAX_LENGTH, `最多 ${CONTEXT_MAX_LENGTH} 字`),
+  visibility: z.enum(["shared", "private"], "可见性无效"),
+});
+
+export async function addContextAction(
+  _prev: ContextState,
+  formData: FormData,
+): Promise<ContextState> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+
+  const parsed = addContextSchema.safeParse({
+    content: formData.get("content") ?? "",
+    visibility: formData.get("visibility") ?? "shared",
+  });
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  try {
+    await createPersonalContext(session.user.id, [
+      { content: parsed.data.content, visibility: parsed.data.visibility },
+    ]);
+  } catch (e) {
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
+// 助手记忆条数：用户级偏好，存在 users.ai_history_limit。两个 scope 共用这一个数，
+// 故校验只做「是 0–50 的整数」，越界的钳制交给 lib（那里是唯一真相源）。
+const historyLimitSchema = z.object({
+  limit: z.coerce
+    .number("请输入数字")
+    .int("请输入整数")
+    .min(AI_HISTORY_LIMIT_MIN, `最少 ${AI_HISTORY_LIMIT_MIN} 条`)
+    .max(AI_HISTORY_LIMIT_MAX, `最多 ${AI_HISTORY_LIMIT_MAX} 条`),
+});
+
+export async function setHistoryLimitAction(
+  _prev: ContextState,
+  formData: FormData,
+): Promise<ContextState> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+
+  // 空输入回落到默认值而不是报错：清空输入框再点保存，意图是「恢复默认」
+  const raw = (formData.get("limit") ?? "").toString().trim();
+  const parsed = historyLimitSchema.safeParse({
+    limit: raw === "" ? AI_HISTORY_LIMIT_DEFAULT : raw,
+  });
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  await setAiHistoryLimit(session.user.id, parsed.data.limit);
+  revalidatePath("/settings");
+  return { ok: true };
+}
+
+// ------------------------------------------------------------------ 聊天记录
+
+export type AssistantResetState =
+  | { ok: true; deleted: number }
+  | { error: string }
+  | null;
+
+/**
+ * 清空本人的聊天记录：删掉**全部个人会话**，消息随外键级联。
+ *
+ * 只动 `kind='personal' AND owner_id=自己` 的行 —— 项目页的共享对话不受影响。
+ * 已确认落库的任务、留言等改动也不会撤销（聊天记录不是这些改动的回滚日志）。
+ * 顺手清掉「上次看的是哪条」的 cookie，下次发消息由 `/api/chat` 自动新建。
+ */
+export async function resetAssistantHistoryAction(
+  _prev: AssistantResetState,
+  formData: FormData,
+): Promise<AssistantResetState> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+
+  try {
+    const deleted = await deleteAllPersonalConversations(session.user.id);
+    // 客户端写 cookie 时用了 path=/，删除也要带同样的 path 才删得掉
+    (await cookies()).delete({ name: ASSISTANT_CONVERSATION_COOKIE, path: "/" });
+    revalidateFrom(formData, "/settings");
+    return { ok: true, deleted };
+  } catch (e) {
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
+}
+
+// 删一条 / 改可见性：都是「只能动自己的」—— lib 的查询恒带 userId = 发话人，
+// 改到他条目的 id 只会得到「上下文不存在」。
+export async function deleteContextAction(formData: FormData) {
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  await deletePersonalContext(session.user.id, z.uuid().parse(formData.get("id")));
+  revalidatePath("/settings");
+}
+
+export async function toggleContextVisibilityAction(formData: FormData) {
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+
+  const id = z.uuid().parse(formData.get("id"));
+  const visibility = z.enum(["shared", "private"]).parse(formData.get("visibility"));
+  await setPersonalContextVisibility(session.user.id, id, visibility);
   revalidatePath("/settings");
 }

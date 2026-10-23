@@ -1,6 +1,6 @@
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { resourceUsages, users } from "@/db/schema";
+import { resourceUsages, teams, users } from "@/db/schema";
 import { AppError, ForbiddenError } from "./errors";
 import { getTeamMembership } from "./team";
 
@@ -61,6 +61,42 @@ export async function endResourceUsage(actorId: string, usageId: string) {
     .returning();
   if (!ended) throw new AppError("该占用已结束");
   return ended;
+}
+
+/**
+ * 单条占用的详情（含团队名、登记人、是否仍在占用、本人能否结束）。
+ *
+ * 给助手拟「结束占用」草案用：卡片要显示这是谁的哪条记录，拟稿时也要提前拦住
+ * 「已结束」与「无权结束」，别等用户点确认才报错。读权限仍是团队成员。
+ */
+export async function getResourceUsageDetail(actorId: string, usageId: string) {
+  const [row] = await db
+    .select({
+      id: resourceUsages.id,
+      teamId: resourceUsages.teamId,
+      teamName: teams.name,
+      userId: resourceUsages.userId,
+      userName: users.name,
+      resourceName: resourceUsages.resourceName,
+      purpose: resourceUsages.purpose,
+      startTime: resourceUsages.startTime,
+      endTime: resourceUsages.endTime,
+    })
+    .from(resourceUsages)
+    .innerJoin(users, eq(resourceUsages.userId, users.id))
+    .innerJoin(teams, eq(resourceUsages.teamId, teams.id))
+    .where(eq(resourceUsages.id, usageId));
+  if (!row) throw new AppError("占用记录不存在");
+
+  const membership = await getTeamMembership(actorId, row.teamId);
+  if (!membership) throw new ForbiddenError();
+
+  return {
+    ...row,
+    active: row.endTime === null,
+    // 与 endResourceUsage 同一口径：登记人本人或团队 admin
+    canEnd: row.userId === actorId || membership.role === "admin",
+  };
 }
 
 function durationMinutes(start: Date, end: Date): number {

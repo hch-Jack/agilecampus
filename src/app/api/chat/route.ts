@@ -5,11 +5,16 @@ import { runAgentTurn } from "@/lib/agent/orchestrator";
 import { collectDraftOptions } from "@/lib/agent/draft-options";
 import { AppError, ForbiddenError } from "@/lib/errors";
 
-// scope 决定这轮对话挂在哪儿：project 走项目页（要 projectId），personal 走工作台（跨项目）。
+// scope 决定这轮对话挂在哪儿：project 走项目共享会话（要 projectId），personal 走本人的私人会话。
+// personal 也可以带 projectId：它**不改变会话归属**，只是「用户此刻在看哪个项目」（焦点），
+// 让这一轮多带项目快照与项目专属工具。权限在编排入口按 getProjectForUser 校。
+// personal 的 conversationId 指定挂在哪条个人会话上；省略时落到最近一条（没有则新建），
+// 老客户端因此行为不变。project scope 不接受 conversationId —— 它本就是每项目一条共享会话。
 // 身份一律取自 session —— 请求体里没有、也不接受 actorId 之类的字段。
 const schema = z.object({
   scope: z.enum(["project", "personal"]).default("project"),
   projectId: z.uuid().optional(),
+  conversationId: z.uuid().optional(),
   userText: z.string().trim().min(1, "请输入内容"),
 });
 
@@ -22,15 +27,25 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
   }
 
-  const { scope, projectId, userText } = parsed.data;
+  const { scope, projectId, conversationId, userText } = parsed.data;
   if (scope === "project" && !projectId) {
     return NextResponse.json({ error: "缺少项目 id" }, { status: 400 });
+  }
+  if (scope === "project" && conversationId) {
+    return NextResponse.json(
+      { error: "项目 scope 不接受 conversationId" },
+      { status: 400 },
+    );
   }
 
   try {
     const result =
       scope === "personal"
-        ? await runAgentTurn({ actorId: session.user.id, userText, scope: { kind: "personal" } })
+        ? await runAgentTurn({
+            actorId: session.user.id,
+            userText,
+            scope: { kind: "personal", focusProjectId: projectId, conversationId },
+          })
         : await runAgentTurn({ actorId: session.user.id, userText, projectId: projectId! });
 
     // 个人 scope 的草案可能指向多个项目，下拉选项随响应一并给（见 lib/agent/draft-options.ts）
@@ -41,7 +56,17 @@ export async function POST(req: Request) {
       text: result.text,
       toolTrace: result.toolTrace,
       drafts: result.drafts,
+      // 「打开某页」的跳转意图：面板据此立即跳转，并在消息下留一个可点的入口
+      navigations: result.navigations,
       ...(options ? { options } : {}),
+      // 面板靠这些 id 维护会话列表、给消息挂删除按钮；老客户端忽略即可
+      conversationId: result.conversationId,
+      conversationTitle: result.conversationTitle,
+      conversationCreatedAt: result.conversationCreatedAt.toISOString(),
+      lastMessageAt: result.lastMessageAt.toISOString(),
+      turnId: result.turnId,
+      userMessageId: result.userMessageId,
+      assistantMessageId: result.assistantMessageId,
     });
   } catch (e) {
     if (e instanceof ForbiddenError) return NextResponse.json({ error: "没有权限" }, { status: 403 });

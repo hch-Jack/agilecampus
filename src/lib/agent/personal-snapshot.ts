@@ -8,7 +8,7 @@ import { listMyPersonalContext } from "@/lib/personal-context";
 import { countUnread } from "@/lib/dm";
 import { countGroupUnread, countPendingGroupInvites } from "@/lib/group-chat";
 import { getFeedUnreadCount, WORKBENCH_SCOPE } from "@/lib/activity";
-import { todayIn } from "@/lib/time";
+import { formatInputValue, todayIn } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
 
 /**
@@ -59,10 +59,13 @@ export async function buildPersonalSnapshot(actorId: string): Promise<string> {
     getFeedUnreadCount(actorId, WORKBENCH_SCOPE),
   ]);
   const today = todayIn(timeZone);
+  // 资源占用要写到分钟（YYYY-MM-DDTHH:mm）：给出「现在」的完整墙面时间，
+  // 模型不必自己拼钟点，也不会把 UTC 当本地时间。
+  const nowText = formatInputValue(timeZone, new Date());
   const myName = me[0]?.name ?? "(未知)";
 
   const head = [
-    `今天是 ${today}（我的时区 ${timeZone}，相对日期以此为准推算）`,
+    `今天是 ${today}（我的时区 ${timeZone}，现在 ${nowText}，相对日期与时间以此为准推算）`,
     `我是 ${myName}（我的 userId=${actorId}）`,
     `我在 ${teams.length} 个团队、${projects.length} 个项目里，手上 ${tasks.length} 个待办`,
   ].join("\n");
