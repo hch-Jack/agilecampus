@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
+import * as XLSX from "xlsx";
 import {
   TEXT_PREVIEW_MAX_BYTES,
   decodeTextWithFallback,
   detectPreviewKind,
   renderMimeFor,
 } from "@/lib/file-preview";
+import { excelToSheets } from "@/lib/file-preview-office";
 
 describe("detectPreviewKind", () => {
   it("按 mimeType 优先判定（含大写与参数后缀）", () => {
@@ -29,11 +31,26 @@ describe("detectPreviewKind", () => {
 
   it("可疑 mime 不越权改变判定：octet-stream 落扩展名，扩展名也不认识则不支持", () => {
     expect(detectPreviewKind("压缩包.zip", "application/octet-stream")).toBe("unsupported");
-    expect(detectPreviewKind("文档.docx", null)).toBe("unsupported");
-    expect(detectPreviewKind("表格.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")).toBe(
-      "unsupported",
-    );
     expect(detectPreviewKind("无扩展名", null)).toBe("unsupported");
+  });
+
+  it("Office 新格式判定：docx→word，xlsx/xls/xlsm/xlsb→excel", () => {
+    expect(detectPreviewKind("报告.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")).toBe(
+      "word",
+    );
+    expect(detectPreviewKind("报告.docx", null)).toBe("word");
+    expect(detectPreviewKind("表格.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")).toBe(
+      "excel",
+    );
+    expect(detectPreviewKind("旧表.xls", "application/vnd.ms-excel")).toBe("excel");
+    expect(detectPreviewKind("旧表.xls", null)).toBe("excel");
+    expect(detectPreviewKind("宏表.xlsm", null)).toBe("excel");
+    expect(detectPreviewKind("二进制.xlsb", null)).toBe("excel");
+  });
+
+  it("旧版二进制 .doc 无纯 JS 渲染方案，不支持预览", () => {
+    expect(detectPreviewKind("老文档.doc", null)).toBe("unsupported");
+    expect(detectPreviewKind("老文档.doc", "application/msword")).toBe("unsupported");
   });
 
   it("text/html 仍按文本源码预览（不内联渲染）", () => {
@@ -82,5 +99,39 @@ describe("decodeTextWithFallback", () => {
 
   it("文本预览上限为 512KB", () => {
     expect(TEXT_PREVIEW_MAX_BYTES).toBe(512 * 1024);
+  });
+});
+
+describe("excelToSheets（SheetJS 解析往返）", () => {
+  // 用 SheetJS 现场生成 xlsx 字节，再走 excelToSheets 解析，验证解析链路与 HTML 输出形状
+  function buildXlsx(sheets: { name: string; rows: unknown[][] }[]): ArrayBuffer {
+    const wb = XLSX.utils.book_new();
+    for (const s of sheets) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(s.rows), s.name);
+    }
+    const out = XLSX.write(wb, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
+    return out;
+  }
+
+  it("多工作表逐表输出 <table>，单元格值正确", async () => {
+    const buf = buildXlsx([
+      { name: "明细", rows: [["任务", "工时"], ["开发", 8]] },
+      { name: "汇总", rows: [["合计"], [8]] },
+    ]);
+    const sheets = await excelToSheets(buf);
+    expect(sheets.map((s) => s.name)).toEqual(["明细", "汇总"]);
+    expect(sheets[0].html).toContain("<table");
+    expect(sheets[0].html).toContain("开发");
+    expect(sheets[0].html).toContain("8");
+    expect(sheets.every((s) => !s.truncated)).toBe(true);
+  });
+
+  it("超过 2000 行的工作表截断渲染", async () => {
+    const rows: unknown[][] = [["序号"]];
+    for (let i = 0; i < 2500; i++) rows.push([i]);
+    const sheets = await excelToSheets(buildXlsx([{ name: "大表", rows }]));
+    expect(sheets[0].truncated).toBe(true);
+    // 2500 行数据不应整表渲染
+    expect(sheets[0].html).not.toContain("2499");
   });
 });
