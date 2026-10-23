@@ -105,7 +105,9 @@ export function DashboardGrid({
   function applyLayout(next: DashboardLayoutDoc) {
     prevRects.current = measureRelativeToGrid();
     layoutRef.current = next;
-    setLayout(next);
+    // 每次都换一个信封引用：取消拖动时传入的可能是同一个 snapshot，
+    // 若 React 判定状态未变而跳过渲染，卡片的亚格子位移就没人收尾了
+    setLayout({ v: next.v, items: next.items });
   }
 
   useLayoutEffect(() => {
@@ -115,12 +117,16 @@ export function DashboardGrid({
     if (!grid || before.size === 0) return;
 
     const nodes = grid.querySelectorAll<HTMLElement>("[data-widget-id]");
-    // 先清掉上一轮仍在飞的过渡，否则量到的是动画中途的位置
-    nodes.forEach((node) =>
+    // 先清掉上一轮仍在飞的过渡，否则量到的是动画中途的位置；
+    // 同时收掉拖动留下的亚格子 transform（拖动中的那张卡除外，它还要继续跟手）
+    nodes.forEach((node) => {
       node.getAnimations().forEach((animation) => {
         if (animation.id === "dashboard-flip") animation.cancel();
-      }),
-    );
+      });
+      if (!node.classList.contains("dashboard-widget-active")) {
+        node.style.removeProperty("transform");
+      }
+    });
 
     const gridRect = grid.getBoundingClientRect();
     nodes.forEach((node) => {

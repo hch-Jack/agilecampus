@@ -24,9 +24,15 @@ type Session = {
   id: DashboardWidgetId;
   mode: Mode;
   pointerId: number;
+  /** 按下时的指针位置（内容坐标 = client + scroll，自动滚动也能继续往下拖） */
   startX: number;
   startY: number;
   startItem: { x: number; y: number; w: number; h: number };
+  /** 被拖 / 缩放的卡片根节点：拖动时给它叠一层亚格子的 transform，跟手不跳格 */
+  node: HTMLElement | null;
+  /** 按下瞬间卡片已有的视觉偏移（上一轮 FLIP 还没飞完时抓住它，别让它跳一下） */
+  offsetX: number;
+  offsetY: number;
   /** 按下那一刻的布局；每次移动都从它重算，避免往返拖动把别的卡越挤越远 */
   snapshot: DashboardLayoutDoc;
   latest: DashboardLayoutDoc;
@@ -34,6 +40,14 @@ type Session = {
   rowStep: number;
   moved: boolean;
 };
+
+/** 卡片当前的视觉位移（含正在飞的 FLIP 动画）；没有 transform 就是 0。 */
+function readVisualOffset(node: HTMLElement): { x: number; y: number } {
+  const transform = getComputedStyle(node).transform;
+  if (!transform || transform === "none") return { x: 0, y: 0 };
+  const matrix = new DOMMatrixReadOnly(transform);
+  return { x: matrix.m41, y: matrix.m42 };
+}
 
 /**
  * 网格拖拽 / 缩放的指针状态机。
@@ -72,14 +86,24 @@ export function useGridInteraction({
         (rect.width - GRID_GAP * (GRID_COLUMNS - 1)) / GRID_COLUMNS + GRID_GAP;
       const rowStep = GRID_ROW_HEIGHT + GRID_GAP;
       const snapshot = getLayout();
+      const node = (event.currentTarget as HTMLElement).closest<HTMLElement>("[data-widget-id]");
+      // 上一轮 FLIP 还没飞完就再次按下时先收掉，否则动画会盖住这次的亚格子 transform；
+      // 把当时的视觉偏移记下来当作起点，卡片就不会瞬移
+      const { x: offsetX, y: offsetY } = node ? readVisualOffset(node) : { x: 0, y: 0 };
+      node?.getAnimations().forEach((animation) => {
+        if (animation.id === "dashboard-flip") animation.cancel();
+      });
 
       const session: Session = {
         id,
         mode,
         pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
+        startX: event.clientX + window.scrollX,
+        startY: event.clientY + window.scrollY,
         startItem: { x: item.x, y: item.y, w: item.w, h: item.h },
+        node,
+        offsetX,
+        offsetY,
         snapshot,
         latest: snapshot,
         colStep,
@@ -121,6 +145,8 @@ export function useGridInteraction({
         const s = sessionRef.current;
         if (!s) return;
         cleanup();
+        // 即使吸附位置没变也提交一次：让 DashboardGrid 的 FLIP 收掉亚格子位移，
+        // 卡片从鼠标处滑入格子，而不是瞬间跳回去
         if (s.moved && commit) onCommit(s.latest);
         else if (s.moved) onPreview(s.snapshot);
       }
@@ -130,16 +156,41 @@ export function useGridInteraction({
         if (!s || ev.pointerId !== s.pointerId) return;
         ev.preventDefault();
 
-        const dc = Math.round((ev.clientX - s.startX) / s.colStep);
-        const dr = Math.round((ev.clientY - s.startY) / s.rowStep);
+        // 内容坐标：自动滚动时 clientY 不变，内容坐标会继续增长，卡片因此能拖到屏幕外
+        const contentX = ev.clientX + window.scrollX;
+        const contentY = ev.clientY + window.scrollY;
+        const dx = contentX - s.startX;
+        const dy = contentY - s.startY;
+        const dc = Math.round(dx / s.colStep);
+        const dr = Math.round(dy / s.rowStep);
         const next =
           s.mode === "move"
             ? moveWidget(s.snapshot, s.id, s.startItem.x + dc, s.startItem.y + dr)
             : resizeWidget(s.snapshot, s.id, s.startItem.w + dc, s.startItem.h + dr);
 
-        if (dc !== 0 || dr !== 0) s.moved = true;
+        if (dx !== 0 || dy !== 0) s.moved = true;
+
+        // 亚格子位移：网格仍按整格吸附，但被拖的卡片用 transform 补上那不到一格的差距，
+        // 于是鼠标移动时卡片连续跟手，松手后再滑入吸附位（FLIP 收尾）。
+        if (s.mode === "move" && s.node) {
+          const residualX = s.offsetX + dx - dc * s.colStep;
+          const residualY = s.offsetY + dy - dr * s.rowStep;
+          s.node.style.transform = `translate3d(${residualX}px, ${residualY}px, 0)`;
+        }
+
+        // 吸附位置没变就不触发重渲染，省掉每个像素都重排一遍的开销
+        const prevActive = s.latest.items.find((it) => it.id === s.id);
+        const nextActive = next.items.find((it) => it.id === s.id);
+        const changed =
+          !prevActive ||
+          !nextActive ||
+          prevActive.x !== nextActive.x ||
+          prevActive.y !== nextActive.y ||
+          prevActive.w !== nextActive.w ||
+          prevActive.h !== nextActive.h;
+
         s.latest = next;
-        onPreview(next);
+        if (changed) onPreview(next);
 
         // 靠近视口上下边缘时自动滚动，让长布局也能拖到屏幕外
         const edge = 64;

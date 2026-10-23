@@ -46,6 +46,12 @@
   outline-offset: -1px;
 }
 
+/* 拖动 / 缩放中的卡片浮到最上层，并提示浏览器把 transform 交给合成层 */
+.dashboard-widget-active {
+  z-index: 5;
+  will-change: transform;
+}
+
 .dashboard-widget-active .dashboard-widget-inner {
   outline: 2px solid var(--color-primary);
   outline-offset: -2px;
