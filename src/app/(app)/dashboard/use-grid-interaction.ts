@@ -22,7 +22,10 @@ import {
 type Mode = "move" | "resize";
 
 type Session = {
-  id: DashboardWidgetId;
+  /** 实例 id（可重复卡片可能是 `note-2`） */
+  id: string;
+  /** 卡片类型：决定最小尺寸 */
+  type: DashboardWidgetId;
   mode: Mode;
   pointerId: number;
   /** 按下时的指针位置（内容坐标 = client + scroll，自动滚动也能继续往下拖） */
@@ -58,7 +61,7 @@ function readVisualOffset(node: HTMLElement): { x: number; y: number } {
  * 否则每次跨格都要等 React 提交新位置，而 transform 已经按新格子写好了，
  * 中间会有一两帧按旧格子偏移，看起来就是闪跳。
  */
-function pinMovedItem(doc: DashboardLayoutDoc, id: DashboardWidgetId, x: number, y: number) {
+function pinMovedItem(doc: DashboardLayoutDoc, id: string, x: number, y: number) {
   return {
     v: doc.v,
     items: doc.items.map((it) => (it.id === id ? { ...it, x, y } : it)),
@@ -105,10 +108,10 @@ export function useGridInteraction({
 }) {
   const sessionRef = useRef<Session | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
-  const [activeId, setActiveId] = useState<DashboardWidgetId | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
 
   const begin = useCallback(
-    (event: ReactPointerEvent<HTMLElement>, id: DashboardWidgetId, mode: Mode) => {
+    (event: ReactPointerEvent<HTMLElement>, id: string, mode: Mode) => {
       if (sessionRef.current) return;
       if (event.pointerType === "mouse" && event.button !== 0) return;
       const grid = gridRef.current;
@@ -140,6 +143,7 @@ export function useGridInteraction({
 
       const session: Session = {
         id,
+        type: item.type,
         mode,
         pointerId: event.pointerId,
         startX: event.clientX + window.scrollX,
@@ -230,7 +234,7 @@ export function useGridInteraction({
         if (s.mode === "move" && s.node) {
           s.node.style.transform = `translate3d(${s.offsetX + dx}px, ${s.offsetY + dy}px, 0)`;
         } else if (s.mode === "resize" && s.node && s.baseW > 0 && s.baseH > 0) {
-          const min = DASHBOARD_WIDGETS[s.id].minSize;
+          const min = DASHBOARD_WIDGETS[s.type].minSize;
           const minW = min.w * s.colStep - GRID_GAP;
           const maxW = (GRID_COLUMNS - s.startItem.x) * s.colStep - GRID_GAP;
           const minH = min.h * s.rowStep - GRID_GAP;

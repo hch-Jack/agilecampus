@@ -3,7 +3,13 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { auth, signOut } from "@/lib/auth";
-import { clearFeed, isFeedScopeValid, markFeedRead } from "@/lib/activity";
+import {
+  WORKBENCH_SCOPE,
+  clearFeed,
+  deleteActivityForUser,
+  isFeedScopeValid,
+  markFeedRead,
+} from "@/lib/activity";
 import { db } from "@/db";
 import { tasks, users } from "@/db/schema";
 
@@ -32,6 +38,23 @@ export async function markFeedReadAction(scope: string) {
   await markFeedRead(session.user.id, scope);
 }
 
+/** 动态流 scope → 对应页面路径的 revalidate；任务页路径带 projectId，需按 taskId 反查 */
+async function revalidateFeedScope(scope: string): Promise<void> {
+  if (scope === WORKBENCH_SCOPE) {
+    revalidatePath("/dashboard");
+  } else if (scope.startsWith("project:")) {
+    revalidatePath(`/projects/${scope.slice("project:".length)}`);
+  } else {
+    // task: 任务已删则该页本就不存在，跳过
+    const taskId = scope.slice("task:".length);
+    const [task] = await db
+      .select({ projectId: tasks.projectId })
+      .from(tasks)
+      .where(eq(tasks.id, taskId));
+    if (task) revalidatePath(`/projects/${task.projectId}/tasks/${taskId}`);
+  }
+}
+
 export type ClearRecordsState = { error: string } | null;
 
 // 「清除记录」：只清空当前用户自己看到的动态流（工作台或某项目页），库内数据与他人视图不动，
@@ -42,19 +65,34 @@ export async function clearFeedAction(scope: string): Promise<ClearRecordsState>
   if (!isFeedScopeValid(scope)) return { error: "参数无效" };
 
   await clearFeed(session.user.id, scope);
-
-  if (scope === "workbench") {
-    revalidatePath("/dashboard");
-  } else if (scope.startsWith("project:")) {
-    revalidatePath(`/projects/${scope.slice("project:".length)}`);
-  } else {
-    // task: 任务页路径带 projectId，按 taskId 反查；任务已删则该页本就不存在，跳过
-    const taskId = scope.slice("task:".length);
-    const [task] = await db
-      .select({ projectId: tasks.projectId })
-      .from(tasks)
-      .where(eq(tasks.id, taskId));
-    if (task) revalidatePath(`/projects/${task.projectId}/tasks/${taskId}`);
-  }
+  await revalidateFeedScope(scope);
   return null;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export type DeleteActivityResult =
+  | { ok: true; mode: "all" | "self" }
+  | { error: string };
+
+/**
+ * 删除单条动态（scope 只用于判断回流哪个页面）。
+ * 权限与「删本人 / 删全局」的判定全在 `deleteActivityForUser`：
+ * 团队管理员删库、其他成员只隐藏自己的视图。
+ */
+export async function deleteActivityAction(
+  activityId: string,
+  scope: string,
+): Promise<DeleteActivityResult> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+  if (!UUID_RE.test(activityId) || !isFeedScopeValid(scope)) return { error: "参数无效" };
+
+  try {
+    const mode = await deleteActivityForUser(session.user.id, activityId);
+    await revalidateFeedScope(scope);
+    return { ok: true, mode };
+  } catch {
+    return { error: "删除失败，请稍后再试" };
+  }
 }

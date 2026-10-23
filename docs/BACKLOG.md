@@ -799,8 +799,9 @@ provider 对 `anyOf:[string,null]` 挑食，先把这三处退回 `z.string().op
   尺寸对不上；现在按 drag start 时 `active.rect.current.initial.width` 设宽，正文复用同一组件。
 - **卡片内滚动条隐藏**：`.ac-scroll-hidden`（`scrollbar-width: none` + `::-webkit-scrollbar`）
   应用到动态流、看板列与各卡片正文，滚轮 / 触控板仍可滚动。
-- **统计合并与拆分互斥**：既提供四合一「任务概览」，也提供四张单项卡；两者同时出现会让同一组数字
-  重复显示。`addWidget` 加一种就移除另一种，`normalizeLayoutDoc` 读到脏数据时合并卡优先。
+- **统计合并与拆分互斥**（已废弃，见「卡片实例化」一节）：最初既提供四合一「任务概览」，也提供
+  四张单项卡；两者同时出现会让同一组数字重复显示。`addWidget` 加一种就移除另一种，
+  `normalizeLayoutDoc` 读到脏数据时合并卡优先。
 - **保存串行 + latest-wins**：编辑期间只允许一个 server action 在飞，后续布局覆盖「待发」槽，
   完成后只发最新一份；递增/合并都不需要，天然丢弃中间态。**不 revalidate**：整页回流会覆盖本地布局。
   失败保留本地布局并退出保存循环，工具栏可重试。
@@ -813,7 +814,7 @@ provider 对 `anyOf:[string,null]` 挑食，先把这三处退回 `z.string().op
   看板再加 `locked` 双保险。
 - **DOM 顺序按目录固定**：`sortByCatalog` 渲染，坐标只走内联 `grid-column/grid-row`；
   窄屏堆叠用内联 `order: y*12+x`。若按坐标重排 DOM，拖拽过程中 React 移动节点会让指针捕获失效。
-- **数据一次性全量加载**：15 张卡的数据每次打开工作台都取，加卡因此没有空窗、也不用刷新。
+- **数据一次性全量加载**：卡片数据每次打开工作台都取，加卡因此没有空窗、也不用刷新。
   代价是多几条小查询，后续若成瓶颈再按布局裁剪。
 - **默认布局 = 改造前的版式**：一行四张统计卡 → 通栏看板 → 通栏最新记录。
   行高取 32px（不是更大的 64px），统计卡 2 行 = 76px，才贴近原 `ac-card p-3` 瓦片；
@@ -823,8 +824,41 @@ provider 对 `anyOf:[string,null]` 挑食，先把这三处退回 `z.string().op
 ### 简化备案
 
 - 只保存一套桌面布局；窄屏按坐标顺序只读堆叠，不做移动端独立编辑。
-- 同一张卡不支持多实例；卡片标题、主题不开放自定义。
+- 多实例只开放给便签 / 时钟 / 倒计时（见「卡片实例化」一节）；其余卡片仍单实例。
+  卡片标题、主题不开放自定义。
 - 不做多标签页实时同步：后写覆盖，无冲突提示。
 - 便签与倒计时配置随布局保存，600ms 防抖，blur / 保存按钮时冲刷；页面关闭瞬间的最后半秒可能丢失。
 - 触屏编辑不做（窄屏只读）；桌面触控板/鼠标可拖拽，键盘可用方向键移动、`Shift+方向键` 缩放。
 - 打开助手抽屉导致容器变窄时直接退出编辑态，不排队等待宽度恢复。
+
+## 卡片实例化、时钟设置与新卡片（2026-10-24）
+
+### 决策
+
+- **布局项从「类型 id」改成「实例 id + type」**：`items: [{ id, type, x, y, w, h, config? }]`。
+  `id` 是实例主键（首张用类型名，其后 `type-2`、`type-3`…），`type` 是卡片种类。
+  旧文档没有 `type` 时按 `id` 推断，`sanitizeItem` 两个字段互相兜底；去重按实例 id，
+  单实例类型只保留第一份。这样同一套移动/缩放/删卡逻辑不必区分是否可重复。
+- **可重复卡片**：`note` / `clock` / `countdown`。`addWidget` 每次追加新实例到现有内容下方，
+  配置按实例各存一份；其他类型重复添加是 no-op（客户端不加按钮，服务端也兜底）。
+  专注计时也按 `instanceId` 分开存 `localStorage`。
+- **任务概览（四合一）移除**：用户明确不要这张卡，替换为项目里程碑、团队资源占用、最近附件、专注计时。
+  `WIDGET_IDS` 里删掉 `task_summary`，旧文档项在 `normalizeLayoutDoc` 里被丢弃；
+  「统计互斥」规则随之作废。
+- **时钟设置**：`config.lunar` 与 `config.zones`（最多 3 个）。农历用
+  `Intl.DateTimeFormat("zh-CN-u-ca-chinese")` 的 `formatToParts` 取 `yearName` / 月份 / 日，
+  日名转中文数字；世界时钟直接按 `timeZone` 格式化。zod 侧的 zones 数组上限放宽到 12 条，
+  落库前由布局引擎去重、过滤、截到 3 条——客户端与服务端规则只维护一份。
+- **新卡片的数据查询**：`listMyUpcomingMilestones`（活跃项目的未完成里程碑，按目标日）、
+  `listMyTeamResourceUsages`（我的团队全部占用，进行中优先）、
+  `listMyRecentAttachments`（我可见任务的最新附件，不取 `data`）。全部并入工作台现有 Promise.all，
+  仍是一次性全量加载。
+- **专注计时是纯客户端**：25 分钟专注 / 5 分钟休息，状态只存 `localStorage`，
+  不落库、不与其他实例共享；首屏渲染 `--:--` 占位，挂载后再读，避免 hydration 不一致。
+- **单条动态删除分两档**：本人在任意最新记录里点 × 只写 `activity_hides`（`(user_id, activity_id)`
+  主键，删除动态/用户时级联），列表查询用 `notExists` 过滤；团队 admin 点 × 直接删
+  `task_activities` 行，所有人视图同步消失。是否可全局删由服务端算 `canPurge` 下发，
+  前端只用于确认文案与 tooltip，不据此前置校验。未读数同样过滤已隐藏条目。
+- **删除后不把刷新当新动态**：任务页的 `bumpOnNewRows` 会把列表头变化当成新动态；
+  自己删掉一条后 `router.refresh()` 也会改头。用 `skipBump` ref 跳过这一轮，
+  且 ref 只在 effect / 事件处理里读写（`react-hooks/refs`）。

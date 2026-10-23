@@ -3,22 +3,25 @@
 import {
   DASHBOARD_WIDGETS,
   WIDGET_IDS,
+  isRepeatableWidgetId,
   type DashboardLayoutDoc,
   type DashboardWidgetId,
 } from "@/lib/dashboard-layout";
 
-/** 「添加卡片」面板：只列当前布局里没有的卡片 */
+/**
+ * 「添加卡片」面板：单例卡只列当前布局里没有的；可重复卡（便签/时钟/倒计时）永远可加。
+ */
 export function WidgetLibrary({
   layout,
   onAdd,
   onClose,
 }: {
   layout: DashboardLayoutDoc;
-  onAdd: (id: DashboardWidgetId) => void;
+  onAdd: (type: DashboardWidgetId) => void;
   onClose: () => void;
 }) {
-  const present = new Set(layout.items.map((item) => item.id));
-  const missing = WIDGET_IDS.filter((id) => !present.has(id));
+  const present = new Set(layout.items.map((item) => item.type));
+  const missing = WIDGET_IDS.filter((type) => isRepeatableWidgetId(type) || !present.has(type));
 
   return (
     <section className="ac-card p-4" aria-label="可添加的卡片">
@@ -42,18 +45,19 @@ export function WidgetLibrary({
         <p className="mt-3 text-sm text-ink-faint">所有卡片都已添加。</p>
       ) : (
         <ul className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {missing.map((id) => {
-            const meta = DASHBOARD_WIDGETS[id];
+          {missing.map((type) => {
+            const meta = DASHBOARD_WIDGETS[type];
             return (
-              <li key={id}>
+              <li key={type}>
                 <button
                   type="button"
-                  onClick={() => onAdd(id)}
+                  onClick={() => onAdd(type)}
                   className="h-full w-full rounded-lg border border-line bg-surface px-3 py-2 text-left transition-colors hover:border-primary/60 hover:bg-primary-soft/40"
                 >
                   <span className="flex items-baseline justify-between gap-2">
                     <span className="text-sm font-medium text-ink">{meta.title}</span>
                     <span className="shrink-0 text-[10px] tabular-nums text-ink-faint">
+                      {isRepeatableWidgetId(type) ? "可重复 · " : ""}
                       {meta.defaultSize.w}×{meta.defaultSize.h}
                     </span>
                   </span>

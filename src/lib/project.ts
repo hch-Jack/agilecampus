@@ -1,4 +1,4 @@
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   milestones,
@@ -160,6 +160,40 @@ export async function listProjectMilestones(actorId: string, projectId: string) 
     .from(milestones)
     .where(eq(milestones.projectId, projectId))
     .orderBy(milestones.targetDate);
+}
+
+/**
+ * 工作台「项目里程碑」：我所在团队、active 项目里尚未完成且带目标日期的里程碑，
+ * 按目标日期升序。跨项目聚合，只取最近几条。
+ */
+export async function listMyUpcomingMilestones(actorId: string, limit = 8) {
+  const memberships = await db
+    .select({ teamId: teamMembers.teamId })
+    .from(teamMembers)
+    .where(eq(teamMembers.userId, actorId));
+  const teamIds = memberships.map((m) => m.teamId);
+  if (teamIds.length === 0) return [];
+
+  return db
+    .select({
+      id: milestones.id,
+      title: milestones.title,
+      targetDate: milestones.targetDate,
+      projectId: projects.id,
+      projectName: projects.name,
+    })
+    .from(milestones)
+    .innerJoin(projects, eq(milestones.projectId, projects.id))
+    .where(
+      and(
+        inArray(projects.teamId, teamIds),
+        eq(projects.status, "active"),
+        eq(milestones.status, "open"),
+        isNotNull(milestones.targetDate),
+      ),
+    )
+    .orderBy(milestones.targetDate)
+    .limit(limit);
 }
 
 // 跨团队聚合：我所在全部团队的项目 + 团队名 + 任务统计

@@ -625,6 +625,26 @@ export const feedReads = pgTable(
   (t) => [primaryKey({ columns: [t.userId, t.scope] })],
 );
 
+// 动态流「单条隐藏」：普通用户删掉自己看到的一条动态时写这里，只影响本人。
+// 团队管理员删除同一条动态则直接删 task_activities 行（全局生效），不写这张表。
+// 任务删除 / 用户删除时级联清理。
+export const activityHides = pgTable(
+  "activity_hides",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    activityId: uuid("activity_id")
+      .notNull()
+      .references(() => taskActivities.id, { onDelete: "cascade" }),
+    createdAt: dbTimestampNow("created_at").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.activityId] }),
+    index("activity_hides_activity_idx").on(t.activityId),
+  ],
+);
+
 // 任务留言板（评论）：团队成员可在任务详情页留言讨论。
 // 任务删除时留言级联消失。
 export const taskComments = pgTable(

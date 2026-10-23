@@ -40,8 +40,16 @@ describe("saveDashboardLayoutAction", () => {
     const doc = {
       v: 1 as const,
       items: [
-        { id: "note" as const, x: 0, y: 0, w: 4, h: 4, config: { text: "先做答辩 PPT" } },
-        { id: "clock" as const, x: 4, y: 0, w: 3, h: 2 },
+        {
+          id: "note",
+          type: "note" as const,
+          x: 0,
+          y: 0,
+          w: 4,
+          h: 4,
+          config: { text: "先做答辩 PPT" },
+        },
+        { id: "clock", type: "clock" as const, x: 4, y: 0, w: 4, h: 3 },
       ],
     };
     expect(await saveDashboardLayoutAction(doc)).toEqual({ ok: true });
@@ -75,7 +83,11 @@ describe("saveDashboardLayoutAction", () => {
 
     authMock.userId = a.id;
     const aLayout = await getDashboardLayout(a.id);
-    expect(aLayout.items[0]).toMatchObject({ id: "note", config: { text: "A 的便签" } });
+    expect(aLayout.items[0]).toMatchObject({
+      id: "note",
+      type: "note",
+      config: { text: "A 的便签" },
+    });
   });
 
   it("越界坐标被夹回网格，超长便签被截断", async () => {
@@ -101,20 +113,52 @@ describe("saveDashboardLayoutAction", () => {
     expect(board.config).toBeUndefined(); // task_board 不支持便签配置
   });
 
-  it("统计合并卡与单项同时提交时只留合并卡", async () => {
+  it("可重复卡多实例都保存；单例卡同类型只留第一张", async () => {
     const user = await makeUser("owner@example.com");
     authMock.userId = user.id;
 
     await saveDashboardLayoutAction({
       v: 1,
       items: [
-        { id: "task_summary", x: 0, y: 0, w: 8, h: 2 },
-        { id: "stat_today", x: 0, y: 2, w: 3, h: 2 },
+        { id: "note", type: "note", x: 0, y: 0, w: 4, h: 4 },
+        { id: "note-2", type: "note", x: 4, y: 0, w: 4, h: 4 },
+        { id: "clock", type: "clock", x: 0, y: 4, w: 4, h: 3 },
+        { id: "clock-2", type: "clock", x: 4, y: 4, w: 4, h: 3 },
+        { id: "quick_links", type: "quick_links", x: 8, y: 0, w: 3, h: 3 },
+        { id: "quick_links-2", type: "quick_links", x: 8, y: 3, w: 3, h: 3 },
       ],
     });
     expect((await getDashboardLayout(user.id)).items.map((item) => item.id)).toEqual([
-      "task_summary",
+      "note",
+      "note-2",
+      "quick_links",
+      "clock",
+      "clock-2",
     ]);
+  });
+
+  it("时钟的农历与世界时钟配置能原样读回", async () => {
+    const user = await makeUser("owner@example.com");
+    authMock.userId = user.id;
+
+    await saveDashboardLayoutAction({
+      v: 1,
+      items: [
+        {
+          id: "clock",
+          type: "clock",
+          x: 0,
+          y: 0,
+          w: 4,
+          h: 3,
+          config: { lunar: true, zones: ["Asia/Tokyo", "Europe/London"] },
+        },
+      ],
+    });
+    expect((await getDashboardLayout(user.id)).items[0].config).toEqual({
+      lunar: true,
+      zones: ["Asia/Tokyo", "Europe/London"],
+    });
   });
 
   it("便签超过上限被截到 NOTE_MAX_LENGTH", async () => {
@@ -139,7 +183,7 @@ describe("saveDashboardLayoutAction", () => {
     expect(
       await saveDashboardLayoutAction({ v: 1, items: [{ id: "clock", x: 0.5, y: 0, w: 3, h: 2 }] }),
     ).toHaveProperty("error");
-    expect(await saveDashboardLayoutAction({ v: 1, items: new Array(31).fill({ id: "clock", x: 0, y: 0, w: 3, h: 2 }) })).toHaveProperty(
+    expect(await saveDashboardLayoutAction({ v: 1, items: new Array(41).fill({ id: "clock", x: 0, y: 0, w: 4, h: 3 }) })).toHaveProperty(
       "error",
     );
     expect(

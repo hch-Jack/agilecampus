@@ -14,13 +14,16 @@ export const GRID_GAP = 12;
 /** 坐标上限，防止坏数据把网格撑到天上去；正常使用远达不到 */
 const MAX_Y = 2000;
 const MAX_H = 100;
+/** 实例 id 长度上限（与 server action 的 zod 校验一致） */
+export const INSTANCE_ID_MAX_LENGTH = 64;
 
 export const NOTE_MAX_LENGTH = 500;
 export const COUNTDOWN_TITLE_MAX_LENGTH = 40;
+export const CLOCK_MAX_ZONES = 3;
+export const CLOCK_ZONE_MAX_LENGTH = 64;
 
 export const WIDGET_IDS = [
   "task_board",
-  "task_summary",
   "stat_overdue",
   "stat_today",
   "stat_week",
@@ -31,6 +34,10 @@ export const WIDGET_IDS = [
   "my_teams",
   "unread_messages",
   "quick_links",
+  "milestones",
+  "resource_usage",
+  "recent_attachments",
+  "focus_timer",
   "note",
   "clock",
   "countdown",
@@ -38,13 +45,27 @@ export const WIDGET_IDS = [
 
 export type DashboardWidgetId = (typeof WIDGET_IDS)[number];
 
-/** 四张独立统计卡；与「任务概览（合并）」互斥 */
+/** 四张独立统计卡 */
 export const STAT_WIDGET_IDS = [
   "stat_overdue",
   "stat_today",
   "stat_week",
   "stat_doing",
 ] as const satisfies readonly DashboardWidgetId[];
+
+/**
+ * 可以重复添加的卡片：每个实例有自己的 id 与配置（便签、时钟、倒计时）。
+ * 其余卡片全页只允许一张 —— 否则同一份数据铺满页面，既冗余又难用。
+ */
+export const REPEATABLE_WIDGET_IDS = [
+  "note",
+  "clock",
+  "countdown",
+] as const satisfies readonly DashboardWidgetId[];
+
+export function isRepeatableWidgetId(type: DashboardWidgetId): boolean {
+  return (REPEATABLE_WIDGET_IDS as readonly string[]).includes(type);
+}
 
 export type DashboardWidgetConfig = {
   /** 便签正文，≤ NOTE_MAX_LENGTH 字 */
@@ -53,10 +74,22 @@ export type DashboardWidgetConfig = {
   title?: string;
   /** 倒计时目标：用户时区的墙面时间 YYYY-MM-DDTHH:mm */
   targetAt?: string;
+  /** 时钟：显示农历 */
+  lunar?: boolean;
+  /** 时钟：世界时钟的 IANA 时区（最多 CLOCK_MAX_ZONES 个） */
+  zones?: string[];
 };
 
+/**
+ * 网格里的一项。
+ *
+ * `type` 决定渲染哪种卡片；`id` 是**实例 id**（唯一，React key 与拖拽定位都用它）。
+ * 单例卡片的实例 id 约定为类型名（如 "task_board"），可重复卡片从第二个起为
+ * `note-2`、`clock-2` 之类。旧版布局没有 `type` 字段，读入时按 `id` 回填类型。
+ */
 export type DashboardLayoutItem = {
-  id: DashboardWidgetId;
+  id: string;
+  type: DashboardWidgetId;
   x: number;
   y: number;
   w: number;
@@ -82,13 +115,6 @@ export const DASHBOARD_WIDGETS: Record<DashboardWidgetId, DashboardWidgetMeta> =
     description: "按待办 / 进行中 / 已完成分列，可拖拽换列",
     defaultSize: { w: 8, h: 6 },
     minSize: { w: 6, h: 4 },
-  },
-  task_summary: {
-    id: "task_summary",
-    title: "任务概览",
-    description: "逾期、今天、本周、进行中四合一",
-    defaultSize: { w: 8, h: 2 },
-    minSize: { w: 4, h: 2 },
   },
   stat_overdue: {
     id: "stat_overdue",
@@ -160,24 +186,52 @@ export const DASHBOARD_WIDGETS: Record<DashboardWidgetId, DashboardWidgetMeta> =
     defaultSize: { w: 3, h: 3 },
     minSize: { w: 2, h: 2 },
   },
+  milestones: {
+    id: "milestones",
+    title: "项目里程碑",
+    description: "所在项目里最近要到的里程碑",
+    defaultSize: { w: 4, h: 4 },
+    minSize: { w: 3, h: 3 },
+  },
+  resource_usage: {
+    id: "resource_usage",
+    title: "团队资源占用",
+    description: "团队共享资源的占用中与最近记录",
+    defaultSize: { w: 4, h: 4 },
+    minSize: { w: 3, h: 3 },
+  },
+  recent_attachments: {
+    id: "recent_attachments",
+    title: "最近附件",
+    description: "所在项目最近上传的任务附件",
+    defaultSize: { w: 4, h: 4 },
+    minSize: { w: 3, h: 3 },
+  },
+  focus_timer: {
+    id: "focus_timer",
+    title: "专注计时",
+    description: "25 分钟专注 / 5 分钟休息的番茄钟",
+    defaultSize: { w: 3, h: 3 },
+    minSize: { w: 2, h: 2 },
+  },
   note: {
     id: "note",
     title: "便签",
-    description: "随手记下的一句话",
+    description: "随手记下的一句话，可添加多张",
     defaultSize: { w: 4, h: 4 },
     minSize: { w: 3, h: 3 },
   },
   clock: {
     id: "clock",
     title: "时钟",
-    description: "按你的时区显示当前时间",
-    defaultSize: { w: 3, h: 2 },
+    description: "本地时间，可显示农历与世界时钟，可添加多个",
+    defaultSize: { w: 4, h: 3 },
     minSize: { w: 2, h: 2 },
   },
   countdown: {
     id: "countdown",
     title: "倒计时",
-    description: "到某个日期时间的倒计时",
+    description: "到某个日期时间的倒计时，可添加多个",
     defaultSize: { w: 3, h: 3 },
     minSize: { w: 2, h: 3 },
   },
@@ -188,12 +242,12 @@ export const DASHBOARD_WIDGETS: Record<DashboardWidgetId, DashboardWidgetMeta> =
  * 高度按 32px 行高换算，贴近原来的 `p-3` 统计瓦片与 `min-h-40` 看板列。
  */
 const DEFAULT_ITEMS: DashboardLayoutItem[] = [
-  { id: "stat_overdue", x: 0, y: 0, w: 3, h: 2 },
-  { id: "stat_today", x: 3, y: 0, w: 3, h: 2 },
-  { id: "stat_week", x: 6, y: 0, w: 3, h: 2 },
-  { id: "stat_doing", x: 9, y: 0, w: 3, h: 2 },
-  { id: "task_board", x: 0, y: 2, w: 12, h: 6 },
-  { id: "activity_feed", x: 0, y: 8, w: 12, h: 4 },
+  { id: "stat_overdue", type: "stat_overdue", x: 0, y: 0, w: 3, h: 2 },
+  { id: "stat_today", type: "stat_today", x: 3, y: 0, w: 3, h: 2 },
+  { id: "stat_week", type: "stat_week", x: 6, y: 0, w: 3, h: 2 },
+  { id: "stat_doing", type: "stat_doing", x: 9, y: 0, w: 3, h: 2 },
+  { id: "task_board", type: "task_board", x: 0, y: 2, w: 12, h: 6 },
+  { id: "activity_feed", type: "activity_feed", x: 0, y: 8, w: 12, h: 4 },
 ];
 
 export const DEFAULT_DASHBOARD_LAYOUT: DashboardLayoutDoc = { v: 1, items: DEFAULT_ITEMS };
@@ -204,6 +258,16 @@ function defaultDoc(): DashboardLayoutDoc {
 
 function isWidgetId(value: unknown): value is DashboardWidgetId {
   return typeof value === "string" && (WIDGET_IDS as readonly string[]).includes(value);
+}
+
+/** IANA 时区名只做字符集校验；是否真的被运行时支持由渲染侧 try/catch 兜底 */
+function isTimeZoneName(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= CLOCK_ZONE_MAX_LENGTH &&
+    /^[A-Za-z][A-Za-z0-9_+\-/]*$/.test(value)
+  );
 }
 
 function overlap(a: DashboardLayoutItem, b: DashboardLayoutItem): boolean {
@@ -230,19 +294,31 @@ function intOr(value: unknown, fallback: number): number {
 }
 
 function sanitizeConfig(
-  id: DashboardWidgetId,
+  type: DashboardWidgetId,
   raw: unknown,
 ): DashboardWidgetConfig | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const input = raw as Record<string, unknown>;
 
-  if (id === "note") {
+  if (type === "note") {
     return typeof input.text === "string"
       ? { text: input.text.slice(0, NOTE_MAX_LENGTH) }
       : undefined;
   }
 
-  if (id === "countdown") {
+  if (type === "clock") {
+    const config: DashboardWidgetConfig = {};
+    if (typeof input.lunar === "boolean") config.lunar = input.lunar;
+    if (Array.isArray(input.zones)) {
+      // 去重保序，最多 CLOCK_MAX_ZONES 个；空数组也要保留 —— 用户可能刚把世界时钟全删掉
+      config.zones = [
+        ...new Set(input.zones.filter(isTimeZoneName)),
+      ].slice(0, CLOCK_MAX_ZONES);
+    }
+    return Object.keys(config).length > 0 ? config : undefined;
+  }
+
+  if (type === "countdown") {
     const title =
       typeof input.title === "string" ? input.title.slice(0, COUNTDOWN_TITLE_MAX_LENGTH) : undefined;
     const targetAt =
@@ -255,20 +331,33 @@ function sanitizeConfig(
   return undefined;
 }
 
+/** 实例 id：旧文档里 id 就是类型名；新文档里是 `note-2` 这样的独立标识 */
+function sanitizeInstanceId(raw: unknown, type: DashboardWidgetId): string {
+  if (typeof raw === "string") {
+    const id = raw.trim();
+    if (id.length > 0 && id.length <= INSTANCE_ID_MAX_LENGTH) return id;
+  }
+  return type;
+}
+
 /** 按目录与最小尺寸夹取单个卡片；非法尺寸回落默认值 */
 function sanitizeItem(raw: unknown): DashboardLayoutItem | null {
   if (!raw || typeof raw !== "object") return null;
   const input = raw as Record<string, unknown>;
-  if (!isWidgetId(input.id)) return null;
 
-  const meta = DASHBOARD_WIDGETS[input.id];
+  // 兼容旧版布局（只有 id、没有 type）：此时 id 就是卡片类型
+  const type = isWidgetId(input.type) ? input.type : isWidgetId(input.id) ? input.id : null;
+  if (!type) return null;
+
+  const meta = DASHBOARD_WIDGETS[type];
   const w = clamp(intOr(input.w, meta.defaultSize.w), meta.minSize.w, GRID_COLUMNS);
   const h = clamp(intOr(input.h, meta.defaultSize.h), meta.minSize.h, MAX_H);
   const x = clamp(intOr(input.x, 0), 0, GRID_COLUMNS - w);
   const y = clamp(intOr(input.y, 0), 0, MAX_Y);
 
-  const config = sanitizeConfig(input.id, input.config);
-  return config ? { id: input.id, x, y, w, h, config } : { id: input.id, x, y, w, h };
+  const id = sanitizeInstanceId(input.id, type);
+  const config = sanitizeConfig(type, input.config);
+  return config ? { id, type, x, y, w, h, config } : { id, type, x, y, w, h };
 }
 
 /**
@@ -295,18 +384,13 @@ function layoutFrom(items: DashboardLayoutItem[]): DashboardLayoutDoc {
   return { v: 1, items: resolveOverlaps(items) };
 }
 
-/** 统计合并卡与四张单项互斥；合并卡优先 */
-function applyStatsExclusivity(items: DashboardLayoutItem[]): DashboardLayoutItem[] {
-  if (!items.some((item) => item.id === "task_summary")) return items;
-  return items.filter((item) => !(STAT_WIDGET_IDS as readonly string[]).includes(item.id));
-}
-
 /**
  * 把任意来源（DB JSONB、客户端、坏数据）归一成可信布局。
  *
  * - null / 非 v1 / 结构不对 → 默认布局
  * - 空 items 保留为空（用户主动删光）
  * - 非空但一项都认不出 → 视为脏数据，回落默认
+ * - 未知类型丢弃；单例卡同类型只留第一张；实例 id 重复只留第一份
  * - 坐标原样保留（允许留白），只把重叠项向下推开
  */
 export function normalizeLayoutDoc(raw: unknown): DashboardLayoutDoc {
@@ -315,23 +399,28 @@ export function normalizeLayoutDoc(raw: unknown): DashboardLayoutDoc {
   if (input.v !== 1 || !Array.isArray(input.items)) return defaultDoc();
   if (input.items.length === 0) return { v: 1, items: [] };
 
-  const seen = new Set<DashboardWidgetId>();
+  const seenIds = new Set<string>();
+  const seenTypes = new Set<DashboardWidgetId>();
   const items: DashboardLayoutItem[] = [];
   for (const rawItem of input.items) {
     const item = sanitizeItem(rawItem);
-    if (!item || seen.has(item.id)) continue;
-    seen.add(item.id);
+    if (!item || seenIds.has(item.id)) continue;
+    if (!isRepeatableWidgetId(item.type)) {
+      if (seenTypes.has(item.type)) continue;
+      seenTypes.add(item.type);
+    }
+    seenIds.add(item.id);
     items.push(item);
   }
 
   if (items.length === 0) return defaultDoc();
-  return layoutFrom(applyStatsExclusivity(items).sort(byPosition));
+  return layoutFrom(items.sort(byPosition));
 }
 
 /** 移动：从当前文档出发，把目标放到新坐标并重排 */
 export function moveWidget(
   doc: DashboardLayoutDoc,
-  id: DashboardWidgetId,
+  id: string,
   x: number,
   y: number,
 ): DashboardLayoutDoc {
@@ -350,14 +439,14 @@ export function moveWidget(
 /** 缩放：左上角固定，尺寸夹到最小尺寸与 12 列内 */
 export function resizeWidget(
   doc: DashboardLayoutDoc,
-  id: DashboardWidgetId,
+  id: string,
   w: number,
   h: number,
 ): DashboardLayoutDoc {
   const target = doc.items.find((item) => item.id === id);
   if (!target) return doc;
 
-  const meta = DASHBOARD_WIDGETS[id];
+  const meta = DASHBOARD_WIDGETS[target.type];
   const nextW = clamp(intOr(w, target.w), meta.minSize.w, GRID_COLUMNS - target.x);
   const nextH = clamp(intOr(h, target.h), meta.minSize.h, MAX_H);
   const resized: DashboardLayoutItem = { ...target, w: nextW, h: nextH };
@@ -365,51 +454,54 @@ export function resizeWidget(
   return layoutFrom([resized, ...others]);
 }
 
-/** 添加：已存在则原样返回；追加到现有内容下一行 */
-export function addWidget(doc: DashboardLayoutDoc, id: DashboardWidgetId): DashboardLayoutDoc {
-  if (doc.items.some((item) => item.id === id)) return doc;
+/** 新实例 id：首个实例沿用类型名，之后依次 `type-2`、`type-3` */
+function nextInstanceId(doc: DashboardLayoutDoc, type: DashboardWidgetId): string {
+  const used = new Set(doc.items.map((item) => item.id));
+  if (!used.has(type)) return type;
+  let n = 2;
+  while (used.has(`${type}-${n}`)) n += 1;
+  return `${type}-${n}`;
+}
 
-  const kept = applyStatsExclusivity(
-    doc.items.filter((item) => {
-      if (id === "task_summary") return !(STAT_WIDGET_IDS as readonly string[]).includes(item.id);
-      if ((STAT_WIDGET_IDS as readonly string[]).includes(id)) return item.id !== "task_summary";
-      return true;
-    }),
-  );
+/** 添加：单例卡已存在则原样返回；可重复卡每次新增一个实例，追加到内容下方 */
+export function addWidget(doc: DashboardLayoutDoc, type: DashboardWidgetId): DashboardLayoutDoc {
+  if (!isRepeatableWidgetId(type) && doc.items.some((item) => item.type === type)) return doc;
 
-  const meta = DASHBOARD_WIDGETS[id];
-  const bottom = kept.reduce((max, item) => Math.max(max, item.y + item.h), 0);
+  const meta = DASHBOARD_WIDGETS[type];
+  const bottom = doc.items.reduce((max, item) => Math.max(max, item.y + item.h), 0);
   const added: DashboardLayoutItem = {
-    id,
+    id: nextInstanceId(doc, type),
+    type,
     x: 0,
     y: bottom,
     w: meta.defaultSize.w,
     h: meta.defaultSize.h,
   };
-  return layoutFrom([...kept, added]);
+  return layoutFrom([...doc.items, added]);
 }
 
-export function removeWidget(doc: DashboardLayoutDoc, id: DashboardWidgetId): DashboardLayoutDoc {
+/** 按实例 id 删除（可重复卡只删掉这一张） */
+export function removeWidget(doc: DashboardLayoutDoc, id: string): DashboardLayoutDoc {
   if (!doc.items.some((item) => item.id === id)) return doc;
   return layoutFrom(doc.items.filter((item) => item.id !== id));
 }
 
-/** 只改配置，不动位置 */
+/** 只改配置，不动位置（按实例 id 定位，同一类型的多张卡互不影响） */
 export function updateWidgetConfig(
   doc: DashboardLayoutDoc,
-  id: DashboardWidgetId,
+  id: string,
   patch: DashboardWidgetConfig,
 ): DashboardLayoutDoc {
   const target = doc.items.find((item) => item.id === id);
   if (!target) return doc;
 
-  const config = sanitizeConfig(id, { ...target.config, ...patch });
+  const config = sanitizeConfig(target.type, { ...target.config, ...patch });
   return {
     v: 1,
     items: doc.items.map((item) => {
       if (item.id !== id) return item;
       if (config) return { ...item, config };
-      return { id: item.id, x: item.x, y: item.y, w: item.w, h: item.h };
+      return { id: item.id, type: item.type, x: item.x, y: item.y, w: item.w, h: item.h };
     }),
   };
 }
@@ -419,8 +511,13 @@ export function widgetOrder(item: Pick<DashboardLayoutItem, "x" | "y">): number 
   return item.y * GRID_COLUMNS + item.x;
 }
 
-/** 目录顺序（DOM 顺序固定，避免拖拽时 React 移动节点） */
+/**
+ * 目录顺序（DOM 顺序固定，避免拖拽时 React 移动节点）。
+ * 同类型多实例按实例 id 排序，保证每次渲染顺序稳定。
+ */
 export function sortByCatalog(doc: DashboardLayoutDoc): DashboardLayoutItem[] {
   const index = new Map<DashboardWidgetId, number>(WIDGET_IDS.map((id, i) => [id, i]));
-  return [...doc.items].sort((a, b) => (index.get(a.id) ?? 0) - (index.get(b.id) ?? 0));
+  return [...doc.items].sort(
+    (a, b) => (index.get(a.type) ?? 0) - (index.get(b.type) ?? 0) || a.id.localeCompare(b.id),
+  );
 }

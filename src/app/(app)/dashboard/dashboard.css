@@ -131,16 +131,6 @@ body.proj-cosmic.dashboard-dragging * {
   cursor: grabbing !important;
 }
 
-/* 合并概览：卡片够宽才排一行四格（容器查询，跟视口无关） */
-.dashboard-stat-summary {
-  container-type: inline-size;
-}
-@container (min-width: 420px) {
-  .dashboard-stat-summary-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-
 /* 看板列：窄卡片单列堆叠，宽到 560px 才三列 */
 .workbench-board-content {
   container-type: inline-size;

@@ -31,7 +31,7 @@ import { WidgetFrame } from "./widget-frame";
 import { WidgetLibrary } from "./widget-library";
 import { useGridInteraction } from "./use-grid-interaction";
 import { WorkbenchBoard } from "./workbench-board";
-import { StatWidget, StatsSummaryWidget } from "./widgets/stats";
+import { StatWidget } from "./widgets/stats";
 import {
   MessagesWidget,
   MyProjectsWidget,
@@ -40,6 +40,12 @@ import {
   UpcomingWidget,
 } from "./widgets/lists";
 import { ClockWidget, CountdownWidget, NoteWidget, type ConfigChange } from "./widgets/personal";
+import {
+  FocusTimerWidget,
+  MilestonesWidget,
+  RecentAttachmentsWidget,
+  ResourceUsageWidget,
+} from "./widgets/productivity";
 import "./dashboard.css";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
@@ -269,11 +275,11 @@ export function DashboardGrid({
     };
   }, [editing]);
 
-  function handleAdd(id: DashboardWidgetId) {
-    commit(addWidget(layoutRef.current, id));
+  function handleAdd(type: DashboardWidgetId) {
+    commit(addWidget(layoutRef.current, type));
   }
 
-  function handleRemove(id: DashboardWidgetId) {
+  function handleRemove(id: string) {
     commit(removeWidget(layoutRef.current, id));
   }
 
@@ -288,7 +294,7 @@ export function DashboardGrid({
     commit(normalizeLayoutDoc(DEFAULT_DASHBOARD_LAYOUT));
   }
 
-  function handleConfigChange(id: DashboardWidgetId) {
+  function handleConfigChange(id: string) {
     const change: ConfigChange = (patch: DashboardWidgetConfig, immediate = false) => {
       const next = updateWidgetConfig(layoutRef.current, id, patch);
       applyLayout(next);
@@ -299,7 +305,7 @@ export function DashboardGrid({
 
   function handleKeyNudge(
     e: ReactKeyboardEvent<HTMLElement>,
-    id: DashboardWidgetId,
+    id: string,
     mode: "move" | "resize",
   ) {
     if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
@@ -325,10 +331,10 @@ export function DashboardGrid({
   }
 
   function renderWidget(item: DashboardLayoutItem) {
-    const statKey = STAT_KEYS[item.id];
+    const statKey = STAT_KEYS[item.type];
     if (statKey) return <StatWidget statKey={statKey} value={data.stats[statKey]} />;
 
-    switch (item.id) {
+    switch (item.type) {
       case "task_board":
         return (
           <WorkbenchBoard
@@ -341,8 +347,6 @@ export function DashboardGrid({
             locked={editing}
           />
         );
-      case "task_summary":
-        return <StatsSummaryWidget stats={data.stats} />;
       case "activity_feed":
         return (
           <ActivityFeed
@@ -367,10 +371,24 @@ export function DashboardGrid({
         return <MessagesWidget messages={data.messages} />;
       case "quick_links":
         return <QuickLinksWidget />;
+      case "milestones":
+        return <MilestonesWidget milestones={data.milestones} today={data.today} />;
+      case "resource_usage":
+        return <ResourceUsageWidget usages={data.resourceUsages} tz={data.tz} />;
+      case "recent_attachments":
+        return <RecentAttachmentsWidget attachments={data.attachments} tz={data.tz} />;
+      case "focus_timer":
+        return <FocusTimerWidget instanceId={item.id} />;
       case "note":
         return <NoteWidget config={item.config} onConfigChange={handleConfigChange(item.id)} />;
       case "clock":
-        return <ClockWidget tz={data.tz} />;
+        return (
+          <ClockWidget
+            tz={data.tz}
+            config={item.config}
+            onConfigChange={handleConfigChange(item.id)}
+          />
+        );
       case "countdown":
         return (
           <CountdownWidget
@@ -489,7 +507,7 @@ export function DashboardGrid({
               <WidgetFrame
                 key={item.id}
                 item={item}
-                title={DASHBOARD_WIDGETS[item.id].title}
+                title={DASHBOARD_WIDGETS[item.type].title}
                 editing={editing}
                 dragging={activeId === item.id}
                 onRemove={() => handleRemove(item.id)}

@@ -7,8 +7,10 @@ import { resolveUserTimeZone } from "@/lib/time-pref";
 import { pickProjectFilter, projectChips } from "@/lib/workbench-filters";
 import { buildWorkbenchStats } from "@/lib/workbench-stats";
 import { getDashboardLayout } from "@/lib/dashboard-layout-store";
-import { listMyProjects } from "@/lib/project";
+import { listMyProjects, listMyUpcomingMilestones } from "@/lib/project";
 import { listMyTeams } from "@/lib/team";
+import { listMyTeamResourceUsages } from "@/lib/resource";
+import { listMyRecentAttachments } from "@/lib/attachment";
 import { countUnread } from "@/lib/dm";
 import { countGroupUnread, countPendingGroupInvites } from "@/lib/group-chat";
 import { DashboardGrid } from "./dashboard-grid";
@@ -40,6 +42,9 @@ export default async function DashboardPage({
     groupUnread,
     pendingInvites,
     tz,
+    milestoneRows,
+    resourceUsages,
+    attachments,
   ] = await Promise.all([
     listMyTasks(userId),
     listMyTaskActivities(userId), // 全量口径，不受任何筛选影响
@@ -51,6 +56,9 @@ export default async function DashboardPage({
     countGroupUnread(userId),
     countPendingGroupInvites(userId),
     resolveUserTimeZone(userId),
+    listMyUpcomingMilestones(userId),
+    listMyTeamResourceUsages(userId),
+    listMyRecentAttachments(userId),
   ]);
 
   // 「今天 / 本周截止」一律按**用户自己的时区**在服务端算成 YYYY-MM-DD，
@@ -124,6 +132,16 @@ export default async function DashboardPage({
     })),
     upcoming,
     messages: { dm: dmUnread, group: groupUnread, invites: pendingInvites },
+    // 查询里已过滤掉空日期，这里只是把可空类型收窄
+    milestones: milestoneRows.map((m) => ({
+      id: m.id,
+      title: m.title,
+      targetDate: m.targetDate as string,
+      projectId: m.projectId,
+      projectName: m.projectName,
+    })),
+    resourceUsages,
+    attachments,
   };
 
   return (

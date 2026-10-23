@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { dateIn } from "@/lib/time";
-import { clearFeedAction, markFeedReadAction } from "@/app/(app)/actions";
+import { clearFeedAction, deleteActivityAction, markFeedReadAction } from "@/app/(app)/actions";
 
 // 看板拖拽成功后的广播事件：detail 携带动态流 scope（"workbench" 或 "project:<id>"），
 // 最新记录模块据此立即未读 +1。scope 字面量与 lib/activity 的 WORKBENCH_SCOPE/projectFeedScope 一致。
@@ -24,6 +24,8 @@ export type ActivityFeedRow = {
   taskTitle?: string;
   projectId?: string;
   projectName?: string;
+  /** 团队管理员：删除会从所有人的动态流与库中移除；否则只对自己隐藏 */
+  canPurge?: boolean;
 };
 
 // 动态行拆成「任务标题前 / 后」两段，标题内嵌为链接：
@@ -132,6 +134,10 @@ export function ActivityFeed({
   const [unread, setUnread] = useState(unreadCount);
   const [clearPending, setClearPending] = useState(false);
   const [clearError, setClearError] = useState<string | null>(null);
+  const [deletePendingId, setDeletePendingId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  // 自己删掉一条后 router.refresh 会让列表头变化；任务页的 bumpOnNewRows 别把它当成新动态
+  const skipBump = useRef(false);
   const router = useRouter();
 
   // 服务端渲染的未读数变化时（如拖拽后 router.refresh 回流），在渲染期同步本地状态。
@@ -144,16 +150,20 @@ export function ActivityFeed({
   }
 
   // bumpOnNewRows（任务页）：列表头出现新 id 即视为本页操作产生了新动态，未读 +1。
-  // 仅在服务端未读数没变时补偿——变了的话上面的渲染期同步已按服务端口径覆盖，
-  // 避免同一批新行加两次（加两次的分支互斥：prop 变了就不同步头行）。
-  const [lastFirstId, setLastFirstId] = useState(activities[0]?.id ?? null);
-  if (lastFirstId !== (activities[0]?.id ?? null)) {
+  // 仅在服务端未读数没变时补偿——变了说明服务端口径已经覆盖，避免同一批新行加两次。
+  // 自己删掉一条后列表头也会变，用 skipBump 标记跳过这次「新行」判定。
+  const prevHead = useRef(activities[0]?.id ?? null);
+  useEffect(() => {
     const headId = activities[0]?.id ?? null;
-    setLastFirstId(headId);
-    if (bumpOnNewRows && headId != null && lastUnreadCount === unreadCount) {
+    const previous = prevHead.current;
+    const skipped = skipBump.current;
+    prevHead.current = headId;
+    skipBump.current = false;
+    if (headId === previous) return;
+    if (bumpOnNewRows && headId != null && !skipped && lastUnreadCount === unreadCount) {
       setUnread((n) => n + 1);
     }
-  }
+  }, [activities, bumpOnNewRows, lastUnreadCount, unreadCount]);
 
   // 看板拖拽成功会广播 ACTIVITY_NEW_EVENT（detail = scope）：
   // 本流的红点立即 +1，不用等 router.refresh 回流（覆盖「标记已读后
@@ -172,6 +182,27 @@ export function ActivityFeed({
     if (!unreadScope || unread === 0) return;
     setUnread(0);
     void markFeedReadAction(unreadScope);
+  }
+
+  async function handleDelete(row: ActivityFeedRow) {
+    const scope = clearScope ?? unreadScope;
+    if (!scope || deletePendingId) return;
+    const message = row.canPurge
+      ? "删除这条记录？会从所有人的动态流中移除，且不可恢复。"
+      : "删除这条记录？只会从你自己的动态流里隐藏，其他人仍然可见。";
+    if (!window.confirm(message)) return;
+
+    setDeletePendingId(row.id);
+    setDeleteError(null);
+    skipBump.current = true;
+    const res = await deleteActivityAction(row.id, scope);
+    setDeletePendingId(null);
+    if ("error" in res) {
+      skipBump.current = false;
+      setDeleteError(res.error);
+      return;
+    }
+    router.refresh();
   }
 
   async function handleClear() {
@@ -233,7 +264,9 @@ export function ActivityFeed({
           </button>
         )}
       </div>
-      {clearError && <p className="mt-1 text-xs text-high">{clearError}</p>}
+      {(clearError || deleteError) && (
+        <p className="mt-1 text-xs text-high">{clearError ?? deleteError}</p>
+      )}
       {activities.length === 0 ? (
         <p className="mt-2 text-sm text-ink-faint">暂无动态</p>
       ) : (
@@ -269,6 +302,22 @@ export function ActivityFeed({
                     aria-label="新消息"
                     className="ml-1.5 inline-block h-1.5 w-1.5 rounded-full bg-high align-middle"
                   />
+                )}
+                {(clearScope ?? unreadScope) && (
+                  <button
+                    type="button"
+                    onClick={() => void handleDelete(a)}
+                    disabled={deletePendingId === a.id}
+                    aria-label="删除这条记录"
+                    title={
+                      a.canPurge
+                        ? "管理员：从所有人的动态流中删除"
+                        : "仅从自己的动态流中隐藏"
+                    }
+                    className="ml-1.5 align-middle text-xs leading-none text-ink-faint transition-colors hover:text-high disabled:opacity-40"
+                  >
+                    ×
+                  </button>
                 )}
               </li>
             );

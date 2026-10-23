@@ -1,6 +1,6 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { taskAttachments, tasks, users } from "@/db/schema";
+import { projects, taskAttachments, tasks, teamMembers, users } from "@/db/schema";
 import { AppError, ForbiddenError } from "./errors";
 import { getProjectForUser } from "./project";
 import { requireTaskWrite } from "./task";
@@ -42,6 +42,37 @@ export async function listAttachments(actorId: string, taskId: string) {
     .leftJoin(users, eq(taskAttachments.uploaderId, users.id))
     .where(eq(taskAttachments.taskId, taskId))
     .orderBy(desc(taskAttachments.createdAt));
+}
+
+/**
+ * 工作台「最近附件」：我所在团队、未归档项目里最新的任务附件（不含文件内容）。
+ * 跨项目聚合，只取最近几条。
+ */
+export async function listMyRecentAttachments(actorId: string, limit = 8) {
+  return db
+    .select({
+      id: taskAttachments.id,
+      filename: taskAttachments.filename,
+      mimeType: taskAttachments.mimeType,
+      size: taskAttachments.size,
+      createdAt: taskAttachments.createdAt,
+      uploaderName: users.name,
+      taskId: tasks.id,
+      taskTitle: tasks.title,
+      projectId: projects.id,
+      projectName: projects.name,
+    })
+    .from(taskAttachments)
+    .innerJoin(tasks, eq(taskAttachments.taskId, tasks.id))
+    .innerJoin(projects, eq(tasks.projectId, projects.id))
+    .innerJoin(
+      teamMembers,
+      and(eq(teamMembers.teamId, projects.teamId), eq(teamMembers.userId, actorId)),
+    )
+    .leftJoin(users, eq(taskAttachments.uploaderId, users.id))
+    .where(eq(projects.status, "active"))
+    .orderBy(desc(taskAttachments.createdAt))
+    .limit(limit);
 }
 
 export async function uploadAttachment(

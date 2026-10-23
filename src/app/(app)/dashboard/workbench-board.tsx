@@ -145,6 +145,7 @@ function WorkbenchCard({
   return (
     <div
       ref={setNodeRef}
+      data-task-card-id={task.id}
       onMouseMove={(e) => {
         const el = e.currentTarget;
         const r = el.getBoundingClientRect();
@@ -242,9 +243,16 @@ export function WorkbenchBoard({
   );
 
   function handleDragStart(event: DragStartEvent) {
-    const task = optimisticTasks.find((t) => t.id === String(event.active.id));
+    const taskId = String(event.active.id);
+    const task = optimisticTasks.find((t) => t.id === taskId);
     setActiveTask(task ?? null);
-    setDragWidth(event.active.rect.current.initial?.width ?? null);
+    // dnd-kit 的 `active.rect.current.initial` 要等它自己的 effect 跑完才写入，
+    // onDragStart 这一刻还是 null，取不到宽度。直接量被拖的卡片：用 offsetWidth
+    // （布局宽度，不含悬停 3D 旋转），看板随工作台网格缩放时浮层才跟着变。
+    const node = document.querySelector<HTMLElement>(
+      `[data-task-card-id="${taskId}"]`,
+    );
+    setDragWidth(node?.offsetWidth || event.active.rect.current.initial?.width || null);
   }
 
   function handleDragEnd(event: DragEndEvent) {
