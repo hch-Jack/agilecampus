@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   TEXT_PREVIEW_MAX_BYTES,
   decodeTextWithFallback,
   detectPreviewKind,
   renderMimeFor,
 } from "@/lib/file-preview";
+import type { SheetTable } from "@/lib/file-preview-office";
 
 /** 预览目标：url 是现成的下载路由（带会话鉴权），组件内按需取内容 */
 export type PreviewFile = {
@@ -35,6 +36,12 @@ function kindLabel(kind: ReturnType<typeof detectPreviewKind>): string {
       return "音频";
     case "text":
       return "文本";
+    case "word":
+      return "Word 文档";
+    case "excel":
+      return "Excel 表格";
+    case "ppt":
+      return "PPT 幻灯片";
     default:
       return "文件";
   }
@@ -55,10 +62,25 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [text, setText] = useState<string | null>(null);
   const [truncated, setTruncated] = useState(false);
+  const [wordHtml, setWordHtml] = useState<string | null>(null);
+  const [sheets, setSheets] = useState<SheetTable[] | null>(null);
+  const [activeSheet, setActiveSheet] = useState(0);
+  const [pptReady, setPptReady] = useState(false);
   const [error, setError] = useState("");
   // 弹窗随打开全新挂载（file 在挂载期内不变），加载中 = 需要取内容但内容未到位
   const needsFetch = kind !== "image" && kind !== "unsupported";
-  const loading = needsFetch && blobUrl === null && text === null && !error;
+  const loading =
+    needsFetch &&
+    !pptReady &&
+    blobUrl === null &&
+    text === null &&
+    wordHtml === null &&
+    sheets === null &&
+    !error;
+
+  // PPT 容器：pptx-preview 直接往里渲染幻灯片；其 destroy() 不清 DOM，重建前自行清空
+  const pptContainerRef = useRef<HTMLDivElement>(null);
+  const pptPreviewerRef = useRef<{ destroy: () => void } | null>(null);
 
   // Esc 关闭；打开期间锁背景滚动
   useEffect(() => {
@@ -74,9 +96,10 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
     };
   }, [onClose]);
 
-  // pdf/video/audio/text 需要取内容；image 用下载 URL 直出，unsupported 不取
+  // pdf/video/audio/text/word/excel 需要取内容；image 用下载 URL 直出，
+  // ppt 由下方独立 effect 取内容并渲染，unsupported 不取
   useEffect(() => {
-    if (kind === "image" || kind === "unsupported") return;
+    if (kind === "image" || kind === "ppt" || kind === "unsupported") return;
     let cancelled = false;
     let objectUrl: string | null = null;
     (async () => {
@@ -89,13 +112,25 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
           const capped = buf.byteLength > TEXT_PREVIEW_MAX_BYTES;
           setText(decodeTextWithFallback(capped ? buf.slice(0, TEXT_PREVIEW_MAX_BYTES) : buf));
           setTruncated(capped);
+        } else if (kind === "word" || kind === "excel") {
+          // Office 解析库（mammoth/SheetJS）体积大，动态 import 独立 chunk，只在此时加载
+          const office = await import("@/lib/file-preview-office");
+          if (cancelled) return;
+          if (kind === "word") {
+            setWordHtml(await office.docxToHtml(buf));
+          } else {
+            setSheets(await office.excelToSheets(buf));
+          }
         } else {
           // 用补正后的 Content-Type 重建 blob，浏览器才会启用 PDF/媒体内置渲染
           objectUrl = URL.createObjectURL(new Blob([buf], { type: renderMime ?? "application/octet-stream" }));
           setBlobUrl(objectUrl);
         }
       } catch {
-        if (!cancelled) setError("内容加载失败，可下载后查看");
+        if (!cancelled)
+          setError(
+            kind === "word" || kind === "excel" ? "文档解析失败，可下载后查看" : "内容加载失败，可下载后查看",
+          );
       }
     })();
     return () => {
@@ -103,6 +138,41 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [file.url, kind, renderMime]);
+
+  // PPT：pptx-preview（含 echarts，体积大）动态 import，往容器里渲染幻灯片。
+  // 它的 destroy() 只发事件不清 DOM，重跑前需自行清空容器；渲染完才撤「加载中」遮罩。
+  useEffect(() => {
+    if (kind !== "ppt") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(file.url);
+        if (!res.ok) throw new Error(String(res.status));
+        const buf = await res.arrayBuffer();
+        if (cancelled) return;
+        const { init } = await import("pptx-preview");
+        const el = pptContainerRef.current;
+        if (!el || cancelled) return;
+        el.replaceChildren();
+        // 弹窗内容区作为画布：宽度自适应容器，高度定死让内部滚动，幻灯片连排
+        const previewer = init(el, {
+          width: Math.max(el.clientWidth - 4, 280),
+          height: Math.max(el.clientHeight - 4, 200),
+          mode: "list",
+        });
+        pptPreviewerRef.current = previewer;
+        await previewer.preview(buf);
+        if (!cancelled) setPptReady(true);
+      } catch {
+        if (!cancelled) setError("文档解析失败，可下载后查看");
+      }
+    })();
+    return () => {
+      cancelled = true;
+      pptPreviewerRef.current?.destroy();
+      pptPreviewerRef.current = null;
+    };
+  }, [file.url, kind]);
 
   const downloadBtn = (
     <a href={file.url} download={file.filename} className="ac-btn-ghost px-2.5 py-1 text-xs">
@@ -153,6 +223,18 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
               onError={() => setError("图片加载失败，可下载后查看")}
               className="max-h-[75vh] max-w-full rounded-field object-contain"
             />
+          ) : kind === "ppt" ? (
+            <div className="relative h-full w-full">
+              <div
+                ref={pptContainerRef}
+                className="h-full w-full overflow-auto rounded-field border border-line bg-surface"
+              />
+              {loading && (
+                <div className="absolute inset-0 grid place-items-center bg-surface text-sm text-ink-faint">
+                  加载中…
+                </div>
+              )}
+            </div>
           ) : loading ? (
             <p className="text-sm text-ink-faint">加载中…</p>
           ) : kind === "pdf" && blobUrl ? (
@@ -189,6 +271,42 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
               <pre className="whitespace-pre-wrap break-words rounded-field border border-line bg-surface p-3 font-mono text-xs leading-relaxed text-ink">
                 {text}
               </pre>
+            </div>
+          ) : kind === "word" && wordHtml !== null ? (
+            // 内容已过 sanitize（见 file-preview-office.ts），正文转义 + 去脚本节点
+            <div
+              className="h-full w-full overflow-auto rounded-field border border-line bg-surface p-6 text-sm leading-relaxed text-ink [&_a]:text-primary [&_a]:underline [&_h1]:mb-2 [&_h1]:text-xl [&_h1]:font-bold [&_h2]:mb-2 [&_h2]:text-lg [&_h2]:font-bold [&_h3]:mb-1.5 [&_h3]:text-base [&_h3]:font-semibold [&_h4]:mb-1.5 [&_h4]:font-semibold [&_img]:max-w-full [&_li]:ml-5 [&_ol]:my-2 [&_ol]:list-decimal [&_p]:my-2 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-line [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-line [&_th]:bg-sunken [&_th]:px-2 [&_th]:py-1 [&_ul]:my-2 [&_ul]:list-disc"
+              dangerouslySetInnerHTML={{ __html: wordHtml }}
+            />
+          ) : kind === "excel" && sheets !== null ? (
+            <div className="flex h-full w-full flex-col">
+              {sheets.length > 1 && (
+                <div className="flex flex-wrap gap-1 pb-2">
+                  {sheets.map((s, i) => (
+                    <button
+                      key={s.name}
+                      type="button"
+                      onClick={() => setActiveSheet(i)}
+                      className={`rounded-field px-2.5 py-1 text-xs ${
+                        i === activeSheet
+                          ? "bg-primary text-white"
+                          : "border border-line bg-surface text-ink-soft hover:border-primary hover:text-primary"
+                      }`}
+                    >
+                      {s.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {sheets[activeSheet]?.truncated && (
+                <p className="pb-2 text-xs text-ink-faint">
+                  工作表过大，仅显示前 2000 行，下载可查看全部数据
+                </p>
+              )}
+              <div
+                className="min-h-0 w-full flex-1 overflow-auto rounded-field border border-line bg-surface [&_table]:border-collapse [&_table]:text-xs [&_td]:max-w-72 [&_td]:truncate [&_td]:border [&_td]:border-line [&_td]:px-2 [&_td]:py-1 [&_td]:whitespace-nowrap"
+                dangerouslySetInnerHTML={{ __html: sheets[activeSheet]?.html ?? "" }}
+              />
             </div>
           ) : (
             <div className="text-center">

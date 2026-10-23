@@ -8,7 +8,16 @@
  * 纯文本渲染（React 转义），不新增任何 inline 服务端响应。
  */
 
-export type PreviewKind = "image" | "pdf" | "video" | "audio" | "text" | "unsupported";
+export type PreviewKind =
+  | "image"
+  | "pdf"
+  | "video"
+  | "audio"
+  | "text"
+  | "word"
+  | "excel"
+  | "ppt"
+  | "unsupported";
 
 const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "ico", "avif"]);
 const PDF_EXTS = new Set(["pdf"]);
@@ -22,6 +31,12 @@ const TEXT_EXTS = new Set([
   "cs", "go", "rs", "php", "sql", "sh", "bat", "ps1", "html", "htm", "css", "scss",
   "less", "vue", "svelte",
 ]);
+// Office 在线预览：docx 走 mammoth 转 HTML，xlsx/xls 等走 SheetJS 转表格，
+// pptx 走 pptx-preview 渲染幻灯片。旧版二进制 .doc / .ppt 无可靠的纯 JS
+// 渲染方案，不支持预览（提示下载）。
+const WORD_EXTS = new Set(["docx"]);
+const EXCEL_EXTS = new Set(["xlsx", "xlsm", "xlsb", "xls"]);
+const PPT_EXTS = new Set(["pptx"]);
 
 function extOf(filename: string): string {
   const dot = filename.lastIndexOf(".");
@@ -43,6 +58,25 @@ export function detectPreviewKind(
   if (mime === "application/pdf" || PDF_EXTS.has(ext)) return "pdf";
   if (mime.startsWith("video/") || VIDEO_EXTS.has(ext)) return "video";
   if (mime.startsWith("audio/") || AUDIO_EXTS.has(ext)) return "audio";
+  if (
+    mime.startsWith("application/vnd.openxmlformats-officedocument.wordprocessingml") ||
+    WORD_EXTS.has(ext)
+  ) {
+    return "word";
+  }
+  if (
+    mime.startsWith("application/vnd.openxmlformats-officedocument.spreadsheetml") ||
+    mime.startsWith("application/vnd.ms-excel") ||
+    EXCEL_EXTS.has(ext)
+  ) {
+    return "excel";
+  }
+  if (
+    mime.startsWith("application/vnd.openxmlformats-officedocument.presentationml") ||
+    PPT_EXTS.has(ext)
+  ) {
+    return "ppt";
+  }
   // text/html 按文本展示源码；application/json、+xml、+json 等 API 常见类型也归文本
   if (
     mime.startsWith("text/") ||
