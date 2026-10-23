@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { buildContinuationText, isContinuableTool } from "@/lib/agent/continuation";
 import { LABEL_COLORS, LABEL_COLOR_CLASS } from "@/lib/board-columns";
@@ -133,16 +133,38 @@ export function DraftCards({
 }) {
   // 已落库的卡片按序号记下**当前编辑后**的数据，供续做提示词复述
   const [committed, setCommitted] = useState<Map<number, Draft>>(new Map());
-  const [continued, setContinued] = useState(false);
+  // 续做请求可能跑很久：按钮原地转圈，别一点就消失 —— 否则看着像没点上
+  const [continuing, setContinuing] = useState(false);
+  const [continueState, setContinueState] = useState<"idle" | "done" | "error">("idle");
+  // 状态更新是异步的：双击时第二下可能赶在 disabled 生效前，用同步 ref 挡住重复请求
+  const continuingRef = useRef(false);
 
   const handleCommitted = (index: number, d: Draft) => {
     setCommitted((prev) => new Map(prev).set(index, d));
     // 之后再落库一张卡，就值得再问一次「还有后续吗」
-    setContinued(false);
+    setContinueState("idle");
   };
 
   const canContinue =
     !!onContinue && [...committed.values()].some((d) => isContinuableTool(d.tool));
+
+  async function handleContinue() {
+    if (!onContinue || continuingRef.current || busy) return;
+    continuingRef.current = true;
+    setContinuing(true);
+    setContinueState("idle");
+    const remaining = drafts.filter((_, i) => !committed.has(i));
+    const ok = await onContinue(
+      buildContinuationText({
+        originalText,
+        committed: [...committed.values()],
+        remaining,
+      }),
+    );
+    continuingRef.current = false;
+    setContinuing(false);
+    setContinueState(ok ? "done" : "error");
+  }
 
   return (
     <div className="mt-2 space-y-2">
@@ -157,28 +179,57 @@ export function DraftCards({
           onCommitted={handleCommitted}
         />
       ))}
-      {canContinue && !continued && (
-        <button
-          type="button"
-          disabled={busy}
-          onClick={async () => {
-            if (!onContinue) return;
-            setContinued(true);
-            const remaining = drafts.filter((_, i) => !committed.has(i));
-            const ok = await onContinue(
-              buildContinuationText({
-                originalText,
-                committed: [...committed.values()],
-                remaining,
-              }),
-            );
-            // 失败（网络/接口）才把按钮放回来；成功就等新一屏草案
-            if (!ok) setContinued(false);
-          }}
-          className="ac-btn-ghost px-2 py-1 text-xs"
-        >
-          继续处理后续动作
-        </button>
+      {canContinue && continueState === "done" && (
+        <p className="flex items-center gap-1.5 px-1 text-xs text-done">
+          <svg
+            viewBox="0 0 24 24"
+            className="h-3.5 w-3.5 shrink-0"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <path d="M5 12l4.5 4.5L19 7" />
+          </svg>
+          已继续处理后续动作
+        </p>
+      )}
+      {canContinue && continueState !== "done" && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={busy || continuing}
+            aria-busy={continuing}
+            onClick={() => void handleContinue()}
+            className="ac-btn-ghost inline-flex items-center gap-1.5 px-2 py-1 text-xs disabled:opacity-60"
+          >
+            {continuing ? (
+              <>
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-3.5 w-3.5 shrink-0 animate-spin"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  aria-hidden
+                >
+                  <path d="M12 3a9 9 0 1 0 9 9" />
+                </svg>
+                正在继续处理…
+              </>
+            ) : (
+              "继续处理后续动作"
+            )}
+          </button>
+          {continueState === "error" && (
+            <span className="text-xs text-high" role="status">
+              继续失败，请重试
+            </span>
+          )}
+        </div>
       )}
     </div>
   );
