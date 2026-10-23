@@ -102,6 +102,8 @@ function fmtRelative(d: Date, now: Date, tz: string): string {
 // 库内数据与他人视图不动，此后新产生的记录照常显示。
 // bumpOnNewRows：任务页没有「拖拽成功」事件源（只有看板才广播 ACTIVITY_NEW_EVENT），
 // 开启后改为列表头出现新行即视为新动态、未读 +1——任务页每次改完都会随 action 回流。
+// embedded：工作台把它当网格卡片的内容，不再套一层 ac-card 外壳。
+// fill：高度交给父容器（卡片可缩放），列表内部滚动，替代固定的 35vh。
 export function ActivityFeed({
   activities,
   tz,
@@ -112,6 +114,8 @@ export function ActivityFeed({
   clearScope,
   title = "最新记录",
   bumpOnNewRows = false,
+  embedded = false,
+  fill = false,
 }: {
   activities: ActivityFeedRow[];
   tz: string;
@@ -122,6 +126,8 @@ export function ActivityFeed({
   clearScope?: string;
   title?: string;
   bumpOnNewRows?: boolean;
+  embedded?: boolean;
+  fill?: boolean;
 }) {
   const [unread, setUnread] = useState(unreadCount);
   const [clearPending, setClearPending] = useState(false);
@@ -190,8 +196,14 @@ export function ActivityFeed({
   }
 
   return (
-    <section className="ac-card p-5">
-      <div className="flex items-center justify-between gap-3">
+    <section
+      className={
+        embedded
+          ? "flex h-full min-h-0 flex-col p-4"
+          : "ac-card p-5"
+      }
+    >
+      <div className="flex shrink-0 items-center justify-between gap-3">
         <h2 className="flex items-center gap-1.5 font-display text-lg font-semibold text-ink">
           {title}
           {unread > 0 && (
@@ -225,7 +237,11 @@ export function ActivityFeed({
       {activities.length === 0 ? (
         <p className="mt-2 text-sm text-ink-faint">暂无动态</p>
       ) : (
-        <ul className="mt-2 max-h-[35vh] space-y-1.5 overflow-y-auto pr-1">
+        <ul
+          className={`mt-2 space-y-1.5 overflow-y-auto pr-1 ${
+            fill ? "min-h-0 flex-1" : "max-h-[35vh]"
+          }`}
+        >
           {activities.map((a, i) => {
             const parts = feedParts(a);
             const titled = a.taskTitle != null;

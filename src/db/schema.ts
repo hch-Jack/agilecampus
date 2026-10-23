@@ -108,6 +108,10 @@ export const users = pgTable(
     // 新手教程：首次登录自动弹出时即打点；NULL = 尚未看过（新注册与存量未弹过的都算）。
     // 存库而非 localStorage：换浏览器/清缓存不会重复弹；将来想给全站重放教程，批量清这列即可。
     tutorialSeenAt: dbTimestamp("tutorial_seen_at"),
+    // 工作台自定义布局：版本信封 `{ v: 1, items: [...] }`（见 lib/dashboard-layout.ts）。
+    // NULL = 从未自定义（用默认布局）；`items: []` = 用户主动把卡片删光 —— 两者语义不同。
+    // 刻意不标类型：布局结构属于应用层，schema 由 drizzle-kit 独立加载，读写在 store 里收口。
+    dashboardLayout: jsonb("dashboard_layout"),
     // 头像：PNG/JPEG/WebP 直存库内（与私信附件同构），经 /api/avatars/[userId] 流出。
     // avatarUpdatedAt 兼作缓存破坏版本号（URL 带 ?v=），换头像即覆盖旧图。
     avatarData: bytea("avatar_data"),

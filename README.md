@@ -16,6 +16,7 @@
 - **Agent 写入 API**：Claude Code 等携令牌直接添加任务、填写完成情况、登记资源占用
 - **时间线甘特**：项目内任务按里程碑分组的甘特视图，逾期标红、今日竖线
 - **时区**：站内所有时间按用户自选的时区显示，「今天/逾期/本周」也按它算——默认中国时间（`Asia/Shanghai`），可在「AI 设置」里改，或选「跟随浏览器」
+- **自定义工作台**：整个工作台卡片化（看板、统计、最新记录、我的项目、团队、消息、便签、时钟、倒计时等），编辑模式支持拖动、缩放、网格吸附、增删卡片与恢复默认，每个用户独立保存在 `users.dashboard_layout`；窄屏（或助手抽屉把正文挤窄）自动切换为只读堆叠
 
 ## 技术栈
 
@@ -130,6 +131,23 @@ docker compose -f docker-compose.prod.yml up -d --build
   `tests/db-timestamp.test.ts` 把这两条都围住了。
 - `src/lib/time.ts` 是纯函数层（`tests/time.test.ts` 覆盖跨时区/夏令时/日界）。
   注意 `node:22-alpine` 官方镜像是 full-ICU；若产物退化成 small-ICU，时区换算会**静默**退化为 UTC。
+
+### 工作台自定义（`users.dashboard_layout`）
+
+工作台布局存 `users.dashboard_layout`（jsonb，可空）：`NULL` = 从未自定义（默认布局），
+`{ v: 1, items: [{ id, x, y, w, h, config? }] }` = 用户布局，`items: []` = 主动把卡片删空。
+列刻意不标类型（照 `messages.tool_calls` 先例），读写在 `src/lib/dashboard-layout-store.ts` 收口，
+进出都过一次 `normalizeLayoutDoc`：坏数据回落默认、未知/重复 id 丢弃、尺寸与坐标夹取、
+碰撞下移后向上压缩。
+
+- **纯函数引擎** `src/lib/dashboard-layout.ts` 不碰 IO、不引 zod，客户端拖拽预览与服务端落库共用同一套规则；
+  zod 只在 server action `src/app/(app)/dashboard/actions.ts` 校验信封，身份只取 session，不接受客户端 userId。
+- **拖拽语义**：拖到哪格占哪格，其余卡片让位后整体向上压缩；缩放不低于目录里的最小尺寸、不超出 12 列。
+- **统计两种表示互斥**：「任务概览」（四合一）与四张单项统计卡只能存在一组；添加一种会自动移除另一种。
+- **保存不 revalidate**：编辑态下整页数据回流会用服务端旧数据覆盖本地未保存布局。请求串行 + latest-wins，
+  飞行期间的新改动合并成待发；失败保留本地布局，工具栏可重试。
+- **窄屏只读**：视口 `<1024px` 或正文容器 `<720px`（打开右侧助手抽屉）时按 `y,x` 堆叠，
+  编辑入口隐藏，编辑中也会自动退出。卡片数据由服务端一次性加载，加卡不需要再请求。
 
 ### 助手会话的两种 scope（`/api/chat`）
 
@@ -325,7 +343,7 @@ N 是**用户级**偏好 `users.ai_history_limit`（0 = 不看历史，默认 10
 | `/teams/[teamId]/projects` | 项目列表（admin 创建） |
 | `/teams/[teamId]/resources` | 资源占用登记 + 时长统计 |
 | `/teams/[teamId]/labels` | 团队标签管理（admin 增删改，成员只读） |
-| `/dashboard` | 工作台：分配给我的任务看板（按项目筛选/拖拽流转） |
+| `/dashboard` | 工作台：可自定义卡片布局（拖动/缩放/增删，按用户保存）；任务看板按项目筛选、拖拽流转 |
 | `/projects` | 所有项目总览（跨团队聚合 + 任务统计） |
 | `/projects/[projectId]` | 项目详情：里程碑 + 看板 + 任务（右侧助手在此自动带入本项目） |
 | `/projects/[projectId]/timeline` | 项目时间线甘特 |

@@ -17,6 +17,7 @@ import {
 import type { ColumnPatch } from "@/lib/board-columns";
 import { moveTaskAction } from "@/app/(app)/projects/[projectId]/actions";
 import { ACTIVITY_NEW_EVENT } from "@/components/activity-feed";
+import { dashboardHref } from "@/lib/workbench-filters";
 
 export type WorkbenchTask = {
   id: string;
@@ -48,11 +49,19 @@ const COLUMNS = [
   { key: "done", label: "已完成", tone: "text-done" },
 ] as const;
 
-function WorkbenchCard({ task, today }: { task: WorkbenchTask; today: string }) {
+function WorkbenchCard({
+  task,
+  today,
+  locked,
+}: {
+  task: WorkbenchTask;
+  today: string;
+  locked: boolean;
+}) {
   const canWrite = WRITE_ROLES.includes(task.role);
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: task.id,
-    disabled: !canWrite,
+    disabled: !canWrite || locked,
   });
 
   // 标题链去详情页，但拖拽结束浏览器会补发一次 click，须拦下避免误导航
@@ -142,12 +151,14 @@ function Column({
   column,
   tasks,
   today,
+  locked,
 }: {
   column: (typeof COLUMNS)[number];
   tasks: WorkbenchTask[];
   today: string;
+  locked: boolean;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: column.key });
+  const { setNodeRef, isOver } = useDroppable({ id: column.key, disabled: locked });
 
   return (
     <div
@@ -161,7 +172,7 @@ function Column({
         <span className="ac-badge bg-surface text-ink-soft">{tasks.length}</span>
       </h3>
       {tasks.map((t) => (
-        <WorkbenchCard key={t.id} task={t} today={today} />
+        <WorkbenchCard key={t.id} task={t} today={today} locked={locked} />
       ))}
     </div>
   );
@@ -172,11 +183,18 @@ export function WorkbenchBoard({
   today,
   doneCount,
   hideDone,
+  chips,
+  projectFilter,
+  locked = false,
 }: {
   tasks: WorkbenchTask[];
   today: string;
   doneCount: number;
   hideDone: boolean;
+  chips: { id: string; name: string }[];
+  projectFilter: string | null;
+  /** 工作台编辑卡片布局时锁死看板拖拽，避免与外层网格拖拽嵌套 */
+  locked?: boolean;
 }) {
   const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -232,21 +250,75 @@ export function WorkbenchBoard({
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
-      {error && <p className="text-sm text-high">{error}</p>}
-      <div className="grid gap-4 sm:grid-cols-3">
-        {COLUMNS.map((col) => (
-          <Column
-            key={col.key}
-            column={col}
-            tasks={optimisticTasks.filter((t) => t.status === col.key)}
-            today={today}
-          />
-        ))}
+      <div className="workbench-board flex h-full min-h-0 flex-col p-4">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+          <h2 className="font-display text-sm font-semibold text-ink">我的任务看板</h2>
+          <Link
+            href={dashboardHref({ hideDone: !hideDone, project: projectFilter })}
+            aria-pressed={hideDone}
+            className={`ac-badge ${
+              hideDone
+                ? "bg-primary text-white"
+                : "bg-surface text-ink-soft hover:bg-primary-soft"
+            }`}
+          >
+            隐藏已完成
+          </Link>
+        </div>
+
+        {chips.length > 0 && (
+          <nav className="mt-2 flex shrink-0 flex-wrap items-center gap-1.5" aria-label="按项目筛选">
+            <Link
+              href={dashboardHref({ hideDone, project: null })}
+              aria-pressed={!projectFilter}
+              className={`ac-badge ${
+                !projectFilter
+                  ? "bg-primary text-white"
+                  : "bg-surface text-ink-soft hover:bg-primary-soft"
+              }`}
+            >
+              全部
+            </Link>
+            {chips.map((c) => (
+              <Link
+                key={c.id}
+                href={dashboardHref({ hideDone, project: c.id })}
+                aria-pressed={projectFilter === c.id}
+                className={`ac-badge ${
+                  projectFilter === c.id
+                    ? "bg-primary text-white"
+                    : "bg-surface text-ink-soft hover:bg-primary-soft"
+                }`}
+              >
+                {c.name}
+              </Link>
+            ))}
+          </nav>
+        )}
+
+        {error && <p className="mt-1 text-sm text-high">{error}</p>}
+
+        <div className="workbench-board-content mt-2 min-h-0 flex-1">
+          <div className="workbench-columns grid gap-4">
+            {COLUMNS.map((col) => (
+              <Column
+                key={col.key}
+                column={col}
+                tasks={optimisticTasks.filter((t) => t.status === col.key)}
+                today={today}
+                locked={locked}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* 过滤态下 done 列仍可落卡（服务端过滤会在回流后吞掉它），底部提示被隐藏的数量 */}
+        {hideDone && (
+          <p className="mt-2 shrink-0 text-xs text-ink-faint">
+            已隐藏 {doneCount} 个已完成任务
+          </p>
+        )}
       </div>
-      {/* 过滤态下 done 列仍可落卡（服务端过滤会在回流后吞掉它），底部提示被隐藏的数量 */}
-      {hideDone && (
-        <p className="mt-2 text-xs text-ink-faint">已隐藏 {doneCount} 个已完成任务</p>
-      )}
       <DragOverlay dropAnimation={null}>
         {activeTask ? (
           <div className="ac-card proj-card proj-ghost w-[262px] p-3 text-sm">

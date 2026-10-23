@@ -1,0 +1,219 @@
+/* 工作台自定义网格：定位、编辑态、窄屏堆叠。
+   列数 / 行高 / 间距必须与 lib/dashboard-layout.ts 的常量一致。 */
+
+.dashboard-shell {
+  /* 卡片网格是它的容器：打开助手抽屉把正文挤窄时，按容器宽度切换到只读堆叠 */
+  container-type: inline-size;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-auto-rows: 64px;
+  gap: 12px;
+}
+
+.dashboard-widget {
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+
+.dashboard-widget-inner {
+  position: relative;
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.dashboard-widget-content {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+}
+
+/* 卡片内容自己撑满；不写死 padding，由各卡片决定（看板 / 动态流需要边到边） */
+.dashboard-widget-content > * {
+  min-height: 0;
+}
+
+/* —— 编辑态 —— */
+
+.dashboard-editing .dashboard-widget-inner {
+  outline: 1px dashed color-mix(in srgb, var(--color-primary) 55%, transparent);
+  outline-offset: -1px;
+}
+
+.dashboard-widget-active .dashboard-widget-inner {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+  box-shadow: 0 18px 42px -16px rgba(0, 0, 0, 0.35);
+}
+
+/* 覆盖内容区的拖拽层：挡点击，但不挡顶部栏与缩放手柄 */
+.dashboard-widget-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  cursor: grab;
+  touch-action: none;
+  background: color-mix(in srgb, var(--color-canvas) 10%, transparent);
+}
+
+/* 顶部拖拽条：在流内占一条窄带，不压住卡片自己的标题 */
+.dashboard-widget-bar {
+  position: relative;
+  order: -1;
+  flex-shrink: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 22px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--color-line);
+  background: color-mix(in srgb, var(--color-surface) 55%, transparent);
+  cursor: grab;
+  touch-action: none;
+  font-size: 11px;
+  color: var(--color-ink-faint);
+}
+
+.dashboard-widget-grip {
+  letter-spacing: 2px;
+  line-height: 1;
+}
+
+.dashboard-widget-remove {
+  flex-shrink: 0;
+  border-radius: 4px;
+  padding: 1px 6px;
+  color: var(--color-high);
+  transition: background-color 0.15s ease;
+  cursor: pointer;
+}
+
+.dashboard-widget-remove:hover {
+  background: var(--color-high-soft);
+}
+
+.dashboard-widget-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-top-left-radius: 6px;
+  color: var(--color-ink-faint);
+  cursor: nwse-resize;
+  touch-action: none;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.dashboard-widget-overlay:focus-visible,
+.dashboard-widget-resize:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+body.dashboard-dragging {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 宇宙主题：卡片自身的入场 / 内容淡入不要跟编辑覆盖层抢节奏 */
+body.proj-cosmic .dashboard-widget-inner > * {
+  animation: none;
+}
+body.proj-cosmic .dashboard-widget-overlay,
+body.proj-cosmic .dashboard-widget-bar {
+  cursor: grab;
+}
+body.proj-cosmic .dashboard-widget-resize {
+  cursor: nwse-resize;
+}
+body.proj-cosmic.dashboard-dragging,
+body.proj-cosmic.dashboard-dragging * {
+  cursor: grabbing !important;
+}
+
+/* 合并概览：卡片够宽才排一行四格（容器查询，跟视口无关） */
+.dashboard-stat-summary {
+  container-type: inline-size;
+}
+@container (min-width: 420px) {
+  .dashboard-stat-summary-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* 看板列：窄卡片单列堆叠，宽到 560px 才三列 */
+.workbench-board-content {
+  container-type: inline-size;
+  overflow-y: auto;
+}
+@container (min-width: 560px) {
+  .workbench-columns {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    height: 100%;
+    align-items: stretch;
+  }
+  .workbench-columns > * {
+    min-height: 0;
+    overflow-y: auto;
+  }
+}
+
+/* —— 窄屏 / 正文被助手抽屉挤窄：只读堆叠 ——
+   两套阈值都要：手机是视口窄；桌面打开助手时视口可能仍有 1280，只是正文剩 ~700。 */
+
+@media (max-width: 1023.98px) {
+  .dashboard-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .dashboard-widget {
+    grid-column: auto !important;
+    grid-row: auto !important;
+    height: auto;
+  }
+  .dashboard-widget-inner {
+    height: auto;
+  }
+  .dashboard-edit-toggle,
+  .dashboard-widget-overlay,
+  .dashboard-widget-bar,
+  .dashboard-widget-resize {
+    display: none;
+  }
+}
+
+@container (max-width: 719.98px) {
+  .dashboard-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .dashboard-widget {
+    grid-column: auto !important;
+    grid-row: auto !important;
+    height: auto;
+  }
+  .dashboard-widget-inner {
+    height: auto;
+  }
+  .dashboard-edit-toggle,
+  .dashboard-widget-overlay,
+  .dashboard-widget-bar,
+  .dashboard-widget-resize {
+    display: none;
+  }
+}
