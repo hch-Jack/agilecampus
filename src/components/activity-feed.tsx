@@ -199,7 +199,7 @@ export function ActivityFeed({
     <section
       className={
         embedded
-          ? "flex h-full min-h-0 flex-col p-4"
+          ? "flex h-full min-h-0 flex-col p-3"
           : "ac-card p-5"
       }
     >

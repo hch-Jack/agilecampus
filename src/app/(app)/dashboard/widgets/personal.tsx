@@ -41,7 +41,7 @@ export function NoteWidget({
   const text = config?.text ?? "";
 
   return (
-    <div className="flex h-full min-h-0 flex-col p-4">
+    <div className="flex h-full min-h-0 flex-col p-3">
       <div className="flex shrink-0 items-center justify-between gap-2">
         <h2 className="font-display text-sm font-semibold text-ink">便签</h2>
         {!editing && (
@@ -93,7 +93,7 @@ export function ClockWidget({ tz }: { tz: string }) {
   const parts = now ? clockParts(tz, now) : null;
 
   return (
-    <div className="flex h-full min-h-0 flex-col justify-center p-4">
+    <div className="flex h-full min-h-0 flex-col justify-center p-3">
       <p className="font-display text-3xl font-semibold tabular-nums text-ink">
         {parts ? `${parts.hh}:${parts.mm}:${parts.ss}` : "--:--:--"}
       </p>
@@ -155,7 +155,7 @@ export function CountdownWidget({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col justify-center p-4">
+    <div className="flex h-full min-h-0 flex-col justify-center p-3">
       {setting ? (
         <div className="space-y-2">
           <input

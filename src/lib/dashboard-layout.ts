@@ -2,8 +2,12 @@
 // 客户端（拖拽预览）与服务端（读库、落库校验）共用，故这里不碰 IO、不 import zod。
 
 export const GRID_COLUMNS = 12;
-/** 一行的高度（px），与 dashboard.css 的 grid-auto-rows 保持一致 */
-export const GRID_ROW_HEIGHT = 64;
+/**
+ * 一行的高度（px），与 dashboard.css 的 grid-auto-rows 保持一致。
+ * 取 32 而不是更大的值：统计卡（2 行 = 76px）要贴近改造前 `ac-card p-3` 的高度，
+ * 缩放也有更细的档位。
+ */
+export const GRID_ROW_HEIGHT = 32;
 /** 卡片间距（px），指针换算与 CSS gap 共用 */
 export const GRID_GAP = 12;
 
@@ -76,8 +80,8 @@ export const DASHBOARD_WIDGETS: Record<DashboardWidgetId, DashboardWidgetMeta> =
     id: "task_board",
     title: "我的任务看板",
     description: "按待办 / 进行中 / 已完成分列，可拖拽换列",
-    defaultSize: { w: 8, h: 7 },
-    minSize: { w: 6, h: 5 },
+    defaultSize: { w: 8, h: 6 },
+    minSize: { w: 6, h: 4 },
   },
   task_summary: {
     id: "task_summary",
@@ -118,8 +122,8 @@ export const DASHBOARD_WIDGETS: Record<DashboardWidgetId, DashboardWidgetMeta> =
     id: "activity_feed",
     title: "最新记录",
     description: "分配给你的任务动态与未读提示",
-    defaultSize: { w: 4, h: 7 },
-    minSize: { w: 4, h: 4 },
+    defaultSize: { w: 4, h: 4 },
+    minSize: { w: 4, h: 3 },
   },
   my_projects: {
     id: "my_projects",
@@ -174,19 +178,22 @@ export const DASHBOARD_WIDGETS: Record<DashboardWidgetId, DashboardWidgetMeta> =
     id: "countdown",
     title: "倒计时",
     description: "到某个日期时间的倒计时",
-    defaultSize: { w: 3, h: 2 },
-    minSize: { w: 2, h: 2 },
+    defaultSize: { w: 3, h: 3 },
+    minSize: { w: 2, h: 3 },
   },
 };
 
-/** 默认布局：保持今天工作台的观感（四张统计卡 + 看板 + 动态） */
+/**
+ * 默认布局 = 改造前的页面结构：一行四张统计卡 → 通栏看板 → 通栏最新记录。
+ * 高度按 32px 行高换算，贴近原来的 `p-3` 统计瓦片与 `min-h-40` 看板列。
+ */
 const DEFAULT_ITEMS: DashboardLayoutItem[] = [
   { id: "stat_overdue", x: 0, y: 0, w: 3, h: 2 },
   { id: "stat_today", x: 3, y: 0, w: 3, h: 2 },
   { id: "stat_week", x: 6, y: 0, w: 3, h: 2 },
   { id: "stat_doing", x: 9, y: 0, w: 3, h: 2 },
-  { id: "task_board", x: 0, y: 2, w: 8, h: 7 },
-  { id: "activity_feed", x: 8, y: 2, w: 4, h: 7 },
+  { id: "task_board", x: 0, y: 2, w: 12, h: 6 },
+  { id: "activity_feed", x: 0, y: 8, w: 12, h: 4 },
 ];
 
 export const DEFAULT_DASHBOARD_LAYOUT: DashboardLayoutDoc = { v: 1, items: DEFAULT_ITEMS };

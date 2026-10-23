@@ -12,7 +12,7 @@ import { widgetOrder, type DashboardLayoutItem } from "@/lib/dashboard-layout";
  * 网格里的一张卡：定位、内容壳，以及编辑态的拖拽层 / 顶部栏 / 缩放手柄。
  *
  * 内容区在编辑态加 `inert` —— 只靠透明覆盖层挡不住键盘 Tab；
- * 覆盖层只盖内容、不盖顶部栏，移除按钮任何时候都点得到。
+ * 移除按钮浮在右上角（层级高于覆盖层），不占卡片高度，任何时候都点得到。
  */
 export function WidgetFrame({
   item,
@@ -62,25 +62,14 @@ export function WidgetFrame({
               onPointerDown={onDragStart}
               onKeyDown={(e) => onKeyNudge(e, "move")}
             />
-            <div
-              className="dashboard-widget-bar"
-              onPointerDown={(e) => {
-                if ((e.target as HTMLElement).closest("button")) return;
-                onDragStart(e);
-              }}
+            <button
+              type="button"
+              onClick={onRemove}
+              aria-label={`移除「${title}」`}
+              className="dashboard-widget-remove"
             >
-              <span className="dashboard-widget-grip" aria-hidden>
-                ⠿
-              </span>
-              <button
-                type="button"
-                onClick={onRemove}
-                aria-label={`移除「${title}」`}
-                className="dashboard-widget-remove"
-              >
-                移除
-              </button>
-            </div>
+              移除
+            </button>
             <div
               role="button"
               tabIndex={0}

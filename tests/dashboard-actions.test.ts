@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createUser } from "@/lib/user";
 import { getDashboardLayout } from "@/lib/dashboard-layout-store";
-import { DEFAULT_DASHBOARD_LAYOUT, NOTE_MAX_LENGTH } from "@/lib/dashboard-layout";
+import {
+  DASHBOARD_WIDGETS,
+  DEFAULT_DASHBOARD_LAYOUT,
+  NOTE_MAX_LENGTH,
+} from "@/lib/dashboard-layout";
 import { saveDashboardLayoutAction } from "@/app/(app)/dashboard/actions";
 import { resetDb } from "./helpers";
 
@@ -88,7 +92,11 @@ describe("saveDashboardLayoutAction", () => {
 
     const saved = await getDashboardLayout(user.id);
     const board = saved.items[0];
-    expect(board).toMatchObject({ id: "task_board", w: 12, h: 5 });
+    expect(board).toMatchObject({
+      id: "task_board",
+      w: 12,
+      h: DASHBOARD_WIDGETS.task_board.minSize.h,
+    });
     expect(board.x).toBe(0);
     expect(board.config).toBeUndefined(); // task_board 不支持便签配置
   });

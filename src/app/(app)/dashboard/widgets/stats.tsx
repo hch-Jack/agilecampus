@@ -4,9 +4,9 @@ import { WORKBENCH_STAT_META, type WorkbenchStatKey, type WorkbenchStats } from 
 export function StatWidget({ statKey, value }: { statKey: WorkbenchStatKey; value: number }) {
   const meta = WORKBENCH_STAT_META[statKey];
   return (
-    <div className="flex h-full min-h-0 flex-col justify-center px-4 py-3">
+    <div className="flex h-full min-h-0 flex-col justify-center p-3">
       <p className="text-xs text-ink-soft">{meta.label}</p>
-      <p className={`font-display text-3xl font-semibold tabular-nums ${meta.tone}`}>{value}</p>
+      <p className={`font-display text-2xl font-semibold tabular-nums ${meta.tone}`}>{value}</p>
     </div>
   );
 }
@@ -15,7 +15,7 @@ export function StatWidget({ statKey, value }: { statKey: WorkbenchStatKey; valu
 export function StatsSummaryWidget({ stats }: { stats: WorkbenchStats }) {
   const keys = Object.keys(WORKBENCH_STAT_META) as WorkbenchStatKey[];
   return (
-    <div className="dashboard-stat-summary flex h-full min-h-0 flex-col justify-center px-4 py-3">
+    <div className="dashboard-stat-summary flex h-full min-h-0 flex-col justify-center p-3">
       <p className="text-xs text-ink-soft">任务概览</p>
       <div className="dashboard-stat-summary-grid mt-1 grid grid-cols-2 gap-x-4 gap-y-1">
         {keys.map((key) => {
