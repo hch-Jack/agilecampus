@@ -44,7 +44,7 @@ export type GroupMessageView = {
   mine: boolean;
   content: string;
   createdAt: string;
-  attachment: { id: string; filename: string; size: number } | null;
+  attachment: { id: string; filename: string; mimeType: string | null; size: number } | null;
   // 刻意没有 readAt：群聊无已读回执，已读状态只在成员表的 lastReadAt 上
 };
 
@@ -433,6 +433,7 @@ async function loadGroupMessages(
       createdAt: dmGroupMessages.createdAt,
       attachmentId: dmAttachments.id,
       attachmentFilename: dmAttachments.filename,
+      attachmentMimeType: dmAttachments.mimeType,
       attachmentSize: dmAttachments.size,
     })
     .from(dmGroupMessages)
@@ -459,6 +460,7 @@ async function loadGroupMessages(
           ? {
               id: r.attachmentId,
               filename: r.attachmentFilename ?? "未命名文件",
+              mimeType: r.attachmentMimeType ?? null,
               size: r.attachmentSize ?? 0,
             }
           : null,
