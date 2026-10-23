@@ -328,7 +328,7 @@ export function AgentChat({
                     </svg>
                     <span className="truncate">
                       {pending && i === messages.length - 1
-                        ? "正在继续上一轮请求…"
+                        ? "正在继续处理后续动作…"
                         : "继续上一轮请求"}
                     </span>
                   </span>
@@ -388,7 +388,8 @@ export function AgentChat({
           );
         })}
         {messages.length === 0 && <p className="text-sm text-ink-soft">{emptyHint}</p>}
-        {pending && (
+        {/* 续做时上一条已经是带转圈的「正在继续处理后续动作…」，这里不再重复 */}
+        {pending && !continuingTurn && (
           <div
             role="status"
             aria-live="polite"
@@ -405,7 +406,7 @@ export function AgentChat({
               />
               <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary" />
             </span>
-            <span>{continuingTurn ? "正在处理后续动作…" : "助手正在处理…"}</span>
+            <span>助手正在处理…</span>
           </div>
         )}
       </div>

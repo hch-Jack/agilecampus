@@ -133,7 +133,8 @@ export function DraftCards({
 }) {
   // 已落库的卡片按序号记下**当前编辑后**的数据，供续做提示词复述
   const [committed, setCommitted] = useState<Map<number, Draft>>(new Map());
-  // 续做请求可能跑很久：按钮原地转圈，别一点就消失 —— 否则看着像没点上
+  // 续做请求可能跑很久：按钮原地变成「已发送」并禁用，别一点就消失 ——
+  // 否则看着像没点上；等待中的动画只留在对话末尾那一条，避免同一状态重复三遍
   const [continuing, setContinuing] = useState(false);
   const [continueState, setContinueState] = useState<"idle" | "done" | "error">("idle");
   // 状态更新是异步的：双击时第二下可能赶在 disabled 生效前，用同步 ref 挡住重复请求
@@ -209,16 +210,17 @@ export function DraftCards({
               <>
                 <svg
                   viewBox="0 0 24 24"
-                  className="h-3.5 w-3.5 shrink-0 animate-spin"
+                  className="h-3.5 w-3.5 shrink-0"
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="2"
                   strokeLinecap="round"
+                  strokeLinejoin="round"
                   aria-hidden
                 >
-                  <path d="M12 3a9 9 0 1 0 9 9" />
+                  <path d="M5 12l4.5 4.5L19 7" />
                 </svg>
-                正在继续处理…
+                已发送
               </>
             ) : (
               "继续处理后续动作"
