@@ -113,6 +113,13 @@ body.proj-cosmic .ac-field:focus {
   border-color: var(--color-primary);
   box-shadow: 0 0 0 3px var(--color-primary-ring);
 }
+/* 原生日期 / 时间控件的日历图标与弹出日历跟随深色主题。
+   不声明 color-scheme 时 Chromium 的图标恒为黑色，贴在深色输入框上几乎看不见；
+   浅色页面保持默认 light，无需额外覆盖。 */
+body.proj-cosmic :is(input[type="date"], input[type="datetime-local"],
+  input[type="month"], input[type="week"], input[type="time"]) {
+  color-scheme: dark;
+}
 body.proj-cosmic .ac-btn {
   background-color: var(--color-primary);
   color: #08111f;
