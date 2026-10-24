@@ -25,6 +25,7 @@ import {
 import type { ColumnPatch } from "@/lib/board-columns";
 import { moveTaskAction } from "@/app/(app)/projects/[projectId]/actions";
 import { ACTIVITY_NEW_EVENT } from "@/components/activity-feed";
+import { SubtaskProgress } from "@/components/subtask-progress";
 import { dashboardHref } from "@/lib/workbench-filters";
 import { isOverdueTask, sortBoardTasks } from "@/lib/workbench-order";
 
@@ -100,22 +101,7 @@ function WorkbenchCardBody({
             <span className="text-ink-faint">截止 {task.dueDate}</span>
           ))}
       </p>
-      {task.subTotal != null && task.subTotal > 0 && (
-        <div className="mt-2">
-          <p className="text-xs text-ink-faint">
-            子任务 <span className="tabular-nums">{task.subDone ?? 0}/{task.subTotal}</span>
-          </p>
-          {/* 动态宽度须内联 style（Tailwind 不生成拼接类名），先例 projects/page.tsx */}
-          <div className="mt-1 h-1 overflow-hidden rounded-full bg-sunken">
-            <div
-              className="h-full rounded-full bg-done"
-              style={{
-                width: `${Math.round(((task.subDone ?? 0) / task.subTotal) * 100)}%`,
-              }}
-            />
-          </div>
-        </div>
-      )}
+      <SubtaskProgress total={task.subTotal ?? 0} done={task.subDone ?? 0} />
     </>
   );
 }

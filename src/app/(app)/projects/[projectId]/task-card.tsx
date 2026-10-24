@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import Link from "next/link";
 import { useDraggable } from "@dnd-kit/core";
 import { LABEL_COLOR_CLASS } from "@/lib/board-columns";
+import { SubtaskProgress } from "@/components/subtask-progress";
 import type { BoardTask } from "./board";
 
 const PRIORITY_BADGE: Record<string, string> = {
@@ -112,6 +113,7 @@ export function TaskCard({
             完成情况：{task.completionNote}
           </p>
         )}
+        <SubtaskProgress total={task.subTotal ?? 0} done={task.subDone ?? 0} />
       </div>
     </div>
   );
