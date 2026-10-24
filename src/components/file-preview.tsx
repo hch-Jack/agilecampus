@@ -38,6 +38,8 @@ function kindLabel(kind: ReturnType<typeof detectPreviewKind>): string {
       return "文本";
     case "word":
       return "Word 文档";
+    case "doc":
+      return "Word 文档（旧版）";
     case "excel":
       return "Excel 表格";
     case "ppt":
@@ -47,13 +49,22 @@ function kindLabel(kind: ReturnType<typeof detectPreviewKind>): string {
   }
 }
 
+function extOf(filename: string): string {
+  const dot = filename.lastIndexOf(".");
+  return dot === -1 ? "" : filename.slice(dot + 1).toLowerCase();
+}
+
 /**
- * 附件在线预览弹窗：图片/PDF/视频/音频/文本免下载查看，其余格式提示下载。
+ * 附件在线预览弹窗：图片/PDF/音视频/文本代码/Word/Excel/PPT 免下载查看。
  *
  * 取数方式：图片直接 <img src=下载路由>（浏览器带 cookie、可缓存）；
  * PDF/视频/音频 fetch 成 blob URL —— 下载路由恒为 attachment 响应，
  * iframe/媒体元素必须 blob + 正确 Content-Type 才能内置渲染，且不给
- * 任何 HTML/SVG 开内联口子；文本 fetch 后按 UTF-8/GBK 探测解码为纯文本展示。
+ * 任何 HTML/SVG 开内联口子；文本 fetch 后按 UTF-8/GBK 探测解码为纯文本展示；
+ * Office 文件按格式走 docx-preview / SheetJS / pptx-preview（都是动态 import）。
+ *
+ * 统一版式：所有类型共用一个接近全屏的弹窗（96vw × 92vh），内容区撑满，
+ * 不再为 PPT/文档留一个只够显示一条的窄条。
  */
 export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose: () => void }) {
   const kind = detectPreviewKind(file.filename, file.mimeType);
@@ -63,24 +74,32 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
   const [text, setText] = useState<string | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [wordHtml, setWordHtml] = useState<string | null>(null);
+  const [wordReady, setWordReady] = useState(false);
   const [sheets, setSheets] = useState<SheetTable[] | null>(null);
   const [activeSheet, setActiveSheet] = useState(0);
+  const [pptBuf, setPptBuf] = useState<ArrayBuffer | null>(null);
+  const [pptWidth, setPptWidth] = useState(0);
   const [pptReady, setPptReady] = useState(false);
   const [error, setError] = useState("");
-  // 弹窗随打开全新挂载（file 在挂载期内不变），加载中 = 需要取内容但内容未到位
-  const needsFetch = kind !== "image" && kind !== "unsupported";
-  const loading =
-    needsFetch &&
-    !pptReady &&
-    blobUrl === null &&
-    text === null &&
-    wordHtml === null &&
-    sheets === null &&
-    !error;
 
-  // PPT 容器：pptx-preview 直接往里渲染幻灯片；其 destroy() 不清 DOM，重建前自行清空
-  const pptContainerRef = useRef<HTMLDivElement>(null);
+  // Word：docx-preview 直接往 body 容器建 DOM，样式写进 style 容器（卸载即清空）
+  const wordBodyRef = useRef<HTMLDivElement>(null);
+  const wordStyleRef = useRef<HTMLDivElement>(null);
+  // PPT：pptx-preview 往容器里铺幻灯片；其 destroy() 不清 DOM，重建前自行清空
+  const pptHostRef = useRef<HTMLDivElement>(null);
   const pptPreviewerRef = useRef<{ destroy: () => void } | null>(null);
+
+  const isLoading =
+    !error &&
+    kind !== "image" &&
+    kind !== "unsupported" &&
+    (kind === "word"
+      ? !wordReady && wordHtml === null
+      : kind === "excel"
+        ? sheets === null
+        : kind === "ppt"
+          ? !pptReady
+          : text === null && blobUrl === null);
 
   // Esc 关闭；打开期间锁背景滚动
   useEffect(() => {
@@ -96,8 +115,7 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
     };
   }, [onClose]);
 
-  // pdf/video/audio/text/word/excel 需要取内容；image 用下载 URL 直出，
-  // ppt 由下方独立 effect 取内容并渲染，unsupported 不取
+  // 文本 / 代码 / PDF / 音视频 / Word / Excel 取内容；image 直出，PPT 走下方独立流程
   useEffect(() => {
     if (kind === "image" || kind === "ppt" || kind === "unsupported") return;
     let cancelled = false;
@@ -108,29 +126,42 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
         if (!res.ok) throw new Error(String(res.status));
         const buf = await res.arrayBuffer();
         if (cancelled) return;
-        if (kind === "text") {
+        if (kind === "text" || kind === "doc") {
           const capped = buf.byteLength > TEXT_PREVIEW_MAX_BYTES;
-          setText(decodeTextWithFallback(capped ? buf.slice(0, TEXT_PREVIEW_MAX_BYTES) : buf));
+          if (kind === "doc") {
+            // 旧版 .doc 二进制：CFB 抽正文（排版/图片无法还原）
+            const office = await import("@/lib/file-preview-office");
+            if (cancelled) return;
+            setText(office.legacyDocToText(buf));
+          } else {
+            setText(decodeTextWithFallback(capped ? buf.slice(0, TEXT_PREVIEW_MAX_BYTES) : buf));
+          }
           setTruncated(capped);
-        } else if (kind === "word" || kind === "excel") {
-          // Office 解析库（mammoth/SheetJS）体积大，动态 import 独立 chunk，只在此时加载
+        } else if (kind === "word") {
+          // docx-preview 保真渲染；解析失败再退回 mammoth 的语义 HTML
           const office = await import("@/lib/file-preview-office");
           if (cancelled) return;
-          if (kind === "word") {
-            setWordHtml(await office.docxToHtml(buf));
-          } else {
-            setSheets(await office.excelToSheets(buf));
+          const bodyEl = wordBodyRef.current;
+          const styleEl = wordStyleRef.current;
+          try {
+            if (!bodyEl || !styleEl) throw new Error("container missing");
+            await office.renderDocx(buf, bodyEl, styleEl);
+            if (!cancelled) setWordReady(true);
+          } catch {
+            const html = await office.docxToHtml(buf);
+            if (!cancelled) setWordHtml(html);
           }
+        } else if (kind === "excel") {
+          const office = await import("@/lib/file-preview-office");
+          if (cancelled) return;
+          setSheets(await office.excelToSheets(buf));
         } else {
           // 用补正后的 Content-Type 重建 blob，浏览器才会启用 PDF/媒体内置渲染
           objectUrl = URL.createObjectURL(new Blob([buf], { type: renderMime ?? "application/octet-stream" }));
           setBlobUrl(objectUrl);
         }
       } catch {
-        if (!cancelled)
-          setError(
-            kind === "word" || kind === "excel" ? "文档解析失败，可下载后查看" : "内容加载失败，可下载后查看",
-          );
+        if (!cancelled) setError(kind === "doc" ? "文档解析失败，可下载后查看" : "内容加载失败，可下载后查看");
       }
     })();
     return () => {
@@ -139,8 +170,8 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
     };
   }, [file.url, kind, renderMime]);
 
-  // PPT：pptx-preview（含 echarts，体积大）动态 import，往容器里渲染幻灯片。
-  // 它的 destroy() 只发事件不清 DOM，重跑前需自行清空容器；渲染完才撤「加载中」遮罩。
+  // PPT：先取字节，再按容器宽度渲染。宽度用 ResizeObserver 跟（防抖带迟滞，
+  // 滚动条出现引起的十几像素变化不触发重排）。
   useEffect(() => {
     if (kind !== "ppt") return;
     let cancelled = false;
@@ -149,19 +180,54 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
         const res = await fetch(file.url);
         if (!res.ok) throw new Error(String(res.status));
         const buf = await res.arrayBuffer();
-        if (cancelled) return;
+        if (!cancelled) setPptBuf(buf);
+      } catch {
+        if (!cancelled) setError("文档解析失败，可下载后查看");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [file.url, kind]);
+
+  useEffect(() => {
+    if (kind !== "ppt") return;
+    const el = pptHostRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const width = Math.floor(entries[0].contentRect.width);
+      if (width <= 0) return;
+      setPptWidth((prev) => (prev === 0 || Math.abs(prev - width) > 40 ? width : prev));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [kind]);
+
+  useEffect(() => {
+    if (kind !== "ppt" || !pptBuf || pptWidth <= 0) return;
+    const el = pptHostRef.current;
+    if (!el) return;
+    let cancelled = false;
+    (async () => {
+      try {
         const { init } = await import("pptx-preview");
-        const el = pptContainerRef.current;
-        if (!el || cancelled) return;
+        if (cancelled) return;
         el.replaceChildren();
-        // 弹窗内容区作为画布：宽度自适应容器，高度定死让内部滚动，幻灯片连排
+        // list 模式：每页按容器宽度等比缩放、纵向连排；宽度决定幻灯片大小
         const previewer = init(el, {
-          width: Math.max(el.clientWidth - 4, 280),
-          height: Math.max(el.clientHeight - 4, 200),
+          width: pptWidth,
+          height: Math.round((pptWidth * 9) / 16),
           mode: "list",
         });
         pptPreviewerRef.current = previewer;
-        await previewer.preview(buf);
+        await previewer.preview(pptBuf);
+        // 解析器对残缺文件（如 Content_Types 声明了不存在的部件）会静默返回 0 页，
+        // 不抛错——不拦就会留一个黑框，所以按「没解出幻灯片」算失败，引导下载。
+        if (previewer.slideCount === 0) throw new Error("empty presentation");
+        // list 模式下库把 wrapper 固定成初始化时的高度并自己滚，外层容器再滚会出现
+        // 双滚动条、底部还会被裁掉几像素；改成自适应高度，滚动统一交给外层。
+        previewer.wrapper.style.height = "auto";
+        previewer.wrapper.style.overflowY = "visible";
         if (!cancelled) setPptReady(true);
       } catch {
         if (!cancelled) setError("文档解析失败，可下载后查看");
@@ -172,32 +238,41 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
       pptPreviewerRef.current?.destroy();
       pptPreviewerRef.current = null;
     };
-  }, [file.url, kind]);
+  }, [kind, pptBuf, pptWidth]);
 
   const downloadBtn = (
-    <a href={file.url} download={file.filename} className="ac-btn-ghost px-2.5 py-1 text-xs">
+    <a href={file.url} download={file.filename} className="ac-btn-ghost shrink-0 px-2.5 py-1 text-xs">
       下载
     </a>
   );
 
+  const unsupportedHint =
+    extOf(file.filename) === "ppt"
+      ? "旧版 .ppt 暂不支持在线预览，请下载后用 PowerPoint / WPS 打开"
+      : "该格式暂不支持在线预览";
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3 sm:p-5"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-label={`预览 ${file.filename}`}
     >
+      {/* 宇宙主题的 --color-surface 只有 45% 不透明度，弹窗会透出星空与页面文字；
+          project.css 给 .ac-file-preview 单独压厚（浅色主题仍是纯白 surface） */}
       <div
-        className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-field border border-line bg-surface shadow-2xl"
+        className="ac-file-preview flex h-[92vh] max-h-[1000px] w-[min(96vw,1440px)] flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="flex items-center gap-2 border-b border-line px-4 py-2.5">
-          <span className="shrink-0 text-xs text-ink-faint">{kindLabel(kind)}</span>
+        <header className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2 sm:px-4 sm:py-2.5">
+          <span className="shrink-0 rounded bg-sunken px-1.5 py-0.5 text-[11px] text-ink-soft">
+            {kindLabel(kind)}
+          </span>
           <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink" title={file.filename}>
             {file.filename}
           </span>
-          <span className="shrink-0 text-xs text-ink-faint">{fmtSize(file.size)}</span>
+          <span className="hidden shrink-0 text-xs text-ink-faint sm:inline">{fmtSize(file.size)}</span>
           {downloadBtn}
           <button
             type="button"
@@ -209,46 +284,33 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
           </button>
         </header>
 
-        <div className="grid min-h-[240px] flex-1 place-items-center overflow-auto bg-sunken p-4">
-          {error ? (
-            <div className="text-center">
-              <p className="text-sm text-high">{error}</p>
-              {downloadBtn}
-            </div>
-          ) : kind === "image" ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={file.url}
-              alt={file.filename}
-              onError={() => setError("图片加载失败，可下载后查看")}
-              className="max-h-[75vh] max-w-full rounded-field object-contain"
-            />
-          ) : kind === "ppt" ? (
-            <div className="relative h-full w-full">
-              <div
-                ref={pptContainerRef}
-                className="h-full w-full overflow-auto rounded-field border border-line bg-surface"
+        <div className="relative flex min-h-0 flex-1 flex-col bg-sunken">
+          {kind === "image" && (
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={file.url}
+                alt={file.filename}
+                onError={() => setError("图片加载失败，可下载后查看")}
+                className="max-h-full max-w-full rounded-field object-contain"
               />
-              {loading && (
-                <div className="absolute inset-0 grid place-items-center bg-surface text-sm text-ink-faint">
-                  加载中…
-                </div>
-              )}
             </div>
-          ) : loading ? (
-            <p className="text-sm text-ink-faint">加载中…</p>
-          ) : kind === "pdf" && blobUrl ? (
+          )}
+
+          {kind === "pdf" && blobUrl && (
             // blob URL 由本站 fetch 的字节构建，且强制 application/pdf，无内联脚本风险
-            <iframe src={blobUrl} title={file.filename} className="h-[75vh] w-full rounded-field bg-white" />
-          ) : (kind === "video" || kind === "audio") && blobUrl ? (
-            <div className="w-full">
+            <iframe src={blobUrl} title={file.filename} className="h-full w-full border-0 bg-white" />
+          )}
+
+          {(kind === "video" || kind === "audio") && blobUrl && (
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 overflow-auto p-4">
               {kind === "video" ? (
                 <video
                   src={blobUrl}
                   controls
                   autoPlay
                   onError={() => setError("该视频编码浏览器不支持播放，可下载后查看")}
-                  className="max-h-[70vh] w-full rounded-field bg-black"
+                  className="max-h-full max-w-full rounded-field bg-black"
                 />
               ) : (
                 <audio
@@ -256,33 +318,55 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
                   controls
                   autoPlay
                   onError={() => setError("该音频浏览器不支持播放，可下载后查看")}
-                  className="w-full"
+                  className="w-full max-w-xl"
                 />
               )}
-              <p className="mt-2 text-center text-xs text-ink-faint">打不开？下载后用本地播放器查看</p>
+              <p className="text-xs text-ink-faint">打不开？下载后用本地播放器查看</p>
             </div>
-          ) : kind === "text" && text !== null ? (
-            <div className="h-full w-full">
+          )}
+
+          {(kind === "text" || kind === "doc") && text !== null && (
+            <div className="flex min-h-0 flex-1 flex-col">
+              {kind === "doc" && (
+                <p className="shrink-0 border-b border-line bg-surface px-4 py-1.5 text-xs text-ink-faint">
+                  旧版 .doc 只能提取正文文本，排版、图片与表格样式无法还原；需要完整版式请下载后查看
+                </p>
+              )}
               {truncated && (
-                <p className="mb-2 text-xs text-ink-faint">
+                <p className="shrink-0 border-b border-line bg-surface px-4 py-1.5 text-xs text-ink-faint">
                   内容过长，仅显示前 {fmtSize(TEXT_PREVIEW_MAX_BYTES)}，下载可查看全文
                 </p>
               )}
-              <pre className="whitespace-pre-wrap break-words rounded-field border border-line bg-surface p-3 font-mono text-xs leading-relaxed text-ink">
-                {text}
-              </pre>
+              <div className="min-h-0 flex-1 overflow-auto p-3">
+                <pre className="min-h-full whitespace-pre-wrap break-words rounded-field border border-line bg-surface p-4 font-mono text-[13px] leading-relaxed text-ink [tab-size:4]">
+                  {text}
+                </pre>
+              </div>
             </div>
-          ) : kind === "word" && wordHtml !== null ? (
-            // 内容已过 sanitize（见 file-preview-office.ts），正文转义 + 去脚本节点
-            <div
-              className="h-full w-full overflow-auto rounded-field border border-line bg-surface p-6 text-sm leading-relaxed text-ink [&_a]:text-primary [&_a]:underline [&_h1]:mb-2 [&_h1]:text-xl [&_h1]:font-bold [&_h2]:mb-2 [&_h2]:text-lg [&_h2]:font-bold [&_h3]:mb-1.5 [&_h3]:text-base [&_h3]:font-semibold [&_h4]:mb-1.5 [&_h4]:font-semibold [&_img]:max-w-full [&_li]:ml-5 [&_ol]:my-2 [&_ol]:list-decimal [&_p]:my-2 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-line [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-line [&_th]:bg-sunken [&_th]:px-2 [&_th]:py-1 [&_ul]:my-2 [&_ul]:list-disc"
-              dangerouslySetInnerHTML={{ __html: wordHtml }}
-            />
-          ) : kind === "excel" && sheets !== null ? (
-            <div className="flex h-full w-full flex-col">
-              {sheets.length > 1 && (
-                <div className="flex flex-wrap gap-1 pb-2">
-                  {sheets.map((s, i) => (
+          )}
+
+          {kind === "word" && (
+            <div className="min-h-0 flex-1 overflow-auto bg-neutral-100 p-3 sm:p-4">
+              <div ref={wordStyleRef} />
+              <div
+                ref={wordBodyRef}
+                className="mx-auto [&_.docx-wrapper]:bg-transparent [&_.docx-wrapper]:p-0 [&_section.docx]:mx-auto [&_section.docx]:mb-4 [&_section.docx]:shadow-md"
+              />
+              {wordHtml !== null && (
+                // mammoth 兜底：内容已过 sanitize（见 file-preview-office.ts）
+                <div
+                  className="mx-auto w-full max-w-4xl rounded-field border border-line bg-white p-6 text-sm leading-relaxed text-neutral-900 [&_a]:text-primary [&_a]:underline [&_h1]:mb-2 [&_h1]:text-xl [&_h1]:font-bold [&_h2]:mb-2 [&_h2]:text-lg [&_h2]:font-bold [&_h3]:mb-1.5 [&_h3]:text-base [&_h3]:font-semibold [&_h4]:mb-1.5 [&_h4]:font-semibold [&_img]:max-w-full [&_li]:ml-5 [&_ol]:my-2 [&_ol]:list-decimal [&_p]:my-2 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-line [&_td]:px-2 [&_td]:py-1 [&_th]:border [&_th]:border-line [&_th]:bg-sunken [&_th]:px-2 [&_th]:py-1 [&_ul]:my-2 [&_ul]:list-disc"
+                  dangerouslySetInnerHTML={{ __html: wordHtml }}
+                />
+              )}
+            </div>
+          )}
+
+          {kind === "excel" && sheets !== null && (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-line bg-surface px-2 py-1.5">
+                {sheets.length > 1 &&
+                  sheets.map((s, i) => (
                     <button
                       key={s.name}
                       type="button"
@@ -296,25 +380,53 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
                       {s.name}
                     </button>
                   ))}
-                </div>
-              )}
-              {sheets[activeSheet]?.truncated && (
-                <p className="pb-2 text-xs text-ink-faint">
-                  工作表过大，仅显示前 2000 行，下载可查看全部数据
-                </p>
-              )}
+                {(sheets[activeSheet]?.truncated || sheets[activeSheet]?.colsTruncated) && (
+                  <span className="ml-auto px-1 text-xs text-ink-faint">
+                    {sheets[activeSheet]?.truncated ? "仅显示前 2000 行" : "列较多，仅显示前 120 列"}
+                    ，下载可查看全部数据
+                  </span>
+                )}
+              </div>
               <div
-                className="min-h-0 w-full flex-1 overflow-auto rounded-field border border-line bg-surface [&_table]:border-collapse [&_table]:text-xs [&_td]:max-w-72 [&_td]:truncate [&_td]:border [&_td]:border-line [&_td]:px-2 [&_td]:py-1 [&_td]:whitespace-nowrap"
+                className="min-h-0 flex-1 overflow-auto bg-white p-2 text-neutral-900 sm:p-3 [&_table]:border-collapse [&_table]:text-xs [&_table]:text-neutral-900 [&_td]:border [&_td]:border-neutral-200 [&_td]:px-2 [&_td]:py-0.5"
                 dangerouslySetInnerHTML={{ __html: sheets[activeSheet]?.html ?? "" }}
               />
             </div>
-          ) : (
-            <div className="text-center">
-              <p className="text-4xl" aria-hidden>
-                📄
-              </p>
-              <p className="mt-2 text-sm text-ink-soft">该格式暂不支持在线预览</p>
-              <div className="mt-3">{downloadBtn}</div>
+          )}
+
+          {kind === "ppt" && (
+            <div className="min-h-0 flex-1 p-2 sm:p-3">
+              <div
+                ref={pptHostRef}
+                className="h-full w-full overflow-y-auto rounded-field border border-line bg-white/60"
+              />
+            </div>
+          )}
+
+          {kind === "unsupported" && (
+            <div className="grid min-h-0 flex-1 place-items-center p-6">
+              <div className="text-center">
+                <p className="text-4xl" aria-hidden>
+                  📄
+                </p>
+                <p className="mt-2 text-sm text-ink-soft">{unsupportedHint}</p>
+                <div className="mt-3">{downloadBtn}</div>
+              </div>
+            </div>
+          )}
+
+          {isLoading && (
+            <div className="absolute inset-0 grid place-items-center bg-sunken/85 text-sm text-ink-faint">
+              加载中…
+            </div>
+          )}
+
+          {error && (
+            <div className="absolute inset-0 grid place-items-center bg-sunken p-6">
+              <div className="text-center">
+                <p className="text-sm text-high">{error}</p>
+                <div className="mt-3">{downloadBtn}</div>
+              </div>
             </div>
           )}
         </div>

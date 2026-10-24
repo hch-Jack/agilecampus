@@ -16,6 +16,7 @@ import { getAiHistoryLimit } from "./memory";
 import { getModel } from "./model";
 import { DRAFT_TOOL_LABELS } from "./continuation";
 import { isNavigationEnvelope } from "./navigation";
+import { isFileOpenEnvelope } from "./file-open";
 
 const SYSTEM_PREAMBLE = `你是 AgileCampus（敏捷校园）的项目管理助手，服务高校科研与课程团队。
 你的职责限于项目管理：拆解目标、排期、指派、跟踪进度、答疑项目现状。你不代做研究、编码或写作等实际工作。
@@ -304,6 +305,23 @@ export async function runAgentTurn(params: RunAgentTurnParams) {
     ).values(),
   ];
 
+  // 文件预览意图：open_file 返回带 __showFile 的信封。同一附件被重复调用时按 url 去重，
+  // 面板只弹最后一个（前面那个还没看就被换掉了）
+  const files = [
+    ...new Map(
+      result.steps
+        .flatMap((step) => step.toolResults.map((tr) => tr.output as unknown))
+        .filter(isFileOpenEnvelope)
+        .map(
+          (f) =>
+            [
+              f.url,
+              { url: f.url, filename: f.filename, mimeType: f.mimeType, size: f.size },
+            ] as const,
+        ),
+    ).values(),
+  ];
+
   // 步数用尽时最后一步可能仍是工具调用，AI SDK 的 result.text 会是空串。
   // 正文可以空，但落库的 assistant 行不能空：有草案就描述草案，没有就给一句可重试的话。
   const rawText = result.text.trim();
@@ -317,5 +335,5 @@ export async function runAgentTurn(params: RunAgentTurnParams) {
 
   const persisted = await persistTurn(conversation.id, userText, text, toolTrace);
 
-  return { conversationId: conversation.id, text, toolTrace, drafts, navigations, ...persisted };
+  return { conversationId: conversation.id, text, toolTrace, drafts, navigations, files, ...persisted };
 }

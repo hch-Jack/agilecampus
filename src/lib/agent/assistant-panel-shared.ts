@@ -28,3 +28,11 @@ export type AssistantPanelMessage = {
 
 /** 助手拟「打开某页」时随响应下发的跳转意图；面板据此自动跳转并留一个可点的入口 */
 export type AssistantNavigation = { label: string; href: string };
+
+/** 助手拟「打开某文件」时随响应下发的预览目标；面板据此弹出预览并留一个可点的入口 */
+export type AssistantFile = {
+  url: string;
+  filename: string;
+  mimeType: string | null;
+  size: number;
+};

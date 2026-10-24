@@ -88,6 +88,7 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
         "list_projects",
         "list_resource_usages",
         "list_tasks",
+        "open_file",
         "open_page",
         "plan_sprint",
         "query_progress",
@@ -182,6 +183,42 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     await expect(tools.list_members.execute!({ projectId: otherProject.id }, opts)).rejects.toThrow(
       "没有权限",
     );
+  });
+
+  it("open_file 只给有权限的附件发预览信封", async () => {
+    const { owner, student, outsider, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "整理资料" });
+    const file = await uploadAttachment(owner.id, task.id, {
+      filename: "汇报.xlsx",
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      size: 4,
+      data: Buffer.from("test"),
+    });
+    const tools = buildPersonalTools(student.id);
+
+    const out = (await tools.open_file.execute!(
+      { attachmentId: file.id, source: "task" as const },
+      opts,
+    )) as Record<string, unknown>;
+    expect(out).toEqual({
+      __showFile: true,
+      url: `/api/attachments/${file.id}`,
+      filename: "汇报.xlsx",
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      size: 4,
+    });
+
+    // 非项目成员：元数据都拿不到，更不会有预览 URL
+    await expect(
+      buildPersonalTools(outsider.id).open_file.execute!(
+        { attachmentId: file.id, source: "task" as const },
+        opts,
+      ),
+    ).rejects.toThrow();
+    // 任务附件不能借「消息附件」的口子绕过校验
+    await expect(
+      tools.open_file.execute!({ attachmentId: file.id, source: "message" as const }, opts),
+    ).rejects.toThrow();
   });
 
   it("写工具产草案且草案自带 projectId，一张卡都不落库", async () => {
@@ -361,7 +398,7 @@ describe("个人写工具的草案，落库口都吃得下", () => {
 });
 
 // 右侧助手在项目页里会带一个「焦点项目」：不改会话归属，只多放出 6 件项目专属工具。
-// 这里钉住工具面——多放一件或少放一件都会改变模型的选择空间（36 → 42 已是有意为之）。
+// 这里钉住工具面——多放一件或少放一件都会改变模型的选择空间（37 → 43 已是有意为之）。
 describe("buildPersonalTools：焦点项目的工具面", () => {
   beforeEach(resetDb);
 
@@ -370,8 +407,8 @@ describe("buildPersonalTools：焦点项目的工具面", () => {
     const base = buildPersonalTools(student.id);
     const focused = buildPersonalTools(student.id, project.id);
 
-    expect(Object.keys(base)).toHaveLength(36);
-    expect(Object.keys(focused)).toHaveLength(42);
+    expect(Object.keys(base)).toHaveLength(37);
+    expect(Object.keys(focused)).toHaveLength(43);
     expect(Object.keys(focused).filter((name) => !(name in base)).sort()).toEqual(
       [...FOCUS_PROJECT_TOOL_NAMES].sort(),
     );

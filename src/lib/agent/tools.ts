@@ -26,6 +26,7 @@ import {
 import { formatDateTime, formatInputValue, zonedWallClockToInstant } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
 import { NAV_TARGETS, resolveNavigation } from "./navigation";
+import { resolveFileOpen } from "./file-open";
 import { AppError, ForbiddenError } from "@/lib/errors";
 import { listMyTaskActivities, listProjectActivities, type TaskActivityRow } from "@/lib/activity";
 import { listProjectComments, type ProjectCommentRow } from "@/lib/comment";
@@ -526,6 +527,22 @@ function buildBasePersonalTools(actorId: string) {
         const nav = await resolveNavigation(actorId, input);
         return { __navigate: true as const, ...nav };
       },
+    }),
+    open_file: tool({
+      description:
+        "在界面里打开附件预览（图片、PDF、文本/代码、Word、Excel、PPT 等）。" +
+        "用户说「打开 / 看看 / 预览这个文件」时调用。任务附件先 list_attachments 取 attachmentId；" +
+        "私信/群聊附件从 read_messages 消息的 attachment 字段取。" +
+        "只读、立即生效、不需要确认卡；调用后正文说「已为你打开…」即可。",
+      inputSchema: z.object({
+        attachmentId: z.uuid().describe("取自 list_attachments 或 read_messages"),
+        source: z
+          .enum(["task", "message"])
+          .default("task")
+          .describe("task = 任务附件；message = 私信/群聊附件"),
+      }),
+      execute: async ({ attachmentId, source }) =>
+        resolveFileOpen(actorId, { attachmentId, source }),
     }),
     query_progress: tool({
       description: "查询指定项目的进度统计：各状态任务数、里程碑概况。必须给 projectId。",

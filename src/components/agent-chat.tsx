@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { DraftCards, type ChatScope, type Draft, type OptionMap } from "@/components/draft-cards";
 import { continuationOriginalText, isContinuationText } from "@/lib/agent/continuation";
-import type { AssistantNavigation } from "@/lib/agent/assistant-panel-shared";
+import type { AssistantFile, AssistantNavigation } from "@/lib/agent/assistant-panel-shared";
 import { Markdown } from "@/components/markdown";
+import { FilePreviewModal } from "@/components/file-preview";
 
 /**
  * AI 助手对话区 —— 右侧常驻面板（`assistant-shell.tsx`）的唯一使用者。
@@ -40,6 +42,8 @@ export type ChatMessage = {
   focusProjectId?: string;
   /** 助手替用户打开的页面；收到即跳转，并留一个可点回看的入口 */
   navigations?: AssistantNavigation[];
+  /** 助手替用户打开的附件；收到即弹预览，并留一个可点重开的入口 */
+  files?: AssistantFile[];
 };
 
 let localSeq = 0;
@@ -96,6 +100,8 @@ export function AgentChat({
   const [pending, setPending] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** 当前正在预览的附件（助手 open_file 自动弹出，或用户点消息里的入口） */
+  const [previewFile, setPreviewFile] = useState<AssistantFile | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
@@ -145,6 +151,11 @@ export function AgentChat({
       const navigations: AssistantNavigation[] = Array.isArray(data.navigations)
         ? data.navigations
         : [];
+      const files: AssistantFile[] = Array.isArray(data.files)
+        ? data.files.filter(
+            (f: AssistantFile) => f && typeof f.url === "string" && typeof f.filename === "string",
+          )
+        : [];
       setMessages((m) => {
         const next = [...m];
         // 按 localId 回填服务端 id —— 这样这条提问也能成对删除
@@ -162,6 +173,7 @@ export function AgentChat({
           options: data.options,
           focusProjectId: focus,
           navigations: navigations.length > 0 ? navigations : undefined,
+          files: files.length > 0 ? files : undefined,
         });
         return next;
       });
@@ -169,6 +181,9 @@ export function AgentChat({
       // 面板挂在 layout 里，换页不会把这段对话连同未确认的草案卡一起卸载。
       const navTarget = navigations.at(-1);
       if (navTarget) router.push(navTarget.href);
+      // 「打开某文件」同理：直接弹预览，消息下仍留一个可重开的入口
+      const fileTarget = files.at(-1);
+      if (fileTarget) setPreviewFile(fileTarget);
       // 外壳据此把「懒建出的会话」放进列表；**不**触发 remount，否则刚发的消息会消失
       if (data.conversationId) {
         onTurnPersisted?.({
@@ -366,6 +381,22 @@ export function AgentChat({
                   ))}
                 </div>
               )}
+              {m.files && m.files.length > 0 && (
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {m.files.map((f) => (
+                    <button
+                      key={f.url}
+                      type="button"
+                      onClick={() => setPreviewFile(f)}
+                      title={f.filename}
+                      // 已经自动弹过一次；关掉后从这里可以重新打开
+                      className="ac-badge max-w-full truncate bg-primary-soft text-primary hover:bg-primary hover:text-white"
+                    >
+                      预览 {f.filename}
+                    </button>
+                  ))}
+                </div>
+              )}
               {m.drafts && m.drafts.length > 0 && (
                 <DraftCards
                   drafts={m.drafts}
@@ -424,6 +455,12 @@ export function AgentChat({
           {pending ? "思考中…" : "发送"}
         </button>
       </div>
+      {/* 挂到 body：面板自身有宽度/层级约束，弹窗不能被它裁掉或压住 */}
+      {previewFile &&
+        createPortal(
+          <FilePreviewModal file={previewFile} onClose={() => setPreviewFile(null)} />,
+          document.body,
+        )}
     </section>
   );
 }
