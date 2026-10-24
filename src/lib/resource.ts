@@ -1,6 +1,6 @@
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { resourceUsages, teams, users } from "@/db/schema";
+import { resourceUsages, teamMembers, teams, users } from "@/db/schema";
 import { AppError, ForbiddenError } from "./errors";
 import { getTeamMembership } from "./team";
 
@@ -97,6 +97,35 @@ export async function getResourceUsageDetail(actorId: string, usageId: string) {
     // 与 endResourceUsage 同一口径：登记人本人或团队 admin
     canEnd: row.userId === actorId || membership.role === "admin",
   };
+}
+
+/**
+ * 工作台「团队资源占用」：我所在全部团队的占用记录，跨团队聚合。
+ * 占用中的排在最前，其余按开始时间倒序；只取最近几条。
+ */
+export async function listMyTeamResourceUsages(actorId: string, limit = 8) {
+  const rows = await db
+    .select({
+      id: resourceUsages.id,
+      teamId: resourceUsages.teamId,
+      teamName: teams.name,
+      resourceName: resourceUsages.resourceName,
+      purpose: resourceUsages.purpose,
+      userName: users.name,
+      startTime: resourceUsages.startTime,
+      endTime: resourceUsages.endTime,
+    })
+    .from(resourceUsages)
+    .innerJoin(teams, eq(resourceUsages.teamId, teams.id))
+    .innerJoin(users, eq(resourceUsages.userId, users.id))
+    .innerJoin(
+      teamMembers,
+      and(eq(teamMembers.teamId, resourceUsages.teamId), eq(teamMembers.userId, actorId)),
+    )
+    .orderBy(sql`${resourceUsages.endTime} is null desc`, desc(resourceUsages.startTime))
+    .limit(limit);
+
+  return rows.map((row) => ({ ...row, active: row.endTime === null }));
 }
 
 function durationMinutes(start: Date, end: Date): number {

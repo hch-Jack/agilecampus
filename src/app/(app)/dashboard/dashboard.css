@@ -1,0 +1,516 @@
+/* 工作台自定义网格：定位、编辑态、窄屏堆叠。
+   列数 / 行高 / 间距必须与 lib/dashboard-layout.ts 的常量一致。 */
+
+.dashboard-shell {
+  /* 卡片网格是它的容器：打开助手抽屉把正文挤窄时，按容器宽度切换到只读堆叠 */
+  container-type: inline-size;
+}
+
+.dashboard-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-auto-rows: 32px;
+  gap: 12px;
+}
+
+.dashboard-widget {
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+
+.dashboard-widget-inner {
+  position: relative;
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 卡片内容自己撑满；不写死 padding，由各卡片决定（看板 / 动态流需要边到边）。
+   内容区同时是尺寸容器：卡片被缩放后，内部排版按卡片自身的宽 / 高调整，
+   而不是按视口断点 —— 同一张卡在 2 列和 12 列下应该是两种排版。 */
+.dashboard-widget-content {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  container: widget / size;
+}
+
+.dashboard-widget-content > * {
+  min-height: 0;
+}
+
+/* —— 编辑态 —— */
+
+/* 可放置区域的两侧边界：不占布局空间，进出编辑态不会让网格跳动 */
+.dashboard-edit-frame {
+  position: absolute;
+  inset: -9px;
+  z-index: 0;
+  border-radius: 14px;
+  border-left: 2px dashed color-mix(in srgb, var(--color-primary) 55%, transparent);
+  border-right: 2px dashed color-mix(in srgb, var(--color-primary) 55%, transparent);
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--color-primary) 7%, transparent),
+    transparent 28px,
+    transparent calc(100% - 28px),
+    color-mix(in srgb, var(--color-primary) 7%, transparent)
+  );
+  pointer-events: none;
+}
+
+.dashboard-edit-frame::before {
+  content: "可放置区域";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  background: var(--color-surface);
+  padding: 2px 10px;
+  color: var(--color-ink-faint);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.dashboard-shell.is-editing .dashboard-widget-inner {
+  outline: 1px dashed color-mix(in srgb, var(--color-primary) 55%, transparent);
+  outline-offset: -1px;
+}
+
+/* —— 卡片内的自适应排版 ——
+   用容器查询而不是全局媒体查询：同一张卡被拖宽 / 拖窄后，字级、内边距、
+   次要信息的取舍都跟着卡片本身走。断点按网格尺寸取：
+   2 列 ≈ 150px，3 列 ≈ 230px，4 列 ≈ 310px；2 行高 ≈ 76px，3 行 ≈ 108px，4 行 ≈ 140px。 */
+
+.dashboard-widget-content {
+  --dw-pad: 12px;
+}
+
+.dw-shell,
+.dw-stat,
+.dw-note,
+.dw-clock,
+.dw-countdown,
+.dw-focus {
+  padding: var(--dw-pad);
+}
+
+.dw-shell-title {
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}
+
+.dw-shell-body {
+  margin-top: 8px;
+}
+
+.dw-stat-label {
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.dw-stat-value,
+.dw-clock-time,
+.dw-countdown-value,
+.dw-focus-time {
+  font-size: clamp(1.5rem, 9cqi, 2.75rem);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.dw-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dw-item-title {
+  font-size: 0.875rem;
+}
+
+.dw-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dw-links {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.dw-tile-value {
+  font-size: clamp(1rem, 5cqi, 1.5rem);
+  line-height: 1.2;
+}
+
+/* 宽卡：多给留白，标题略大一档，避免内容缩在左上角 */
+@container widget (min-width: 420px) {
+  .dw-shell,
+  .dw-stat,
+  .dw-note,
+  .dw-clock,
+  .dw-countdown,
+  .dw-focus {
+    padding: 14px 16px;
+  }
+
+  .dw-shell-title {
+    font-size: 0.875rem;
+  }
+
+  .dw-shell-body {
+    margin-top: 10px;
+  }
+
+  .dw-item-title {
+    font-size: 0.9375rem;
+  }
+}
+
+/* 3 行高的卡：收紧留白，优先保住主要内容 */
+@container widget (max-height: 126px) {
+  .dw-shell,
+  .dw-stat,
+  .dw-note,
+  .dw-clock,
+  .dw-countdown,
+  .dw-focus {
+    padding: 9px 10px;
+  }
+
+  .dw-shell-title {
+    font-size: 0.75rem;
+  }
+
+  .dw-shell-body {
+    margin-top: 5px;
+  }
+
+  .dw-list {
+    gap: 7px;
+  }
+
+  .dw-tile-grid,
+  .dw-links {
+    gap: 5px;
+  }
+
+  .dw-clock-time {
+    font-size: clamp(1.375rem, 8cqi, 1.75rem);
+  }
+
+  .dw-clock-lunar,
+  .dw-clock-date,
+  .dw-clock-zones {
+    font-size: 0.6875rem;
+  }
+
+  .dw-countdown-value {
+    font-size: clamp(1.25rem, 7cqi, 1.75rem);
+  }
+
+  .dw-focus-time {
+    font-size: 1.875rem;
+  }
+
+  .dw-focus-hint {
+    display: none;
+  }
+
+  .dw-focus-actions {
+    margin-top: 4px;
+  }
+
+  .dw-focus-actions .ac-btn,
+  .dw-focus-actions .ac-btn-ghost {
+    min-height: 22px;
+    padding: 2px 8px;
+    font-size: 11px;
+  }
+}
+
+/* 2 行高的卡（统计 / 消息 / 快捷入口 / 时钟 / 专注计时）：横向排布，只留核心信息 */
+@container widget (max-height: 92px) {
+  .dw-shell,
+  .dw-stat,
+  .dw-note,
+  .dw-clock,
+  .dw-countdown,
+  .dw-focus {
+    padding: 7px 9px;
+  }
+
+  .dw-shell-body {
+    margin-top: 3px;
+  }
+
+  /* 统计卡：标签在左、数字在右，短卡里不再上下占两行 */
+  .dw-stat {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .dw-stat-value {
+    font-size: clamp(1.375rem, 10cqi, 2rem);
+  }
+
+  /* 消息 / 快捷入口：改成一行小瓦片，隐藏说明文字 */
+  .dw-tile-grid,
+  .dw-links {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .dw-links {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .dw-tile {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 4px;
+    border-radius: 6px;
+    padding: 2px 4px;
+    text-align: center;
+  }
+
+  .dw-tile-value {
+    font-size: 0.9375rem;
+  }
+
+  .dw-tile-label {
+    font-size: 0.625rem;
+  }
+
+  .dw-link {
+    padding: 4px 3px;
+    text-align: center;
+  }
+
+  .dw-link-title {
+    font-size: 0.6875rem;
+  }
+
+  .dw-link-hint {
+    display: none;
+  }
+
+  /* 时钟：时间与日期一行，农历 / 世界时钟留给更高的卡片 */
+  .dw-clock-time {
+    font-size: clamp(1.25rem, 11cqi, 1.625rem);
+  }
+
+  .dw-clock-lunar,
+  .dw-clock-zones {
+    display: none;
+  }
+
+  .dw-countdown-value {
+    font-size: 1.25rem;
+  }
+
+  .dw-countdown-target {
+    display: none;
+  }
+
+  /* 专注计时：时间与按钮并排；极短时藏掉说明和非必要的阶段切换 */
+  .dw-focus {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px 10px;
+  }
+
+  .dw-focus-head {
+    order: 1;
+  }
+
+  .dw-focus-switch {
+    display: none;
+  }
+
+  .dw-focus-time {
+    order: 2;
+    margin: 0;
+    font-size: 1.5rem;
+  }
+
+  .dw-focus-actions {
+    order: 3;
+    margin: 0;
+    flex-wrap: nowrap;
+  }
+}
+
+/* 拖动 / 缩放中的卡片浮到最上层，并提示浏览器把 transform 交给合成层 */
+.dashboard-widget-active {
+  z-index: 5;
+  will-change: transform;
+}
+
+.dashboard-widget-active .dashboard-widget-inner {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+  box-shadow: 0 18px 42px -16px rgba(0, 0, 0, 0.35);
+}
+
+/* 覆盖内容区的拖拽层：挡点击，但不挡移除按钮与缩放手柄 */
+.dashboard-widget-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  cursor: grab;
+  touch-action: none;
+  background: color-mix(in srgb, var(--color-canvas) 10%, transparent);
+}
+
+/* 移除按钮浮在右上角：不占卡片高度（统计卡只有 76px），也不压住左侧标题 */
+.dashboard-widget-remove {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  z-index: 3;
+  border-radius: 4px;
+  padding: 1px 6px;
+  background: color-mix(in srgb, var(--color-surface) 72%, transparent);
+  color: var(--color-high);
+  transition: background-color 0.15s ease;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.dashboard-widget-remove:hover {
+  background: var(--color-high-soft);
+}
+
+.dashboard-widget-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-top-left-radius: 6px;
+  color: var(--color-ink-faint);
+  cursor: nwse-resize;
+  touch-action: none;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.dashboard-widget-overlay:focus-visible,
+.dashboard-widget-resize:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+body.dashboard-dragging {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* 宇宙主题：卡片自身的入场 / 内容淡入不要跟编辑覆盖层抢节奏 */
+body.proj-cosmic .dashboard-widget-inner > * {
+  animation: none;
+}
+body.proj-cosmic .dashboard-widget-overlay {
+  cursor: grab;
+}
+body.proj-cosmic .dashboard-widget-resize {
+  cursor: nwse-resize;
+}
+body.proj-cosmic.dashboard-dragging,
+body.proj-cosmic.dashboard-dragging * {
+  cursor: grabbing !important;
+}
+
+/* 看板列：窄卡片单列堆叠，宽到 560px 才三列 */
+.workbench-board-content {
+  container-type: inline-size;
+  overflow-y: auto;
+}
+@container (min-width: 560px) {
+  .workbench-columns {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    height: 100%;
+    align-items: stretch;
+  }
+  .workbench-columns > * {
+    min-height: 0;
+    overflow-y: auto;
+  }
+}
+
+/* —— 窄屏 / 正文被助手抽屉挤窄：只读堆叠 ——
+   两套阈值都要：手机是视口窄；桌面打开助手时视口可能仍有 1280，只是正文剩 ~700。 */
+
+@media (max-width: 1023.98px) {
+  .dashboard-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .dashboard-widget {
+    grid-column: auto !important;
+    grid-row: auto !important;
+    height: auto;
+  }
+  .dashboard-widget-inner {
+    height: auto;
+  }
+  /* 堆叠后卡片高度由内容决定：只保留宽度容器，避免 size containment 把高度压成 0 */
+  .dashboard-widget-content {
+    container-type: inline-size;
+  }
+  .dashboard-edit-frame,
+  .dashboard-edit-toggle,
+  .dashboard-widget-overlay,
+  .dashboard-widget-remove,
+  .dashboard-widget-resize {
+    display: none;
+  }
+}
+
+@container (max-width: 719.98px) {
+  .dashboard-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .dashboard-widget {
+    grid-column: auto !important;
+    grid-row: auto !important;
+    height: auto;
+  }
+  .dashboard-widget-inner {
+    height: auto;
+  }
+  /* 堆叠后卡片高度由内容决定：只保留宽度容器，避免 size containment 把高度压成 0 */
+  .dashboard-widget-content {
+    container-type: inline-size;
+  }
+  .dashboard-edit-frame,
+  .dashboard-edit-toggle,
+  .dashboard-widget-overlay,
+  .dashboard-widget-remove,
+  .dashboard-widget-resize {
+    display: none;
+  }
+}

@@ -108,6 +108,10 @@ export const users = pgTable(
     // 新手教程：首次登录自动弹出时即打点；NULL = 尚未看过（新注册与存量未弹过的都算）。
     // 存库而非 localStorage：换浏览器/清缓存不会重复弹；将来想给全站重放教程，批量清这列即可。
     tutorialSeenAt: dbTimestamp("tutorial_seen_at"),
+    // 工作台自定义布局：版本信封 `{ v: 1, items: [...] }`（见 lib/dashboard-layout.ts）。
+    // NULL = 从未自定义（用默认布局）；`items: []` = 用户主动把卡片删光 —— 两者语义不同。
+    // 刻意不标类型：布局结构属于应用层，schema 由 drizzle-kit 独立加载，读写在 store 里收口。
+    dashboardLayout: jsonb("dashboard_layout"),
     // 头像：PNG/JPEG/WebP 直存库内（与私信附件同构），经 /api/avatars/[userId] 流出。
     // avatarUpdatedAt 兼作缓存破坏版本号（URL 带 ?v=），换头像即覆盖旧图。
     avatarData: bytea("avatar_data"),
@@ -619,6 +623,26 @@ export const feedReads = pgTable(
     clearedAt: dbTimestamp("cleared_at"),
   },
   (t) => [primaryKey({ columns: [t.userId, t.scope] })],
+);
+
+// 动态流「单条隐藏」：普通用户删掉自己看到的一条动态时写这里，只影响本人。
+// 团队管理员删除同一条动态则直接删 task_activities 行（全局生效），不写这张表。
+// 任务删除 / 用户删除时级联清理。
+export const activityHides = pgTable(
+  "activity_hides",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    activityId: uuid("activity_id")
+      .notNull()
+      .references(() => taskActivities.id, { onDelete: "cascade" }),
+    createdAt: dbTimestampNow("created_at").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.activityId] }),
+    index("activity_hides_activity_idx").on(t.activityId),
+  ],
 );
 
 // 任务留言板（评论）：团队成员可在任务详情页留言讨论。

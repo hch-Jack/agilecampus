@@ -125,9 +125,10 @@ describe("时间列的物理 schema 没有变（db:push 不该产生 ALTER）", 
 
     // 数目是对不上就说明有人绕开了 dbTimestamp 自己搓了一个时间列
     // （私信/动态流/群聊那几张表后来加过一轮，个人上下文表又加了一轮，留言板再加一轮，
-    // 新手教程打点又加一轮，助手多会话又加了 conversations.last_message_at ——
+    // 新手教程打点又加一轮，助手多会话又加了 conversations.last_message_at，
+    // 动态单条隐藏又加了 activity_hides.created_at ——
     // 加表/加时间列就得同步这个数）
-    expect(columns).toHaveLength(37);
+    expect(columns).toHaveLength(38);
     for (const c of columns) expect(c.sqlType).toBe("timestamp");
 
     // createdAt / updatedAt 由 dbTimestampNow 声明，默认值必须在；
@@ -145,6 +146,8 @@ describe("时间列的物理 schema 没有变（db:push 不该产生 ALTER）", 
     expect(getTableColumns(schema.feedReads).lastReadAt.hasDefault).toBe(true);
     // 动态流「清除记录」时刻由应用写（可空，不能有默认值）
     expect(getTableColumns(schema.feedReads).clearedAt.hasDefault).toBe(false);
+    // 动态单条隐藏：隐藏时刻随行由库写，默认值必须在
+    expect(getTableColumns(schema.activityHides).createdAt.hasDefault).toBe(true);
     // 新手教程打点由应用在首次弹出时写（可空，不能有默认值）
     expect(getTableColumns(schema.users).tutorialSeenAt.hasDefault).toBe(false);
     // 个人上下文：两条都随行由库写，都要有默认值

@@ -6,6 +6,7 @@ import { createProject, updateProject } from "@/lib/project";
 import { createTask, createSubtask, listMySubtaskProgress, listMyTasks, updateTask } from "@/lib/task";
 import {
   clearFeed,
+  deleteActivityForUser,
   getFeedUnreadCount,
   listMyTaskActivities,
   listProjectActivities,
@@ -24,7 +25,7 @@ import {
 import { db } from "@/db";
 import { feedReads, taskActivities, tasks as tasksTable } from "@/db/schema";
 import { moveTaskAction } from "@/app/(app)/projects/[projectId]/actions";
-import { clearFeedAction, markFeedReadAction } from "@/app/(app)/actions";
+import { clearFeedAction, deleteActivityAction, markFeedReadAction } from "@/app/(app)/actions";
 import { resetDb } from "./helpers";
 
 // moveTaskAction 走 auth() 与 revalidatePath，须 mock（照 task-detail-features.test.ts 头部惯例）
@@ -548,6 +549,85 @@ describe("clearFeed（清除记录只清自己视角）", () => {
     expect(await clearFeedAction(taskFeedScope(task.id))).toBeNull();
     expect(await listTaskActivities(student.id, task.id)).toHaveLength(0);
     expect(revalidateMock.fn).toHaveBeenCalledWith(`/projects/${project.id}/tasks/${task.id}`);
+  });
+});
+
+describe("deleteActivityForUser（单条删除）", () => {
+  async function activityCount(taskId: string) {
+    const rows = await db
+      .select({ id: taskActivities.id })
+      .from(taskActivities)
+      .where(eq(taskActivities.taskId, taskId));
+    return rows.length;
+  }
+
+  it("普通成员只隐藏自己的视图，库与他人视图不动，重复删除幂等", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    await updateTask(student.id, task.id, { status: "doing" });
+
+    const [latest] = await listProjectActivities(student.id, project.id);
+    expect(latest.canPurge).toBe(false);
+
+    expect(await deleteActivityForUser(student.id, latest.id)).toBe("self");
+    expect(await listProjectActivities(student.id, project.id)).toHaveLength(1);
+    expect(await listProjectActivities(owner.id, project.id)).toHaveLength(2);
+    expect(await activityCount(task.id)).toBe(2);
+
+    // 再删一次不报错，视图也不再多消失
+    expect(await deleteActivityForUser(student.id, latest.id)).toBe("self");
+    expect(await listProjectActivities(student.id, project.id)).toHaveLength(1);
+  });
+
+  it("团队管理员直接删库，所有人的视图一起消失", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    const [only] = await listProjectActivities(owner.id, project.id);
+    expect(only.canPurge).toBe(true);
+
+    expect(await deleteActivityForUser(owner.id, only.id)).toBe("all");
+    expect(await activityCount(task.id)).toBe(0);
+    expect(await listProjectActivities(owner.id, project.id)).toHaveLength(0);
+    expect(await listProjectActivities(student.id, project.id)).toHaveLength(0);
+  });
+
+  it("非成员无权删除", async () => {
+    const { owner, student, outsider, project } = await scene();
+    await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    const [only] = await listProjectActivities(student.id, project.id);
+    await expect(deleteActivityForUser(outsider.id, only.id)).rejects.toThrow(ForbiddenError);
+  });
+
+  it("隐藏的单条不再计入未读", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    await markFeedRead(student.id, projectFeedScope(project.id));
+    await updateTask(student.id, task.id, { status: "doing" });
+    expect(await getFeedUnreadCount(student.id, projectFeedScope(project.id))).toBe(1);
+
+    const [latest] = await listProjectActivities(student.id, project.id);
+    await deleteActivityForUser(student.id, latest.id);
+    expect(await getFeedUnreadCount(student.id, projectFeedScope(project.id))).toBe(0);
+  });
+
+  it("deleteActivityAction 校验登录与参数，成功后按 scope 回流页面", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    const [only] = await listProjectActivities(student.id, project.id);
+    const scope = projectFeedScope(project.id);
+
+    authMock.userId = null;
+    expect(await deleteActivityAction(only.id, scope)).toEqual({ error: "请先登录" });
+
+    authMock.userId = student.id;
+    expect(await deleteActivityAction("not-a-uuid", scope)).toEqual({ error: "参数无效" });
+    expect(await deleteActivityAction(only.id, "project:not-a-uuid")).toEqual({ error: "参数无效" });
+
+    revalidateMock.fn = vi.fn();
+    expect(await deleteActivityAction(only.id, scope)).toEqual({ ok: true, mode: "self" });
+    expect(revalidateMock.fn).toHaveBeenCalledWith(`/projects/${project.id}`);
+    expect(await listProjectActivities(student.id, project.id)).toHaveLength(0);
+    expect(await activityCount(task.id)).toBe(1);
   });
 });
 

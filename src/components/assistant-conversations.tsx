@@ -70,14 +70,14 @@ export function AssistantConversations({
   }
 
   return (
-    <div className="shrink-0">
+    <div className="shrink-0 border-b border-line pb-3">
       <div className="flex items-center justify-between gap-2">
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
           aria-controls="assistant-conversation-list"
-          className="flex min-w-0 items-center gap-1.5 rounded-field px-1.5 py-1 text-xs text-ink-soft transition-colors hover:bg-sunken hover:text-ink"
+          className="-mx-1 flex min-w-0 items-center gap-1.5 rounded-field px-1.5 py-1 text-[13px] text-ink-soft transition-colors hover:bg-sunken hover:text-ink"
         >
           <svg
             viewBox="0 0 24 24"
@@ -91,14 +91,14 @@ export function AssistantConversations({
           >
             <path d="M9 6l6 6-6 6" />
           </svg>
-          <span className="shrink-0">对话</span>
+          <span className="shrink-0 font-medium">对话</span>
           <span className="truncate text-ink">· {activeTitle}</span>
         </button>
         <button
           type="button"
           onClick={onNew}
           disabled={busy}
-          className="ac-btn-ghost shrink-0 px-2 py-1 text-xs disabled:opacity-50"
+          className="ac-btn-ghost shrink-0 px-2.5 py-1.5 text-[13px] disabled:opacity-50"
         >
           ＋ 新对话
         </button>
@@ -107,7 +107,7 @@ export function AssistantConversations({
       {open && (
         <div
           id="assistant-conversation-list"
-          className="mt-1 max-h-56 overflow-y-auto rounded-field border border-line bg-sunken/60 p-1 pr-2 [scrollbar-gutter:stable]"
+          className="mt-2 max-h-60 overflow-y-auto rounded-field border border-line bg-sunken/50 p-1.5 [scrollbar-gutter:stable]"
         >
           {conversations.length === 0 ? (
             <p className="px-2 py-1.5 text-xs text-ink-faint">还没有对话</p>
@@ -135,7 +135,7 @@ export function AssistantConversations({
                         }}
                         maxLength={60}
                         aria-label="会话标题"
-                        className="ac-field min-w-0 flex-1 px-2 py-1 text-sm"
+                        className="ac-field min-w-0 flex-1 px-2 py-1 text-[13px]"
                       />
                       <button
                         type="button"
@@ -163,7 +163,7 @@ export function AssistantConversations({
                       onClick={() => onSelect(c.id)}
                       disabled={busy}
                       aria-current={active ? "true" : undefined}
-                      className={`min-w-0 flex-1 truncate rounded px-2 py-1.5 text-left text-sm transition-colors disabled:opacity-60 ${
+                      className={`min-w-0 flex-1 truncate rounded px-2.5 py-2 text-left text-[13px] transition-colors disabled:opacity-60 ${
                         active
                           ? "bg-primary-soft font-medium text-primary"
                           : "text-ink hover:bg-surface"

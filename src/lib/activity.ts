@@ -1,6 +1,14 @@
-import { and, desc, eq, gt, sql } from "drizzle-orm";
+import { and, desc, eq, gt, notExists, sql } from "drizzle-orm";
 import { db, type DbTx } from "@/db";
-import { feedReads, projects, taskActivities, tasks, teamMembers, users } from "@/db/schema";
+import {
+  activityHides,
+  feedReads,
+  projects,
+  taskActivities,
+  tasks,
+  teamMembers,
+  users,
+} from "@/db/schema";
 import { AppError, ForbiddenError } from "./errors";
 import { getProjectForUser } from "./project";
 
@@ -33,6 +41,24 @@ export async function recordTaskActivity(
   );
 }
 
+/**
+ * 某用户自己隐藏掉的动态：`activity_hides` 里有一条即不可见。
+ * 只影响本人，别人的查询照常；子查询引用外层 taskActivities.id。
+ */
+function notHiddenBy(actorId: string) {
+  return notExists(
+    db
+      .select({ one: sql`1` })
+      .from(activityHides)
+      .where(
+        and(
+          eq(activityHides.activityId, taskActivities.id),
+          eq(activityHides.userId, actorId),
+        ),
+      ),
+  );
+}
+
 // 任务时间线：谁在何时做了什么，倒序，默认最近 50 条。项目成员即可读。
 export async function listTaskActivities(actorId: string, taskId: string, limit = 50) {
   const [task] = await db
@@ -44,7 +70,7 @@ export async function listTaskActivities(actorId: string, taskId: string, limit 
   if (!access) throw new ForbiddenError();
   const clearedAfter = await feedClearedAfter(actorId, taskFeedScope(taskId));
 
-  return db
+  const rows = await db
     .select({
       id: taskActivities.id,
       actorName: users.name,
@@ -61,10 +87,16 @@ export async function listTaskActivities(actorId: string, taskId: string, limit 
         eq(taskActivities.taskId, taskId),
         // 「清除记录」后的旧动态对本人隐藏（见 clearFeed），他人查询不受影响
         ...(clearedAfter ? [clearedAfter] : []),
+        // 单条删除：只影响本人
+        notHiddenBy(actorId),
       ),
     )
     .orderBy(desc(taskActivities.createdAt))
     .limit(limit);
+
+  // 管理员可以全局删除，前端据此给出不同确认文案
+  const canPurge = access.role === "admin";
+  return rows.map((row) => ({ ...row, canPurge }));
 }
 
 // 工作台与项目页共用的「动态流」行结构，两条查询共享同一投影，保证行结构一致。
@@ -80,6 +112,8 @@ export type TaskActivityRow = {
   oldValue: string | null;
   newValue: string | null;
   createdAt: Date;
+  /** 团队管理员：删除会从所有人的动态流与库中移除；否则只对自己隐藏 */
+  canPurge: boolean;
 };
 
 const feedColumns = {
@@ -104,8 +138,8 @@ export async function listMyTaskActivities(
   limit = 20,
 ): Promise<TaskActivityRow[]> {
   const clearedAfter = await feedClearedAfter(actorId, WORKBENCH_SCOPE);
-  return db
-    .select(feedColumns)
+  const rows = await db
+    .select({ ...feedColumns, role: teamMembers.role })
     .from(taskActivities)
     .innerJoin(tasks, eq(taskActivities.taskId, tasks.id))
     .innerJoin(projects, eq(tasks.projectId, projects.id))
@@ -120,11 +154,15 @@ export async function listMyTaskActivities(
         eq(projects.status, "active"),
         // 「清除记录」后的旧动态对本人隐藏（见 clearFeed），他人查询不受影响
         ...(clearedAfter ? [clearedAfter] : []),
+        // 单条删除：只影响本人
+        notHiddenBy(actorId),
       ),
     )
     // 同一事务写入的多条动态时间戳相同，二级键保证顺序确定
     .orderBy(desc(taskActivities.createdAt), desc(taskActivities.id))
     .limit(limit);
+
+  return rows.map(({ role, ...row }) => ({ ...row, canPurge: role === "admin" }));
 }
 
 // 项目页「最新记录」：该项目的全部任务动态（不限「分配给我」），最新在前。
@@ -140,7 +178,7 @@ export async function listProjectActivities(
   if (!access) throw new ForbiddenError();
   const clearedAfter = await feedClearedAfter(actorId, projectFeedScope(projectId));
 
-  return db
+  const rows = await db
     .select(feedColumns)
     .from(taskActivities)
     .innerJoin(tasks, eq(taskActivities.taskId, tasks.id))
@@ -153,10 +191,15 @@ export async function listProjectActivities(
         ...(taskId ? [eq(taskActivities.taskId, taskId)] : []),
         // 「清除记录」后的旧动态对本人隐藏（见 clearFeed），他人查询不受影响
         ...(clearedAfter ? [clearedAfter] : []),
+        // 单条删除：只影响本人
+        notHiddenBy(actorId),
       ),
     )
     .orderBy(desc(taskActivities.createdAt), desc(taskActivities.id))
     .limit(limit);
+
+  const canPurge = access.role === "admin";
+  return rows.map((row) => ({ ...row, canPurge }));
 }
 
 // 某用户在某 scope 的「清除」时刻（无 = 未清除过），返回可直接拼进 WHERE 的比较条件。
@@ -220,20 +263,39 @@ export async function getFeedUnreadCount(actorId: string, scope: string): Promis
         teamMembers,
         and(eq(teamMembers.teamId, projects.teamId), eq(teamMembers.userId, actorId)),
       )
-      .where(and(afterMarker, eq(tasks.assigneeId, actorId), eq(projects.status, "active")));
+      .where(
+        and(
+          afterMarker,
+          eq(tasks.assigneeId, actorId),
+          eq(projects.status, "active"),
+          notHiddenBy(actorId),
+        ),
+      );
   } else if (scope.startsWith("project:")) {
     [row] = await db
       .select({ n: sql<number>`count(*)::int` })
       .from(taskActivities)
       .innerJoin(tasks, eq(taskActivities.taskId, tasks.id))
       .innerJoin(projects, eq(tasks.projectId, projects.id))
-      .where(and(afterMarker, eq(tasks.projectId, scope.slice("project:".length))));
+      .where(
+        and(
+          afterMarker,
+          eq(tasks.projectId, scope.slice("project:".length)),
+          notHiddenBy(actorId),
+        ),
+      );
   } else {
     // task: 只数该任务自己的动态，无需 join
     [row] = await db
       .select({ n: sql<number>`count(*)::int` })
       .from(taskActivities)
-      .where(and(afterMarker, eq(taskActivities.taskId, scope.slice("task:".length))));
+      .where(
+        and(
+          afterMarker,
+          eq(taskActivities.taskId, scope.slice("task:".length)),
+          notHiddenBy(actorId),
+        ),
+      );
   }
 
   return row.n;
@@ -263,4 +325,40 @@ export async function clearFeed(actorId: string, scope: string): Promise<void> {
       target: [feedReads.userId, feedReads.scope],
       set: { lastReadAt: sql`now()`, clearedAt: sql`now()` },
     });
+}
+
+/**
+ * 删除单条动态。
+ *
+ * - 团队管理员：直接从 `task_activities` 删行，所有人与库一起消失；
+ * - 其他成员：写一条 `activity_hides`，只从本人的动态流里隐藏，不动数据与他人视图。
+ *
+ * 权限口径与动态读权限一致：必须是该任务所属团队的成员。
+ */
+export type ActivityDeleteMode = "all" | "self";
+
+export async function deleteActivityForUser(
+  actorId: string,
+  activityId: string,
+): Promise<ActivityDeleteMode> {
+  const [row] = await db
+    .select({ projectId: tasks.projectId })
+    .from(taskActivities)
+    .innerJoin(tasks, eq(taskActivities.taskId, tasks.id))
+    .where(eq(taskActivities.id, activityId));
+  if (!row) throw new AppError("记录不存在");
+
+  const access = await getProjectForUser(actorId, row.projectId);
+  if (!access) throw new ForbiddenError();
+
+  if (access.role === "admin") {
+    await db.delete(taskActivities).where(eq(taskActivities.id, activityId));
+    return "all";
+  }
+
+  await db
+    .insert(activityHides)
+    .values({ userId: actorId, activityId })
+    .onConflictDoNothing();
+  return "self";
 }
