@@ -121,7 +121,8 @@ export const DASHBOARD_WIDGETS: Record<DashboardWidgetId, DashboardWidgetMeta> =
     id: "schedule",
     title: "日程表",
     description: "任务官方起止甘特（只读）+ 月历编辑个人计划日",
-    defaultSize: { w: 12, h: 8 },
+    // 默认 8×6：甘特与月历改成分区滚动后，半幅宽也放得下
+    defaultSize: { w: 8, h: 6 },
     minSize: { w: 6, h: 6 },
   },
   stat_overdue: {
@@ -246,17 +247,37 @@ export const DASHBOARD_WIDGETS: Record<DashboardWidgetId, DashboardWidgetMeta> =
 };
 
 /**
- * 默认布局 = 改造前的页面结构：一行四张统计卡 → 通栏看板 → 通栏最新记录。
- * 高度按 32px 行高换算，贴近原来的 `p-3` 统计瓦片与 `min-h-40` 看板列。
+ * 默认布局：所有卡片都放出来，按「高频 → 辅助」从上到下铺满 12 列。
+ *
+ * 版式（共 23 行）：
+ *   y0-1   四张统计卡
+ *   y2-7   看板（8 列）+ 最新记录 / 消息（右 4 列）
+ *   y8-13  日程表（8 列）+ 我的项目 / 即将到期（右 4 列）
+ *   y14-22 三排 4 列辅助卡（里程碑、资源、附件 / 团队、便签、快捷入口 / 时钟、倒计时、专注）
+ *
+ * 每排都铺满 12 列，没有横向留白；不常用的卡片压到 3 行高（96px），
+ * 保证全部组件同时可见时整页仍在 1000px 左右。
  */
 const DEFAULT_ITEMS: DashboardLayoutItem[] = [
   { id: "stat_overdue", type: "stat_overdue", x: 0, y: 0, w: 3, h: 2 },
   { id: "stat_today", type: "stat_today", x: 3, y: 0, w: 3, h: 2 },
   { id: "stat_week", type: "stat_week", x: 6, y: 0, w: 3, h: 2 },
   { id: "stat_doing", type: "stat_doing", x: 9, y: 0, w: 3, h: 2 },
-  { id: "task_board", type: "task_board", x: 0, y: 2, w: 12, h: 6 },
-  { id: "schedule", type: "schedule", x: 0, y: 8, w: 12, h: 8 },
-  { id: "activity_feed", type: "activity_feed", x: 0, y: 16, w: 12, h: 4 },
+  { id: "task_board", type: "task_board", x: 0, y: 2, w: 8, h: 6 },
+  { id: "activity_feed", type: "activity_feed", x: 8, y: 2, w: 4, h: 4 },
+  { id: "unread_messages", type: "unread_messages", x: 8, y: 6, w: 4, h: 2 },
+  { id: "schedule", type: "schedule", x: 0, y: 8, w: 8, h: 6 },
+  { id: "my_projects", type: "my_projects", x: 8, y: 8, w: 4, h: 3 },
+  { id: "upcoming", type: "upcoming", x: 8, y: 11, w: 4, h: 3 },
+  { id: "milestones", type: "milestones", x: 0, y: 14, w: 4, h: 3 },
+  { id: "resource_usage", type: "resource_usage", x: 4, y: 14, w: 4, h: 3 },
+  { id: "recent_attachments", type: "recent_attachments", x: 8, y: 14, w: 4, h: 3 },
+  { id: "my_teams", type: "my_teams", x: 0, y: 17, w: 4, h: 3 },
+  { id: "note", type: "note", x: 4, y: 17, w: 4, h: 3 },
+  { id: "quick_links", type: "quick_links", x: 8, y: 17, w: 4, h: 3 },
+  { id: "clock", type: "clock", x: 0, y: 20, w: 4, h: 3 },
+  { id: "countdown", type: "countdown", x: 4, y: 20, w: 4, h: 3 },
+  { id: "focus_timer", type: "focus_timer", x: 8, y: 20, w: 4, h: 3 },
 ];
 
 export const DEFAULT_DASHBOARD_LAYOUT: DashboardLayoutDoc = { v: 1, items: DEFAULT_ITEMS };

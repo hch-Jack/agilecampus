@@ -42,8 +42,11 @@ function doc(items: DashboardLayoutItem[]): DashboardLayoutDoc {
 }
 
 describe("卡片目录与默认布局", () => {
-  it("默认布局的每一项都在目录内，尺寸合法且互不重叠", () => {
-    expect(DEFAULT_DASHBOARD_LAYOUT.items).toHaveLength(7);
+  it("默认布局覆盖全部卡片，尺寸合法且互不重叠", () => {
+    expect(DEFAULT_DASHBOARD_LAYOUT.items).toHaveLength(WIDGET_IDS.length);
+    expect(DEFAULT_DASHBOARD_LAYOUT.items.map((item) => item.type).sort()).toEqual(
+      [...WIDGET_IDS].sort(),
+    );
     assertNoOverlap(DEFAULT_DASHBOARD_LAYOUT.items);
 
     for (const item of DEFAULT_DASHBOARD_LAYOUT.items) {
@@ -244,14 +247,15 @@ describe("normalizeLayoutDoc", () => {
 
 describe("moveWidget", () => {
   it("拖到空位：目标占住新格子，其他卡片不动", () => {
-    const moved = moveWidget(DEFAULT_DASHBOARD_LAYOUT, "clock", 0, 0);
-    // 默认布局里没有 clock，不应有任何变化
-    expect(moved).toBe(DEFAULT_DASHBOARD_LAYOUT);
+    // 不存在的实例 id：原样返回
+    expect(moveWidget(DEFAULT_DASHBOARD_LAYOUT, "nope", 0, 0)).toBe(
+      DEFAULT_DASHBOARD_LAYOUT,
+    );
 
-    const withClock = addWidget(DEFAULT_DASHBOARD_LAYOUT, "clock");
-    const movedClock = moveWidget(withClock, "clock", 8, 0);
-    expect(find(movedClock, "clock")).toMatchObject({ x: 8, y: 0, w: 4, h: 3 });
-    assertNoOverlap(movedClock.items);
+    const moved = moveWidget(DEFAULT_DASHBOARD_LAYOUT, "activity_feed", 8, 23);
+    expect(find(moved, "activity_feed")).toMatchObject({ x: 8, y: 23 });
+    expect(find(moved, "task_board")).toMatchObject({ x: 0, y: 2 });
+    assertNoOverlap(moved.items);
   });
 
   it("可以留白：往下方拖不会被自动吸回", () => {
@@ -288,9 +292,10 @@ describe("moveWidget", () => {
   it("可重复卡按实例 id 移动，兄弟实例不动", () => {
     let layout = addWidget(DEFAULT_DASHBOARD_LAYOUT, "note");
     layout = addWidget(layout, "note");
+    const first = find(layout, "note")!;
     const second = find(layout, "note-2")!;
     const moved = moveWidget(layout, "note-2", 8, second.y);
-    expect(find(moved, "note")!.x).toBe(0);
+    expect(find(moved, "note")).toMatchObject({ x: first.x, y: first.y });
     expect(find(moved, "note-2")!.x).toBe(8);
   });
 });
@@ -317,13 +322,17 @@ describe("resizeWidget", () => {
 describe("addWidget / removeWidget", () => {
   it("单例卡重复添加原样返回", () => {
     expect(addWidget(DEFAULT_DASHBOARD_LAYOUT, "task_board")).toBe(DEFAULT_DASHBOARD_LAYOUT);
+    expect(addWidget(DEFAULT_DASHBOARD_LAYOUT, "schedule")).toBe(DEFAULT_DASHBOARD_LAYOUT);
   });
 
   it("新卡追加在内容下方，默认尺寸", () => {
-    const added = addWidget(DEFAULT_DASHBOARD_LAYOUT, "clock");
-    const clock = find(added, "clock")!;
-    expect(clock).toMatchObject({ id: "clock", type: "clock", x: 0, w: 4, h: 3 });
-    expect(clock.y).toBeGreaterThanOrEqual(12);
+    const bottom = Math.max(
+      ...DEFAULT_DASHBOARD_LAYOUT.items.map((item) => item.y + item.h),
+    );
+    const added = addWidget(DEFAULT_DASHBOARD_LAYOUT, "note");
+    const note = find(added, "note-2")!;
+    expect(note).toMatchObject({ id: "note-2", type: "note", x: 0, w: 4, h: 4 });
+    expect(note.y).toBe(bottom);
     assertNoOverlap(added.items);
   });
 
@@ -335,26 +344,29 @@ describe("addWidget / removeWidget", () => {
       "note",
       "note-2",
       "note-3",
+      "note-4",
     ]);
     expect(new Set(layout.items.map((item) => item.id)).size).toBe(layout.items.length);
     assertNoOverlap(layout.items);
 
-    const clock = addWidget(DEFAULT_DASHBOARD_LAYOUT, "clock");
+    // 先删掉默认那张，才能验证可重复卡的第二实例
+    const withoutClock = removeWidget(DEFAULT_DASHBOARD_LAYOUT, "clock");
+    const clock = addWidget(withoutClock, "clock");
     const clock2 = addWidget(clock, "clock");
     expect(clock2.items.filter((item) => item.type === "clock")).toHaveLength(2);
   });
 
   it("删卡按实例 id，不牵动其他卡片（留白由用户自己决定）", () => {
-    const withClock = addWidget(DEFAULT_DASHBOARD_LAYOUT, "clock");
-    const before = find(withClock, "clock")!;
-    const removed = removeWidget(withClock, "task_board");
-    const after = find(removed, "clock")!;
+    const withNote = addWidget(DEFAULT_DASHBOARD_LAYOUT, "note");
+    const before = find(withNote, "note-2")!;
+    const removed = removeWidget(withNote, "task_board");
+    const after = find(removed, "note-2")!;
     expect(after.y).toBe(before.y);
     assertNoOverlap(removed.items);
   });
 
   it("删除不存在的卡原样返回", () => {
-    expect(removeWidget(DEFAULT_DASHBOARD_LAYOUT, "clock")).toBe(DEFAULT_DASHBOARD_LAYOUT);
+    expect(removeWidget(DEFAULT_DASHBOARD_LAYOUT, "nope")).toBe(DEFAULT_DASHBOARD_LAYOUT);
   });
 });
 
@@ -391,9 +403,8 @@ describe("配置与顺序", () => {
 
   it("给不支持配置的卡片写 config 会被丢弃", () => {
     const updated = updateWidgetConfig(DEFAULT_DASHBOARD_LAYOUT, "clock", { text: "x" });
-    expect(find(updated, "clock")).toBeUndefined(); // 默认没有 clock
-    const withClock = addWidget(DEFAULT_DASHBOARD_LAYOUT, "clock");
-    expect(find(updateWidgetConfig(withClock, "clock", { text: "x" }), "clock")!.config).toBeUndefined();
+    expect(find(updated, "clock")!.config).toBeUndefined();
+    expect(find(updated, "clock")).toMatchObject({ x: 0, y: 20, w: 4, h: 3 });
   });
 
   it("widgetOrder 与 sortByCatalog", () => {

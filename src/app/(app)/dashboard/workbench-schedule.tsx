@@ -87,16 +87,16 @@ export function WorkbenchSchedule({
   }
 
   return (
-    <section aria-label="任务日程" className="space-y-2">
+    <section aria-label="任务日程" className="dw-schedule">
       {scheduled.length > 0 ? (
-        <div className="ac-card overflow-hidden">
-          {/* 时间刻度头 */}
-          <div className="relative border-b border-line bg-sunken/60 px-4 py-2">
-            <div className="relative ml-40 h-4">
+        <div className="ac-card dw-schedule-gantt">
+          {/* 时间刻度头：吸在甘特区顶部，任务多、内部滚动时仍看得到日期 */}
+          <div className="dw-gantt-head sticky top-0 z-10 border-b border-line bg-surface/95 px-3 py-2 backdrop-blur-sm">
+            <div className="dw-gantt-scale relative h-4">
               {scale.ticks.map((t, i) => (
                 <span
                   key={i}
-                  className="absolute -translate-x-1/2 text-[11px] tabular-nums text-ink-faint"
+                  className="dw-gantt-tick absolute -translate-x-1/2 text-[11px] tabular-nums text-ink-faint"
                   style={{ left: `${pct(t)}%` }}
                 >
                   {fmtMD(t)}
@@ -107,17 +107,20 @@ export function WorkbenchSchedule({
 
           {groups.map((g) => (
             <div key={g.projectId} className="border-b border-line last:border-b-0">
-              <div className="bg-sunken/40 px-4 py-1.5 text-xs font-semibold text-ink-soft">
-                {g.projectName}
-              </div>
+              {/* 只有一个项目时不重复项目名：小卡片里省下一行，多露一条任务 */}
+              {groups.length > 1 && (
+                <div className="bg-sunken/40 px-3 py-1 text-[11px] font-semibold text-ink-soft">
+                  {g.projectName}
+                </div>
+              )}
               <ul>
                 {g.bars.map((b) => {
                   const rangeLabel = `${b.task.startDate ?? "…"}→${b.task.dueDate ?? "…"}`;
                   return (
-                    <li key={b.task.id} className="flex items-center px-4 py-1.5">
+                    <li key={b.task.id} className="flex items-center px-3 py-0.5">
                       <Link
                         href={`/projects/${b.task.projectId}/tasks/${b.task.id}`}
-                        className="w-40 shrink-0 truncate pr-2 text-xs text-ink hover:text-primary"
+                        className="dw-gantt-label shrink-0 truncate pr-2 text-xs text-ink hover:text-primary"
                         title={b.task.title}
                       >
                         {b.task.title}
@@ -152,7 +155,7 @@ export function WorkbenchSchedule({
           ))}
 
           {/* 图例 */}
-          <div className="flex flex-wrap items-center gap-4 border-t border-line px-4 py-2 text-[11px] text-ink-soft">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5 text-[11px] text-ink-soft">
             <Legend cls="bg-todo" label="待办" />
             <Legend cls="bg-doing" label="进行中" />
             <Legend cls="bg-done" label="已完成" />
@@ -163,8 +166,8 @@ export function WorkbenchSchedule({
           </div>
         </div>
       ) : (
-        <p className="px-1 text-xs text-ink-faint">
-          尚无任务设了官方起止日——在项目里给任务排期后，时间线会出现在上方
+        <p className="dw-schedule-empty text-xs text-ink-faint">
+          尚无任务设了官方起止日——在项目里给任务排期后，时间线会出现在这里
         </p>
       )}
 
@@ -178,7 +181,7 @@ export function WorkbenchSchedule({
 
 function UnscheduledList({ tasks }: { tasks: WorkbenchTask[] }) {
   return (
-    <div className="ac-card p-4">
+    <div className="ac-card dw-unscheduled p-3">
       <h3 className="mb-2 text-xs font-semibold text-ink">未设官方起止（{tasks.length}）</h3>
       <ul className="flex flex-wrap gap-2">
         {tasks.map((t) => (

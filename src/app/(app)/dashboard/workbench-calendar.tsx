@@ -184,8 +184,8 @@ export function WorkbenchCalendar({
   const selectedSegs = selected ? optimisticPlans[selected.id] ?? [] : [];
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <div className="dw-cal">
+      <div className="dw-cal-toolbar flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-baseline gap-2">
           <p className="font-display text-sm tabular-nums text-ink">
             {view.year} 年 {view.month} 月
@@ -223,17 +223,17 @@ export function WorkbenchCalendar({
                 ? `区间起点 ${formatMonthDay(parseDay(rangeAnchor)!)}，再点结束日（点回起点取消）`
                 : `已选「${selected.title}」—${mode === "day" ? "点某天加单天段" : "点两天框一段区间"}`
               : `已选「${selected.title}」—只读角色不可计划`
-            : "从左侧点选任务，再点某天排计划"}
+            : "从任务池点选任务，再点某天排计划"}
         </p>
       </div>
 
       {error && <p className="text-sm text-high">{error}</p>}
 
-      <div className="flex flex-col gap-4 lg:flex-row">
-        {/* 任务池 */}
-        <div className="ac-card max-h-80 space-y-1 overflow-y-auto p-3 lg:w-64 lg:max-h-none lg:shrink-0">
+      <div className="dw-cal-body">
+        {/* 任务池：窄卡里横排成一条可左右滑的 chip 带，宽卡才恢复左侧竖栏 */}
+        <div className="ac-card dw-cal-pool p-2">
           <h3 className="text-xs font-semibold text-ink-soft">任务池（{pool.length}）</h3>
-          <ul className="space-y-1">
+          <ul className="dw-cal-pool-list">
             {pool.map((t) => {
               const canWrite = WRITE_ROLES.includes(t.role);
               const isSel = t.id === selectedId;
@@ -244,7 +244,7 @@ export function WorkbenchCalendar({
                     type="button"
                     onClick={() => canWrite && (isSel ? deselect() : setSelectedId(t.id))}
                     disabled={!canWrite}
-                    className={`flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs transition ${
+                    className={`dw-cal-pool-item flex items-center gap-1.5 rounded px-2 py-1 text-left text-xs transition ${
                       isSel
                         ? "bg-primary-soft text-primary ring-1 ring-primary/50"
                         : canWrite
@@ -257,7 +257,7 @@ export function WorkbenchCalendar({
                       className={`h-2 w-2 shrink-0 rounded-sm ${STATUS_SOFT[t.status] ?? "bg-low-soft"}`}
                     />
                     <span className="truncate">{t.title}</span>
-                    <span className="ml-auto shrink-0 tabular-nums text-[10px] text-ink-faint">
+                    <span className="dw-cal-pool-meta ml-auto shrink-0 tabular-nums text-[10px] text-ink-faint">
                       {segs.length ? `${segs.length} 段` : "未计划"}
                     </span>
                   </button>
@@ -266,7 +266,7 @@ export function WorkbenchCalendar({
             })}
           </ul>
           {selected && canPlan && (
-            <div className="space-y-2 pt-2">
+            <div className="dw-cal-controls space-y-2 pt-2">
               {/* 单天 / 区间 模式 */}
               <div className="flex gap-1.5">
                 <button
@@ -356,7 +356,7 @@ export function WorkbenchCalendar({
                   type="button"
                   key={day}
                   onClick={() => onDayClick(day)}
-                  className={`flex min-h-20 flex-col border p-1 text-left align-top transition hover:bg-surface ${
+                  className={`dw-cal-day flex flex-col border p-1 text-left align-top transition hover:bg-surface ${
                     isAnchor
                       ? "border-primary ring-1 ring-primary/60"
                       : "border-line"

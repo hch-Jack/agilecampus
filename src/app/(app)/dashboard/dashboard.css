@@ -356,6 +356,164 @@
   }
 }
 
+/* —— 日程表：跟着卡片宽高实时换排版 ——
+   卡片本身是固定高度且 overflow:hidden 的，内容一多就会被裁掉。
+   这里把日程表拆成「甘特可滚动 + 月历可滚动」：甘特最多占卡片高度的一半，
+   任务再多也只在甘特内部滚；月历格子的最小高度按卡片宽度收放，整块内容仍完整可达。
+   所有阈值都走容器查询，拖拽缩放时即时生效，不依赖窗口断点。 */
+
+.dw-schedule {
+  container-type: inline-size;
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* 卡片内容比格子高时给一条可见的细滚动条，提示还能往下翻 */
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-ink-faint) 45%, transparent) transparent;
+}
+
+.dw-schedule::-webkit-scrollbar {
+  width: 7px;
+}
+
+.dw-schedule::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-ink-faint) 45%, transparent);
+}
+
+/* 甘特区：最多占一半高度，标题行吸顶；任务多时内部滚动，不把月历顶出卡片 */
+.dw-schedule-gantt {
+  --dw-gantt-label: clamp(84px, 24cqi, 160px);
+  flex: 0 0 auto;
+  max-height: 40%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.dw-gantt-scale {
+  margin-left: var(--dw-gantt-label);
+}
+
+.dw-gantt-label {
+  width: var(--dw-gantt-label);
+}
+
+.dw-schedule-empty {
+  padding: 2px 2px 0;
+}
+
+.dw-unscheduled {
+  flex: 0 0 auto;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+/* 月历整体：高度自由，宽度撑满；外层滚动负责“内容完整可达” */
+.dw-cal {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dw-cal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 窄卡：任务池收成一行——标题在左、chip 带在右，省下的高度全部留给月历 */
+.dw-cal-pool {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 6px 8px;
+}
+
+.dw-cal-pool > h3 {
+  flex: 0 0 auto;
+}
+
+.dw-cal-pool-list {
+  display: flex;
+  flex: 1 1 200px;
+  min-width: 0;
+  gap: 4px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.dw-cal-controls {
+  flex: 1 1 100%;
+  padding-top: 4px;
+}
+
+.dw-cal-pool-list > li {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.dw-cal-pool-item {
+  width: auto;
+  max-width: 180px;
+}
+
+.dw-cal-pool-meta {
+  display: none;
+}
+
+/* 月历格子的最小高度跟着卡片宽度收放：窄卡更紧凑，宽卡保持可读 */
+.dw-cal-day {
+  min-height: clamp(42px, 8cqi, 76px);
+}
+
+/* 宽度足够时，任务池回到左侧竖栏（12 列满宽才触发） */
+@container (min-width: 820px) {
+  .dw-cal-body {
+    flex-direction: row;
+    align-items: stretch;
+  }
+
+  .dw-cal-pool {
+    display: block;
+    flex: 0 0 220px;
+    max-height: 340px;
+    padding: 8px;
+    overflow-y: auto;
+  }
+
+  .dw-cal-pool-list {
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    overflow-x: visible;
+    padding-bottom: 0;
+  }
+
+  .dw-cal-pool-item {
+    width: 100%;
+    max-width: none;
+  }
+
+  .dw-cal-pool-meta {
+    display: inline;
+  }
+}
+
+/* 窄卡里刻度标签会叠在一起：隔一个显示一个 */
+@container (max-width: 520px) {
+  .dw-gantt-tick:nth-child(even) {
+    display: none;
+  }
+}
+
 /* 拖动 / 缩放中的卡片浮到最上层，并提示浏览器把 transform 交给合成层 */
 .dashboard-widget-active {
   z-index: 5;
