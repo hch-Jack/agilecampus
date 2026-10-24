@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   MS_PER_DAY,
   buildTimeScale,
+  formatDay,
   formatMonthDay,
   inferTaskSpan,
   isTaskOverdue,
@@ -206,3 +207,17 @@ describe("buildTimeScale", () => {
     expect(scale.span).toBeGreaterThanOrEqual(MS_PER_DAY);
   });
 });
+
+describe("formatDay", () => {
+  it("是 parseDay 的反函数（UTC 锚定）", () => {
+    expect(formatDay(utc(2026, 3, 8))).toBe("2026-03-08");
+    expect(formatDay(parseDay("2026-03-08")!)).toBe("2026-03-08");
+  });
+
+  it("跨月、跨年、补零", () => {
+    expect(formatDay(utc(2026, 1, 5))).toBe("2026-01-05");
+    expect(formatDay(utc(2026, 12, 31))).toBe("2026-12-31");
+    expect(formatDay(utc(2027, 1, 1))).toBe("2027-01-01");
+  });
+});
+

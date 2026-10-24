@@ -24,6 +24,7 @@ export const CLOCK_ZONE_MAX_LENGTH = 64;
 
 export const WIDGET_IDS = [
   "task_board",
+  "schedule",
   "stat_overdue",
   "stat_today",
   "stat_week",
@@ -115,6 +116,13 @@ export const DASHBOARD_WIDGETS: Record<DashboardWidgetId, DashboardWidgetMeta> =
     description: "按待办 / 进行中 / 已完成分列，可拖拽换列",
     defaultSize: { w: 8, h: 6 },
     minSize: { w: 6, h: 4 },
+  },
+  schedule: {
+    id: "schedule",
+    title: "日程表",
+    description: "任务官方起止甘特（只读）+ 月历编辑个人计划日",
+    defaultSize: { w: 12, h: 8 },
+    minSize: { w: 6, h: 6 },
   },
   stat_overdue: {
     id: "stat_overdue",
@@ -247,7 +255,8 @@ const DEFAULT_ITEMS: DashboardLayoutItem[] = [
   { id: "stat_week", type: "stat_week", x: 6, y: 0, w: 3, h: 2 },
   { id: "stat_doing", type: "stat_doing", x: 9, y: 0, w: 3, h: 2 },
   { id: "task_board", type: "task_board", x: 0, y: 2, w: 12, h: 6 },
-  { id: "activity_feed", type: "activity_feed", x: 0, y: 8, w: 12, h: 4 },
+  { id: "schedule", type: "schedule", x: 0, y: 8, w: 12, h: 8 },
+  { id: "activity_feed", type: "activity_feed", x: 0, y: 16, w: 12, h: 4 },
 ];
 
 export const DEFAULT_DASHBOARD_LAYOUT: DashboardLayoutDoc = { v: 1, items: DEFAULT_ITEMS };

@@ -43,7 +43,7 @@ function doc(items: DashboardLayoutItem[]): DashboardLayoutDoc {
 
 describe("卡片目录与默认布局", () => {
   it("默认布局的每一项都在目录内，尺寸合法且互不重叠", () => {
-    expect(DEFAULT_DASHBOARD_LAYOUT.items).toHaveLength(6);
+    expect(DEFAULT_DASHBOARD_LAYOUT.items).toHaveLength(7);
     assertNoOverlap(DEFAULT_DASHBOARD_LAYOUT.items);
 
     for (const item of DEFAULT_DASHBOARD_LAYOUT.items) {

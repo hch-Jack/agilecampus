@@ -31,6 +31,7 @@ import { WidgetFrame } from "./widget-frame";
 import { WidgetLibrary } from "./widget-library";
 import { useGridInteraction } from "./use-grid-interaction";
 import { WorkbenchBoard } from "./workbench-board";
+import { WorkbenchSchedule } from "./workbench-schedule";
 import { StatWidget } from "./widgets/stats";
 import {
   MessagesWidget,
@@ -345,6 +346,14 @@ export function DashboardGrid({
             chips={data.chips}
             projectFilter={data.projectFilter}
             locked={editing}
+          />
+        );
+      case "schedule":
+        return (
+          <WorkbenchSchedule
+            tasks={data.visibleTasks}
+            plans={data.plans}
+            today={data.today}
           />
         );
       case "activity_feed":

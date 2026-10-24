@@ -3,6 +3,7 @@
 import type { ActivityFeedRow } from "@/components/activity-feed";
 import type { WorkbenchTask } from "./workbench-board";
 import type { WorkbenchStats } from "@/lib/workbench-stats";
+import type { TaskPlanSegment } from "@/lib/task-plan";
 
 export type DashboardProject = {
   id: string;
@@ -73,6 +74,7 @@ export type DashboardAttachment = {
 /** 整页一次性装配的数据；加卡不需要再请求服务端 */
 export type DashboardData = {
   visibleTasks: WorkbenchTask[];
+  plans: Record<string, TaskPlanSegment[]>;
   doneCount: number;
   hideDone: boolean;
   projectFilter: string | null;
