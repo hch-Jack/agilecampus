@@ -142,10 +142,34 @@
   gap: 8px;
 }
 
+/* 快捷入口：铺满正文可用高度，行高均分 —— 卡片再矮也只是瓦片变扁，不会裁掉第 4 个 */
 .dw-links {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-height: 0;
   gap: 8px;
+}
+
+.dw-link {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.dw-link-title {
+  overflow: hidden;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dw-link-hint {
+  line-height: 1.25;
 }
 
 .dw-tile-value {
@@ -174,6 +198,30 @@
 
   .dw-item-title {
     font-size: 0.9375rem;
+  }
+}
+
+/* 快捷入口：高度放不下两行「标题 + 说明」时改成一行四个大字块。
+   配合 .dw-links 的 1fr 行高，4 个入口在任何卡片尺寸下都完整可见。 */
+@container widget (max-height: 168px) {
+  .dw-links {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .dw-link {
+    align-items: center;
+    padding: 4px 3px;
+    text-align: center;
+  }
+
+  .dw-link-title {
+    width: 100%;
+    font-size: 0.6875rem;
+  }
+
+  .dw-link-hint {
+    display: none;
   }
 }
 
@@ -356,10 +404,24 @@
   }
 }
 
+/* 快捷入口：卡片本身很窄（约 2-3 列）时，一行 4 个会把「AI 设置」截断，
+   改成 2×2；配合缩小的内边距，两行也放得下。 */
+@container widget (max-width: 300px) and (max-height: 168px) {
+  .dw-links {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3px;
+  }
+
+  .dw-link {
+    padding: 1px 4px;
+  }
+}
+
 /* —— 日程表：跟着卡片宽高实时换排版 ——
    卡片本身是固定高度且 overflow:hidden 的，内容一多就会被裁掉。
-   这里把日程表拆成「甘特可滚动 + 月历可滚动」：甘特最多占卡片高度的一半，
-   任务再多也只在甘特内部滚；月历格子的最小高度按卡片宽度收放，整块内容仍完整可达。
+   这里把日程表拆成「甘特 / 月历」两个可滚动分区，中间一条拖拽条改占比；
+   任务池在宽卡里是月历左侧竖栏，窄卡里收成横向 chip 带。
+   分区比例与模块开关都由用户在卡片内直接调整，存在卡片 config 里。
    所有阈值都走容器查询，拖拽缩放时即时生效，不依赖窗口断点。 */
 
 .dw-schedule {
@@ -368,31 +430,74 @@
   height: 100%;
   min-height: 0;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  /* 卡片内容比格子高时给一条可见的细滚动条，提示还能往下翻 */
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--color-ink-faint) 45%, transparent) transparent;
+  gap: 6px;
+  padding: 8px 10px;
+  overflow: hidden;
 }
 
-.dw-schedule::-webkit-scrollbar {
-  width: 7px;
+/* 模块开关：一行小胶囊，始终可见 */
+.dw-schedule-tools {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
 }
 
-.dw-schedule::-webkit-scrollbar-thumb {
+.dw-schedule-toggle {
+  border: 1px solid var(--color-line);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--color-ink-faint) 45%, transparent);
+  background: transparent;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--color-ink-faint);
+  transition:
+    color 120ms,
+    background-color 120ms,
+    border-color 120ms;
 }
 
-/* 甘特区：最多占一半高度，标题行吸顶；任务多时内部滚动，不把月历顶出卡片 */
+.dw-schedule-toggle:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+  color: var(--color-primary);
+}
+
+.dw-schedule-toggle[aria-pressed="true"] {
+  border-color: transparent;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.dw-schedule-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.dw-schedule-toggle:focus-visible {
+  outline: 2px solid var(--color-primary-ring);
+  outline-offset: 1px;
+}
+
+.dw-schedule-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+}
+
+/* 甘特区：高度由拖拽比例决定，任务多时内部滚动，标题行吸顶 */
 .dw-schedule-gantt {
   --dw-gantt-label: clamp(84px, 24cqi, 160px);
   flex: 0 0 auto;
-  max-height: 40%;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+.dw-schedule-gantt.dw-schedule-empty {
+  padding: 10px 12px;
+  overflow: visible;
 }
 
 .dw-gantt-scale {
@@ -404,7 +509,7 @@
 }
 
 .dw-schedule-empty {
-  padding: 2px 2px 0;
+  padding: 6px 2px 0;
 }
 
 .dw-unscheduled {
@@ -413,7 +518,77 @@
   overflow-y: auto;
 }
 
-/* 月历整体：高度自由，宽度撑满；外层滚动负责“内容完整可达” */
+/* 细滚动条：甘特、月历区、任务池、未排期列表共用 */
+.dw-cal-scroll,
+.dw-schedule-gantt,
+.dw-cal-pool-list,
+.dw-unscheduled {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-ink-faint) 45%, transparent) transparent;
+}
+
+.dw-cal-scroll::-webkit-scrollbar,
+.dw-schedule-gantt::-webkit-scrollbar,
+.dw-cal-pool-list::-webkit-scrollbar,
+.dw-unscheduled::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+.dw-cal-scroll::-webkit-scrollbar-thumb,
+.dw-schedule-gantt::-webkit-scrollbar-thumb,
+.dw-cal-pool-list::-webkit-scrollbar-thumb,
+.dw-unscheduled::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-ink-faint) 45%, transparent);
+}
+
+/* 分区拖拽条：细线只是视觉，可点区域有 9px，键盘也能用方向键调 */
+.dw-schedule-split {
+  position: relative;
+  flex: 0 0 9px;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.dw-schedule-split::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 3px;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-ink-faint) 35%, transparent);
+  transition: background-color 120ms;
+}
+
+.dw-schedule-split:hover::after,
+.dw-schedule-split:focus-visible::after {
+  background: var(--color-primary);
+}
+
+.dw-schedule-split:focus-visible {
+  outline: none;
+}
+
+.dw-cal-split {
+  display: none;
+}
+
+/* 月历区：占满甘特以外的空间，内容比区域高时自己滚 */
+.dw-cal-scroll {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 月历整体：宽度撑满，高度按内容 */
 .dw-cal {
   display: flex;
   flex: 0 0 auto;
@@ -425,6 +600,10 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.dw-cal-grid {
+  min-width: 0;
 }
 
 /* 窄卡：任务池收成一行——标题在左、chip 带在右，省下的高度全部留给月历 */
@@ -444,10 +623,9 @@
   display: flex;
   flex: 1 1 200px;
   min-width: 0;
-  gap: 4px;
+  gap: 6px;
   overflow-x: auto;
   padding-bottom: 2px;
-  scrollbar-width: thin;
 }
 
 .dw-cal-controls {
@@ -460,31 +638,39 @@
   min-width: 0;
 }
 
+/* 任务池 chip 的点击目标：原来 py-1（约 24px）太难点，抬到 30px 高 */
 .dw-cal-pool-item {
   width: auto;
-  max-width: 180px;
+  max-width: 220px;
+  min-height: 30px;
+  padding: 5px 9px;
 }
 
 .dw-cal-pool-meta {
   display: none;
 }
 
-/* 月历格子的最小高度跟着卡片宽度收放：窄卡更紧凑，宽卡保持可读 */
+/* 月历格子的最小高度跟着卡片宽度收放：窄卡更紧凑，宽卡保持可读。
+   取 6.5cqi（内容宽度约 600px 时约 39px）而不是更陡的斜率：日程表默认 9 行高，
+   格子再高就整月都要靠内部滚动才看得完。 */
 .dw-cal-day {
-  min-height: clamp(42px, 8cqi, 76px);
+  min-height: clamp(36px, 6.5cqi, 64px);
 }
 
-/* 宽度足够时，任务池回到左侧竖栏（12 列满宽才触发） */
-@container (min-width: 820px) {
+/* 宽度够时任务池回到左侧竖栏。
+   原来要 820px（近 11 列）才展开，8 列默认卡的宽度只能横着挤；
+   现在 600px 就展开 —— 默认尺寸即可用上竖栏，缩到 6 列才退回 chip 带。 */
+@container (min-width: 600px) {
   .dw-cal-body {
     flex-direction: row;
     align-items: stretch;
+    gap: 0;
   }
 
   .dw-cal-pool {
     display: block;
-    flex: 0 0 220px;
-    max-height: 340px;
+    flex: 0 0 var(--dw-pool-basis, 220px);
+    min-width: 0;
     padding: 8px;
     overflow-y: auto;
   }
@@ -493,6 +679,7 @@
     display: flex;
     flex: none;
     flex-direction: column;
+    gap: 4px;
     overflow-x: visible;
     padding-bottom: 0;
   }
@@ -504,6 +691,37 @@
 
   .dw-cal-pool-meta {
     display: inline;
+  }
+
+  /* 竖拖拽条：改任务池与月历的宽度占比 */
+  .dw-cal-split {
+    position: relative;
+    display: block;
+    flex: 0 0 9px;
+    cursor: col-resize;
+    touch-action: none;
+  }
+
+  .dw-cal-split::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 3px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-ink-faint) 35%, transparent);
+    transition: background-color 120ms;
+  }
+
+  .dw-cal-split:hover::after,
+  .dw-cal-split:focus-visible::after {
+    background: var(--color-primary);
+  }
+
+  .dw-cal-split:focus-visible {
+    outline: none;
   }
 }
 

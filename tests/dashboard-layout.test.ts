@@ -6,6 +6,8 @@ import {
   DEFAULT_DASHBOARD_LAYOUT,
   GRID_COLUMNS,
   NOTE_MAX_LENGTH,
+  SCHEDULE_GANTT_RATIO_MAX,
+  SCHEDULE_POOL_RATIO_MIN,
   WIDGET_IDS,
   addWidget,
   moveWidget,
@@ -401,10 +403,42 @@ describe("配置与顺序", () => {
     expect(find(cleared, "clock")!.config).toEqual({ lunar: false, zones: [] });
   });
 
+  it("日程表：模块开关与分区比例可保存，越界比例被夹取", () => {
+    const hidden = updateWidgetConfig(DEFAULT_DASHBOARD_LAYOUT, "schedule", {
+      showGantt: false,
+      showPool: true,
+      showCalendar: false,
+      ganttRatio: 0.62,
+      poolRatio: 0.33,
+    });
+    expect(find(hidden, "schedule")!.config).toEqual({
+      showGantt: false,
+      showPool: true,
+      showCalendar: false,
+      ganttRatio: 0.62,
+      poolRatio: 0.33,
+    });
+
+    const clamped = updateWidgetConfig(DEFAULT_DASHBOARD_LAYOUT, "schedule", {
+      ganttRatio: 5,
+      poolRatio: 0,
+    });
+    expect(find(clamped, "schedule")!.config).toEqual({
+      ganttRatio: SCHEDULE_GANTT_RATIO_MAX,
+      poolRatio: SCHEDULE_POOL_RATIO_MIN,
+    });
+
+    // 别的卡不认这些字段
+    const wrongCard = updateWidgetConfig(DEFAULT_DASHBOARD_LAYOUT, "task_board", {
+      showGantt: false,
+    });
+    expect(find(wrongCard, "task_board")!.config).toBeUndefined();
+  });
+
   it("给不支持配置的卡片写 config 会被丢弃", () => {
     const updated = updateWidgetConfig(DEFAULT_DASHBOARD_LAYOUT, "clock", { text: "x" });
     expect(find(updated, "clock")!.config).toBeUndefined();
-    expect(find(updated, "clock")).toMatchObject({ x: 0, y: 20, w: 4, h: 3 });
+    expect(find(updated, "clock")).toMatchObject({ x: 8, y: 11, w: 4, h: 3 });
   });
 
   it("widgetOrder 与 sortByCatalog", () => {

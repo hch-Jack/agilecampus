@@ -287,7 +287,7 @@ export function DashboardGrid({
   function handleReset() {
     if (
       !window.confirm(
-        "恢复默认布局？已添加的卡片、便签内容与倒计时设置都会清空。",
+        "恢复默认布局？已添加的卡片与各卡片的自定义设置（便签、倒计时、时钟、日程表分区）都会清空。",
       )
     ) {
       return;
@@ -354,6 +354,8 @@ export function DashboardGrid({
             tasks={data.visibleTasks}
             plans={data.plans}
             today={data.today}
+            config={item.config}
+            onConfigChange={handleConfigChange(item.id)}
           />
         );
       case "activity_feed":
