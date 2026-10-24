@@ -16,6 +16,15 @@ export function parseDay(s: string | null | undefined): number | null {
   return Number.isNaN(t) ? null : t;
 }
 
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+// parseDay 的反函数：UTC 零点毫秒 → "YYYY-MM-DD"。坐标系锚在 UTC（见 parseDay 注释），
+// 故这里也取 UTC 年月日，保证 date 列往返自洽，不受宿主时区影响。
+export function formatDay(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+}
+
 export function formatMonthDay(ms: number): string {
   const d = new Date(ms);
   return `${d.getUTCMonth() + 1}/${String(d.getUTCDate()).padStart(2, "0")}`;

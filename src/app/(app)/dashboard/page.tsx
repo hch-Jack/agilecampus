@@ -5,6 +5,7 @@ import { listMySubtaskProgress, listMyTasks } from "@/lib/task";
 import { getFeedUnreadCount, listMyTaskActivities, WORKBENCH_SCOPE } from "@/lib/activity";
 import { addDays, todayIn, weekdayOfDate } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
+import { listMyTaskPlans } from "@/lib/task-plan";
 import { ActivityFeed } from "@/components/activity-feed";
 import {
   dashboardHref,
@@ -12,6 +13,7 @@ import {
   projectChips,
 } from "@/lib/workbench-filters";
 import { WorkbenchBoard, type WorkbenchTask } from "./workbench-board";
+import { WorkbenchSchedule } from "./workbench-schedule";
 
 // 四个统计瓦片均基于全量列表（与「隐藏已完成」/项目筛选无关），且都排除已完成任务
 type Tile = { label: string; count: number; tone: string };
@@ -46,6 +48,11 @@ export default async function DashboardPage({
     listMyTaskActivities(session.user.id), // 全量口径，不受任何筛选影响
     getFeedUnreadCount(session.user.id, WORKBENCH_SCOPE),
   ]);
+  // 个人计划段：本人对这些任务自记的「打算什么时候做」（可多段区间或单天），供日程表日历编辑/展示
+  const plans = await listMyTaskPlans(
+    session.user.id,
+    myTasks.map((t) => t.id),
+  );
 
   // 「今天 / 本周截止」一律按**用户自己的时区**在服务端算成 YYYY-MM-DD，
   // 再由服务端传给看板 —— 客户端不取时钟，免得同一个人在两处看到不同的「今天」。
@@ -144,7 +151,12 @@ export default async function DashboardPage({
           暂无分配给你的任务——去项目看板看看。
         </div>
       ) : (
-        <WorkbenchBoard tasks={visible} today={today} doneCount={doneCount} hideDone={hideDone} />
+        <>
+          <WorkbenchBoard tasks={visible} today={today} doneCount={doneCount} hideDone={hideDone} />
+          {/* 日程表：上方甘特（任务官方起止，只读）+ 下方日历（标记起止、编辑个人计划日），
+              同用 visible 任务集，随项目筛选/隐藏已完成一致联动 */}
+          <WorkbenchSchedule tasks={visible} plans={plans} today={today} />
+        </>
       )}
 
       <ActivityFeed
