@@ -76,6 +76,15 @@ function feedParts(a: {
       return titled
         ? { before: "删除了「", after: `」的附件「${a.newValue ?? ""}」` }
         : { before: `删除了附件「${a.newValue ?? ""}`, after: "」" };
+    case "approval_requested":
+      // 学生把任务提交完成审批（任务此时仍为进行中，没有状态变更动态可看）
+      return titled
+        ? { before: "提交了「", after: "」的完成审批" }
+        : { before: "提交了完成审批", after: "" };
+    case "approval_rejected":
+      return titled
+        ? { before: "驳回了「", after: "」的完成审批" }
+        : { before: "驳回了完成审批", after: "" };
     default:
       return titled ? { before: "", after: `：${a.type}` } : { before: "", after: a.type };
   }

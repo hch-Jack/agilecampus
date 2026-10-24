@@ -4,11 +4,15 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { createResourceUsage, endResourceUsage } from "@/lib/resource";
-import { AppError } from "@/lib/errors";
+import { requestResourceUsage } from "@/lib/approval";
+import { AppError, ForbiddenError } from "@/lib/errors";
+import { getTeamMembership } from "@/lib/team";
+import { isApproverRole } from "@/lib/approval";
 import { zonedWallClockToInstant } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
 
-export type FormState = { error: string } | null;
+// message：成功但未直接生效（学生登记转审批）时给表单的回执文案
+export type FormState = { error?: string; message?: string } | null;
 
 const createSchema = z.object({
   teamId: z.uuid(),
@@ -40,13 +44,25 @@ export async function createResourceAction(
     return { error: "时间无效" };
   }
 
+  const input = {
+    resourceName: parsed.data.resourceName,
+    purpose: parsed.data.purpose,
+    startTime: start,
+    endTime: end,
+  };
+
   try {
-    await createResourceUsage(session.user.id, parsed.data.teamId, {
-      resourceName: parsed.data.resourceName,
-      purpose: parsed.data.purpose,
-      startTime: start,
-      endTime: end,
-    });
+    const membership = await getTeamMembership(session.user.id, parsed.data.teamId);
+    if (!membership) throw new ForbiddenError();
+    if (isApproverRole(membership.role)) {
+      // 老师/管理员即审批者本人：登记直接生效
+      await createResourceUsage(session.user.id, parsed.data.teamId, input);
+    } else {
+      // 学生登记转审批：通过时才建占用行，届时在工作台「待办审批」卡片处理
+      await requestResourceUsage(session.user.id, parsed.data.teamId, input);
+      revalidatePath(`/teams/${parsed.data.teamId}/resources`);
+      return { message: "已提交审批，待老师或管理员通过后生效" };
+    }
   } catch (e) {
     if (e instanceof AppError) return { error: e.message };
     throw e;

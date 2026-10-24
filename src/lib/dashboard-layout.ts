@@ -37,6 +37,7 @@ export const WIDGET_IDS = [
   "milestones",
   "resource_usage",
   "recent_attachments",
+  "approvals",
   "focus_timer",
   "note",
   "clock",
@@ -207,6 +208,13 @@ export const DASHBOARD_WIDGETS: Record<DashboardWidgetId, DashboardWidgetMeta> =
     defaultSize: { w: 4, h: 4 },
     minSize: { w: 3, h: 3 },
   },
+  approvals: {
+    id: "approvals",
+    title: "待办审批",
+    description: "老师/管理员处理学生的任务完成与资源占用申请",
+    defaultSize: { w: 4, h: 4 },
+    minSize: { w: 3, h: 3 },
+  },
   focus_timer: {
     id: "focus_timer",
     title: "专注计时",
@@ -251,6 +259,22 @@ const DEFAULT_ITEMS: DashboardLayoutItem[] = [
 ];
 
 export const DEFAULT_DASHBOARD_LAYOUT: DashboardLayoutDoc = { v: 1, items: DEFAULT_ITEMS };
+
+/**
+ * 老师/管理员的默认布局：在通用默认之上追加「待办审批」卡（放在动态流下方）。
+ * 只有从未自定义过布局的审批人首次进入时用一次，自定义后完全以库中为准。
+ */
+export function defaultDashboardLayoutFor(isApprover: boolean): DashboardLayoutDoc {
+  if (!isApprover) return DEFAULT_DASHBOARD_LAYOUT;
+  return {
+    v: 1,
+    items: [
+      ...DEFAULT_ITEMS,
+      // 动态流(y=8,h=4)之后一行，与「最近附件」同宽
+      { id: "approvals", type: "approvals", x: 0, y: 12, w: 4, h: 4 },
+    ],
+  };
+}
 
 function defaultDoc(): DashboardLayoutDoc {
   return { v: 1, items: DEFAULT_ITEMS.map((item) => ({ ...item })) };

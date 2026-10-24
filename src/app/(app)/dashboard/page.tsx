@@ -10,6 +10,11 @@ import { getDashboardLayout } from "@/lib/dashboard-layout-store";
 import { listMyProjects, listMyUpcomingMilestones } from "@/lib/project";
 import { listMyTeams } from "@/lib/team";
 import { listMyTeamResourceUsages } from "@/lib/resource";
+import {
+  isApproverAnywhere,
+  listPendingApprovalsForApprover,
+  listPendingTaskDoneTaskIds,
+} from "@/lib/approval";
 import { listMyRecentAttachments } from "@/lib/attachment";
 import { countUnread } from "@/lib/dm";
 import { countGroupUnread, countPendingGroupInvites } from "@/lib/group-chat";
@@ -31,11 +36,11 @@ export default async function DashboardPage({
 
   // 所有卡片的数据无条件加载：加卡时不必再请求服务端，也就没有数据空窗。
   // 代价是每次打开工作台多几条小查询；若将来要优化，再按布局裁剪。
+  // 布局不在这里读：isApprover 只影响「从未自定义」时的默认布局，得先算出它。
   const [
     myTasks,
     feed,
     feedUnread,
-    layout,
     projects,
     teams,
     dmUnread,
@@ -45,11 +50,12 @@ export default async function DashboardPage({
     milestoneRows,
     resourceUsages,
     attachments,
+    isApprover,
+    pendingApprovals,
   ] = await Promise.all([
     listMyTasks(userId),
     listMyTaskActivities(userId), // 全量口径，不受任何筛选影响
     getFeedUnreadCount(userId, WORKBENCH_SCOPE),
-    getDashboardLayout(userId),
     listMyProjects(userId),
     listMyTeams(userId),
     countUnread(userId),
@@ -59,7 +65,10 @@ export default async function DashboardPage({
     listMyUpcomingMilestones(userId),
     listMyTeamResourceUsages(userId),
     listMyRecentAttachments(userId),
+    isApproverAnywhere(userId),
+    listPendingApprovalsForApprover(userId),
   ]);
+  const layout = await getDashboardLayout(userId, { isApprover });
 
   // 「今天 / 本周截止」一律按**用户自己的时区**在服务端算成 YYYY-MM-DD，
   // 再由服务端传给看板 —— 客户端不取时钟，免得同一个人在两处看到不同的「今天」。
@@ -74,9 +83,12 @@ export default async function DashboardPage({
       r.parentTaskId ? [[r.parentTaskId, r] as const] : [],
     ),
   );
+  // 学生提交的完成申请未决时，看板卡片打「待审批」角标（任务仍停在「进行中」列）
+  const pendingApprovalTasks = await listPendingTaskDoneTaskIds(myTasks.map((t) => t.id));
   const enriched: WorkbenchTask[] = myTasks.map((t) => {
     const p = byParent.get(t.id);
-    return p ? { ...t, subTotal: p.total, subDone: p.done } : t;
+    const extra = pendingApprovalTasks.has(t.id) ? { pendingApproval: true } : {};
+    return p ? { ...t, subTotal: p.total, subDone: p.done, ...extra } : { ...t, ...extra };
   });
 
   // 筛选管线：统计/动态流用全量；看板先过项目再过 hideDone
@@ -142,6 +154,7 @@ export default async function DashboardPage({
     })),
     resourceUsages,
     attachments,
+    approvals: pendingApprovals,
   };
 
   return (

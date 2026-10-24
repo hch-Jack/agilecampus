@@ -1,6 +1,16 @@
 // 可预期业务错误：message 可直接展示给用户
 export class AppError extends Error {}
 
+/**
+ * 学生把任务 doing→done 被审批流拦截：完成申请已落库，本次状态变更未发生。
+ * 非事务路径以它中断（看板回弹卡片并展示 message）；事务路径由调用方跳过 status。
+ */
+export class ApprovalRequestedError extends AppError {
+  constructor(message = "完成申请已提交，待老师或管理员通过后任务才会标记为已完成") {
+    super(message);
+  }
+}
+
 export class ForbiddenError extends AppError {
   constructor(message = "没有权限执行此操作") {
     super(message);

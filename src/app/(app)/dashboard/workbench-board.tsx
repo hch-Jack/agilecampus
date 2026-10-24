@@ -37,6 +37,8 @@ export type WorkbenchTask = {
   role: "admin" | "teacher" | "student";
   subTotal?: number;
   subDone?: number;
+  /** 学生的完成申请未决：任务停在「进行中」列，卡片打角标 */
+  pendingApproval?: boolean;
 };
 
 // 与 TASK_WRITE_ROLES（lib/task.ts）同集：admin/student 可写，teacher 只读。
@@ -82,6 +84,11 @@ function WorkbenchCardBody({
       </Link>
       <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
         <span className="ac-badge bg-primary-soft text-primary">{task.projectName}</span>
+        {task.pendingApproval && (
+          <span className="ac-badge bg-medium-soft text-medium" title="等待老师或管理员审批">
+            完成待审批
+          </span>
+        )}
         {!canWrite && <span className="ac-badge bg-sunken text-ink-faint">只读</span>}
         <span className={`ac-badge ${PRIORITY_BADGE[task.priority] ?? "bg-low-soft text-low"}`}>
           {task.priority}

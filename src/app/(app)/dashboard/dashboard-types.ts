@@ -70,6 +70,23 @@ export type DashboardAttachment = {
   projectName: string;
 };
 
+/** 我的团队里待我审批的申请（老师/管理员视角；学生恒为空数组） */
+export type DashboardApproval = {
+  id: string;
+  type: "task_done" | "resource_usage";
+  teamId: string;
+  teamName: string;
+  requesterName: string;
+  taskId: string | null;
+  taskTitle: string | null;
+  projectId: string | null;
+  resourceName: string | null;
+  purpose: string | null;
+  startTime: Date | null;
+  endTime: Date | null;
+  createdAt: Date;
+};
+
 /** 整页一次性装配的数据；加卡不需要再请求服务端 */
 export type DashboardData = {
   visibleTasks: WorkbenchTask[];
@@ -91,4 +108,5 @@ export type DashboardData = {
   milestones: DashboardMilestone[];
   resourceUsages: DashboardResourceUsage[];
   attachments: DashboardAttachment[];
+  approvals: DashboardApproval[];
 };
