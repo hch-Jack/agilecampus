@@ -455,8 +455,11 @@ body.proj-cosmic .dashboard-shell {
   --dw-overdue-line: rgba(255, 169, 94, 0.55);
 }
 
+/* 橙色底必须跟着卡片自身的圆角走。`inherit` 取的是父级
+   .dashboard-widget-content 的圆角（0），方角内描边会被外层 overflow 裁成
+   一段直角，四角露出双层边；直接用卡片圆角 token 才能和卡片边框贴合。 */
 .dw-stat.is-alert {
-  border-radius: inherit;
+  border-radius: var(--radius-card);
   background-color: var(--dw-overdue-soft);
   box-shadow: inset 0 0 0 1px var(--dw-overdue-line);
 }
