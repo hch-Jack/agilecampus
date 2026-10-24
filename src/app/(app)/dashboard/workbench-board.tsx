@@ -78,7 +78,10 @@ function WorkbenchCardBody({
       <Link
         href={`/projects/${task.projectId}/tasks/${task.id}`}
         onClick={onTitleClick}
-        className="font-medium text-ink hover:text-primary"
+        // card-link 把可点区域铺满整张卡；可拖拽时保留抓手光标
+        className={`card-link font-medium text-ink hover:text-primary ${
+          canWrite ? "cursor-grab" : "cursor-pointer"
+        }`}
       >
         {task.title}
       </Link>
@@ -163,7 +166,7 @@ function WorkbenchCard({
         e.currentTarget.style.setProperty("--rx", "0deg");
         e.currentTarget.style.setProperty("--ry", "0deg");
       }}
-      className={`ac-card workbench-card proj-card p-3 text-sm transition ${
+      className={`ac-card workbench-card proj-card relative p-3 text-sm transition ${
         overdue ? "is-overdue" : ""
       } ${isDragging ? "dragging" : ""}`}
     >
