@@ -12,7 +12,16 @@ function nowInZone(timeZone: string): string {
   return formatInputValue(timeZone, new Date());
 }
 
-export function ResourceForm({ teamId, timeZone }: { teamId: string; timeZone: string }) {
+export function ResourceForm({
+  teamId,
+  timeZone,
+  needsApproval,
+}: {
+  teamId: string;
+  timeZone: string;
+  // 服务端按成员角色算好：学生登记要走审批，老师/管理员登记即生效
+  needsApproval: boolean;
+}) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(
     createResourceAction,
     null,
@@ -25,7 +34,9 @@ export function ResourceForm({ teamId, timeZone }: { teamId: string; timeZone: s
       <input type="hidden" name="teamId" value={teamId} />
       <div className="flex items-center justify-between">
         <h2 className="font-display text-base font-semibold text-ink">登记资源占用</h2>
-        <span className="text-xs text-ink-faint">纯登记 · 无需审批</span>
+        <span className="text-xs text-ink-faint">
+          {needsApproval ? "学生登记 · 待老师/管理员审批" : "登记后立即生效"}
+        </span>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -66,9 +77,10 @@ export function ResourceForm({ teamId, timeZone }: { teamId: string; timeZone: s
       </div>
 
       {state?.error && <p className="text-sm text-high">{state.error}</p>}
+      {state?.message && <p className="text-sm text-done">{state.message}</p>}
 
       <button disabled={pending} className="ac-btn">
-        {pending ? "登记中…" : "登记占用"}
+        {pending ? "提交中…" : needsApproval ? "申请占用" : "登记占用"}
       </button>
     </form>
   );

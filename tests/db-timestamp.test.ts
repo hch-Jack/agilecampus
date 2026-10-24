@@ -126,9 +126,10 @@ describe("时间列的物理 schema 没有变（db:push 不该产生 ALTER）", 
     // 数目是对不上就说明有人绕开了 dbTimestamp 自己搓了一个时间列
     // （私信/动态流/群聊那几张表后来加过一轮，个人上下文表又加了一轮，留言板再加一轮，
     // 新手教程打点又加一轮，助手多会话又加了 conversations.last_message_at，
-    // 动态单条隐藏又加了 activity_hides.created_at ——
+    // 动态单条隐藏又加了 activity_hides.created_at，
+    // 审批表又加了 approval_requests 的四个（资源快照起止 + 决定时刻 + 行创建）——
     // 加表/加时间列就得同步这个数）
-    expect(columns).toHaveLength(38);
+    expect(columns).toHaveLength(42);
     for (const c of columns) expect(c.sqlType).toBe("timestamp");
 
     // createdAt / updatedAt 由 dbTimestampNow 声明，默认值必须在；
@@ -156,5 +157,10 @@ describe("时间列的物理 schema 没有变（db:push 不该产生 ALTER）", 
     // 群聊：成员表的未读基线/入群时刻都由库写（有默认值，入群即起算）
     expect(getTableColumns(schema.dmGroupMembers).lastReadAt.hasDefault).toBe(true);
     expect(getTableColumns(schema.dmGroupMembers).joinedAt.hasDefault).toBe(true);
+    // 审批：资源快照起止与决定时刻由应用写（可空，不能有默认值），行创建由库写
+    expect(getTableColumns(schema.approvalRequests).startTime.hasDefault).toBe(false);
+    expect(getTableColumns(schema.approvalRequests).endTime.hasDefault).toBe(false);
+    expect(getTableColumns(schema.approvalRequests).decidedAt.hasDefault).toBe(false);
+    expect(getTableColumns(schema.approvalRequests).createdAt.hasDefault).toBe(true);
   });
 });
