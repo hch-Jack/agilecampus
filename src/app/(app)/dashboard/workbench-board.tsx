@@ -307,6 +307,8 @@ export function WorkbenchBoard({
           <h2 className="font-display text-sm font-semibold text-ink">我的任务看板</h2>
           <Link
             href={dashboardHref({ hideDone: !hideDone, project: projectFilter })}
+            // 筛选只是换数据，不该把已经翻到下面的用户弹回页首
+            scroll={false}
             aria-pressed={hideDone}
             className={`ac-badge ${
               hideDone
@@ -322,6 +324,7 @@ export function WorkbenchBoard({
           <nav className="mt-2 flex shrink-0 flex-wrap items-center gap-1.5" aria-label="按项目筛选">
             <Link
               href={dashboardHref({ hideDone, project: null })}
+              scroll={false}
               aria-pressed={!projectFilter}
               className={`ac-badge ${
                 !projectFilter
@@ -335,6 +338,7 @@ export function WorkbenchBoard({
               <Link
                 key={c.id}
                 href={dashboardHref({ hideDone, project: c.id })}
+                scroll={false}
                 aria-pressed={projectFilter === c.id}
                 className={`ac-badge ${
                   projectFilter === c.id
