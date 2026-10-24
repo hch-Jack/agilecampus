@@ -58,6 +58,8 @@ export type EdgeGeometry = Dependency & {
   x2: number;
   y2: number;
   path: string;
+  /** 时间倒挂边：从后置横条右缘进入，箭头朝左（marker 据此选固定朝向） */
+  backward: boolean;
 };
 
 /**
@@ -237,29 +239,128 @@ export function dependencyNeighbors(
   return ids;
 }
 
-function edgePath(
-  x1: number,
-  y1: number,
-  x2: number,
-  y2: number,
-  chartHeight: number,
-  backwardLane: number,
+// —— 依赖线：正交肘形路由（横 → 竖 → 横，转角收圆）——
+// 竖段在各行的横条区间里做避让搜索，不穿过中间横条；
+// 前向从后置左缘进入（箭头向右），后向（时间倒挂）从后置右缘进入（箭头向左），
+// 竖距就是两行之间的最短距离，不绕目标行、不套圈；
+// 线停在箭头底边，最后 ARROW_LEN 由三角形补完、尖端贴横条边缘；
+// 箭头朝向按前向/后向在 marker 上写死（orient 0 / 180），不依赖路径末端切线。
+const ELBOW_RADIUS = 6; // 转角圆角半径（按相邻段长收缩）
+const DEPART_STUB = 12; // 离开前置横条右缘的水平短截
+const LANE_GAP = 6; // 避让搜索的竖向车道步进
+const FAN_SPREAD = 6; // 同侧多条线沿横条高度的最大锚点偏移（条高 20，半高 10）
+const ARROW_LEN = 8; // 箭头三角形长度（与 SVG marker 尺寸一致）
+const MIN_TAIL = 14; // 末段最短整直线 = 圆角 6 + 箭头底边前留足 8
+
+/** 坐标统一保留两位小数（整数不带小数点），保证 SSR 与客户端字符串一致 */
+const fmt = (value: number) => String(Math.round(value * 100) / 100);
+
+/** 把一串正交拐点连成带圆角的折线；相邻重复点剔除，段长不足时退化为尖角 */
+function roundedElbow(
+  points: ReadonlyArray<readonly [number, number]>,
 ): string {
-  const gap = 12;
-
-  // 后置任务在时间上更晚：前置横条右缘 → 后置横条左缘的平滑曲线
-  if (x2 >= x1 + gap) {
-    const dx = Math.max(18, (x2 - x1) * 0.35);
-    return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+  const pts = points.filter(
+    (p, i) => i === 0 || p[0] !== points[i - 1][0] || p[1] !== points[i - 1][1],
+  );
+  if (pts.length < 2) return "";
+  let d = `M ${fmt(pts[0][0])} ${fmt(pts[0][1])}`;
+  let [cursorX, cursorY] = pts[0];
+  for (let i = 1; i < pts.length - 1; i += 1) {
+    const [ax, ay] = pts[i - 1];
+    const [px, py] = pts[i];
+    const [bx, by] = pts[i + 1];
+    const inLen = Math.hypot(px - ax, py - ay);
+    const outLen = Math.hypot(bx - px, by - py);
+    const r = Math.min(ELBOW_RADIUS, inLen, outLen);
+    if (r < 1) {
+      d += ` L ${fmt(px)} ${fmt(py)}`;
+      [cursorX, cursorY] = [px, py];
+      continue;
+    }
+    // 圆角吞掉整段入边时（inLen === r）落点与游标重合，跳过零长度 L
+    const inX = px - ((px - ax) / inLen) * r;
+    const inY = py - ((py - ay) / inLen) * r;
+    if (inX !== cursorX || inY !== cursorY) {
+      d += ` L ${fmt(inX)} ${fmt(inY)}`;
+    }
+    d += ` Q ${fmt(px)} ${fmt(py)} ${fmt(px + ((bx - px) / outLen) * r)} ${fmt(
+      py + ((by - py) / outLen) * r,
+    )}`;
+    cursorX = px + ((bx - px) / outLen) * r;
+    cursorY = py + ((by - py) / outLen) * r;
   }
+  const [lastX, lastY] = pts[pts.length - 1];
+  if (lastX !== cursorX || lastY !== cursorY) {
+    d += ` L ${fmt(lastX)} ${fmt(lastY)}`;
+  }
+  return d;
+}
 
-  // 后置任务反而更早（允许的历史数据/长环）：把曲线抬到行间，避免穿过横条
-  const dir = y1 <= y2 ? -1 : 1;
-  const lift = 14 + (backwardLane % 4) * 6;
-  const clampY = (y: number) => Math.max(4, Math.min(chartHeight - 4, y));
-  const cy1 = clampY(y1 + dir * lift);
-  const cy2 = clampY(y2 + dir * lift);
-  return `M ${x1} ${y1} C ${x1 + 18} ${cy1}, ${x2 - 18} ${cy2}, ${x2} ${y2}`;
+type EdgeRoute = {
+  x1: number;
+  ay1: number;
+  /** 进入点 x：前向为后置横条左缘，后向为右缘 */
+  ex: number;
+  ay2: number;
+  /** 竖向车道的 x 坐标 */
+  vx: number;
+};
+
+function elbowPath(route: EdgeRoute): string {
+  // 前置右缘 → 竖向车道 → 进入后置；无竖段时退化为纯水平线（防御分支）
+  if (route.ay1 === route.ay2) {
+    return `M ${fmt(route.x1)} ${fmt(route.ay1)} L ${fmt(route.ex)} ${fmt(route.ay1)}`;
+  }
+  return roundedElbow([
+    [route.x1, route.ay1],
+    [route.vx, route.ay1],
+    [route.vx, route.ay2],
+    [route.ex, route.ay2],
+  ]);
+}
+
+type EdgeDraft = {
+  dep: Dependency;
+  inputIndex: number;
+  pi: number;
+  si: number;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  backward: boolean;
+  ay1: number;
+  ay2: number;
+  vx: number;
+  entryX: number;
+};
+
+/** 同一侧多条线沿横条高度扇开锚点（±FAN_SPREAD）；单条保持行中心 */
+function fanAnchors(
+  drafts: EdgeDraft[],
+  groupOf: (draft: EdgeDraft) => number,
+  otherRowOf: (draft: EdgeDraft) => number,
+  apply: (draft: EdgeDraft, dy: number) => void,
+): void {
+  const groups = new Map<number, EdgeDraft[]>();
+  for (const draft of drafts) {
+    const key = groupOf(draft);
+    const list = groups.get(key);
+    if (list) list.push(draft);
+    else groups.set(key, [draft]);
+  }
+  for (const list of groups.values()) {
+    if (list.length === 1) {
+      apply(list[0], 0);
+      continue;
+    }
+    list.sort(
+      (a, b) => otherRowOf(a) - otherRowOf(b) || a.inputIndex - b.inputIndex,
+    );
+    list.forEach((draft, k) => {
+      apply(draft, -FAN_SPREAD + (2 * FAN_SPREAD * k) / (list.length - 1));
+    });
+  }
 }
 
 /**
@@ -288,20 +389,18 @@ export function computeVisibleEdges(args: {
   if (chartWidth <= 0 || rows.length === 0 || span <= 0) return [];
 
   const rowIndex = new Map(rows.map((row, index) => [row.task.id, index]));
-  const chartHeight = rows.length * rowHeight;
   const pct = (ms: number) => ((ms - min) / span) * 100;
   const clamp = (value: number, lo: number, hi: number) =>
     Math.max(lo, Math.min(hi, value));
 
-  const edges: EdgeGeometry[] = [];
-  let backwardLane = 0;
-
-  for (const dep of dependencies) {
-    if (dep.predecessorId === dep.successorId) continue;
+  // Pass 0：收集可见候选边（端点几何与过滤规则同旧版）
+  const drafts: EdgeDraft[] = [];
+  dependencies.forEach((dep, inputIndex) => {
+    if (dep.predecessorId === dep.successorId) return;
 
     const pi = rowIndex.get(dep.predecessorId);
     const si = rowIndex.get(dep.successorId);
-    if (pi === undefined || si === undefined) continue;
+    if (pi === undefined || si === undefined) return;
 
     const predecessor = rows[pi];
     const successor = rows[si];
@@ -313,28 +412,119 @@ export function computeVisibleEdges(args: {
       barMinWidthPx,
     );
     const x1 = clamp(pLeft + pWidth, 2, chartWidth - 2);
-    const x2 = clamp((pct(successor.span.start) / 100) * chartWidth - 2, 2, chartWidth - 2);
+    // 终点取后置横条左缘：配合箭头 refX=8（尖端即路径终点），前向箭头正好贴在条上
+    const x2 = clamp(
+      (pct(successor.span.start) / 100) * chartWidth,
+      2,
+      chartWidth - 2,
+    );
 
     const y1 = pi * rowHeight + rowHeight / 2;
     const y2 = si * rowHeight + rowHeight / 2;
-    const backward = x2 < x1 + 12;
-
-    edges.push({
-      ...dep,
+    drafts.push({
+      dep,
+      inputIndex,
+      pi,
+      si,
       x1,
       y1,
       x2,
       y2,
-      path: edgePath(
-        x1,
-        y1,
-        x2,
-        y2,
-        chartHeight,
-        backward ? backwardLane++ : 0,
-      ),
+      backward: x2 < x1 + 12,
+      ay1: y1,
+      ay2: y2,
+      vx: x1 + DEPART_STUB,
+      entryX: x2,
     });
+  });
+
+  // Pass 1：锚点扇出——出边沿前置横条高度、入边沿后置横条高度错开
+  fanAnchors(
+    drafts,
+    (draft) => draft.pi,
+    (draft) => draft.si,
+    (draft, dy) => {
+      draft.ay1 += dy;
+    },
+  );
+  fanAnchors(
+    drafts,
+    (draft) => draft.si,
+    (draft) => draft.pi,
+    (draft, dy) => {
+      draft.ay2 += dy;
+    },
+  );
+
+  // 每行横条的像素区间，供竖段车道避让
+  const barSpans = rows.map((row) => {
+    const left = (pct(row.span.start) / 100) * chartWidth;
+    const width = Math.max(
+      ((pct(row.span.end) - pct(row.span.start)) / 100) * chartWidth,
+      barMinWidthPx,
+    );
+    return { left, right: left + width };
+  });
+  const laneFree = (vx: number, from: number, to: number) => {
+    const lo = Math.min(from, to);
+    const hi = Math.max(from, to);
+    for (let r = lo + 1; r < hi; r += 1) {
+      const bar = barSpans[r];
+      if (vx + 2 >= bar.left && vx - 2 <= bar.right) return false;
+    }
+    return true;
+  };
+
+  // 在 [from, to] 里找第一条不穿过中间横条的车道
+  const searchLane = (draft: EdgeDraft, from: number, to: number) => {
+    for (let candidate = from; candidate <= to; candidate += LANE_GAP) {
+      if (laneFree(candidate, draft.pi, draft.si)) return candidate;
+    }
+    return null;
+  };
+
+  // Pass 2：竖向车道 + 进入段——先搜不穿过中间横条的通道（优先保证末段
+  // MIN_TAIL 整直线，圆角 6 + 箭头底边 8），找不到再退而求其次、最后用默认位。
+  // 线停在箭头底边（距横条 ARROW_LEN），三角形向前补完、尖端贴横条边缘：
+  // 前向贴左缘尖朝右，后向（时间倒挂）贴右缘尖朝左。
+  // 不变式：前向车道恒在底边左侧（末段向右画），后向恒在右侧（向左画）——
+  // 箭头方向按前向/后向写死在 marker 上，几何一旦越侧箭头就会反向
+  for (const draft of drafts) {
+    const tipX = draft.backward
+      ? clamp(barSpans[draft.si].right, 2, chartWidth - 2)
+      : draft.x2;
+    const lineEnd = draft.backward
+      ? Math.min(tipX + ARROW_LEN, chartWidth - 2)
+      : Math.max(tipX - ARROW_LEN, 2);
+    const lo = draft.x1 + DEPART_STUB;
+    if (draft.backward) {
+      // 后置横条可能比前置伸得更靠右（lineEnd > lo），逐级收缩时也不许越过底边
+      const hi = chartWidth - 2;
+      draft.vx =
+        searchLane(draft, Math.max(lo, lineEnd + MIN_TAIL), hi) ??
+        searchLane(draft, lineEnd + 2, hi) ??
+        Math.max(lineEnd + 1, Math.min(lo, hi));
+    } else {
+      const hi = Math.max(lineEnd - MIN_TAIL, draft.x1 + 2);
+      draft.vx = searchLane(draft, lo, hi) ?? Math.min(lo, hi);
+    }
+    draft.entryX = lineEnd;
   }
 
-  return edges;
+  // Pass 3：拼装路径
+  return drafts.map((draft) => ({
+    ...draft.dep,
+    x1: draft.x1,
+    y1: draft.y1,
+    x2: draft.x2,
+    y2: draft.y2,
+    backward: draft.backward,
+    path: elbowPath({
+      x1: draft.x1,
+      ay1: draft.ay1,
+      ex: draft.entryX,
+      ay2: draft.ay2,
+      vx: draft.vx,
+    }),
+  }));
 }
