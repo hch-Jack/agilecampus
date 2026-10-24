@@ -58,6 +58,8 @@ export async function POST(req: Request) {
       drafts: result.drafts,
       // 「打开某页」的跳转意图：面板据此立即跳转，并在消息下留一个可点的入口
       navigations: result.navigations,
+      // 「打开某文件」的预览目标：面板据此弹预览弹窗，并留一个可重开的入口
+      files: result.files,
       ...(options ? { options } : {}),
       // 面板靠这些 id 维护会话列表、给消息挂删除按钮；老客户端忽略即可
       conversationId: result.conversationId,

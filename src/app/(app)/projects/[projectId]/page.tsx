@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { getProjectForUser, listProjectMilestones } from "@/lib/project";
 import { listTeamMembers } from "@/lib/team";
 import { listProjectTasks } from "@/lib/task";
+import { splitBoardTasks } from "@/lib/board-tasks";
 import { getFeedUnreadCount, listProjectActivities, projectFeedScope } from "@/lib/activity";
 import { listTeamLabels } from "@/lib/label";
 import { parseFilters, applyFilters } from "@/lib/board-filters";
@@ -56,6 +57,10 @@ export default async function ProjectPage({
   const now = new Date();
   const today = todayIn(tz, now);
   const visibleTasks = applyFilters(projectTasks, filters, today);
+  // 看板只摆顶层任务：子任务不单独成卡，改为父卡底部的进度条。
+  // 进度按项目全量子任务聚合，不受筛选影响（筛选的是父任务卡片）。
+  const { topLevel, progress } = splitBoardTasks(projectTasks);
+  const visibleTopLevel = visibleTasks.filter((t) => !t.parentTaskId);
 
   const canWrite = role === "admin" || role === "student";
   const isAdmin = role === "admin";
@@ -134,26 +139,31 @@ export default async function ProjectPage({
           members={members.map((m) => ({ id: m.id, name: m.name }))}
           milestones={projectMilestones.map((m) => ({ id: m.id, name: m.title }))}
           labels={teamLabels.map((l) => ({ id: l.id, name: l.name }))}
-          visible={visibleTasks.length}
-          total={projectTasks.length}
+          visible={visibleTopLevel.length}
+          total={topLevel.length}
         />
         <Board
           projectId={projectId}
           groupBy={filters.group}
-          tasks={visibleTasks.map((t) => ({
-            id: t.id,
-            title: t.title,
-            description: t.description,
-            completionNote: t.completionNote,
-            status: t.status,
-            priority: t.priority,
-            startDate: t.startDate,
-            dueDate: t.dueDate,
-            assigneeName: t.assigneeName,
-            assigneeId: t.assigneeId,
-            milestoneId: t.milestoneId,
-            labels: t.labels,
-          }))}
+          tasks={visibleTopLevel.map((t) => {
+            const p = progress.get(t.id);
+            return {
+              id: t.id,
+              title: t.title,
+              description: t.description,
+              completionNote: t.completionNote,
+              status: t.status,
+              priority: t.priority,
+              startDate: t.startDate,
+              dueDate: t.dueDate,
+              assigneeName: t.assigneeName,
+              assigneeId: t.assigneeId,
+              milestoneId: t.milestoneId,
+              labels: t.labels,
+              subTotal: p?.total,
+              subDone: p?.done,
+            };
+          })}
           canWrite={canWrite}
           members={members}
           milestones={projectMilestones.map((m) => ({ id: m.id, name: m.title }))}
