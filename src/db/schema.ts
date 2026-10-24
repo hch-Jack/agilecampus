@@ -662,3 +662,35 @@ export const taskComments = pgTable(
   },
   (t) => [index("task_comments_task_idx").on(t.taskId)],
 );
+
+// 个人任务计划：工作台日历里「我打算什么时候做这个任务」的自记。
+// 与任务官方起止日（tasks.start_date/due_date）无关——那是排期，这是个人安排；
+// 任务官方起止在日历里只读标记，个人计划段才是可编辑的。一个任务可有多段
+// （如 1/1→1/3、1/5、1/8 各一行），单天即起=止；同段重复由唯一索引去重。
+// 纯个人数据，不进任务动态流，换人/换浏览器都跟着账号走。
+export const taskPlans = pgTable(
+  "task_plans",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    // 计划做这任务的一段时间：[plannedStart, plannedEnd] 闭区间（YYYY-MM-DD，日历日，无时区）
+    plannedStart: date("planned_start").notNull(),
+    plannedEnd: date("planned_end").notNull(),
+    createdAt: dbTimestampNow("created_at").notNull(),
+    updatedAt: dbTimestampNow("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("task_plans_user_task_range_unique").on(
+      t.userId,
+      t.taskId,
+      t.plannedStart,
+      t.plannedEnd,
+    ),
+    index("task_plans_user_idx").on(t.userId),
+  ],
+);

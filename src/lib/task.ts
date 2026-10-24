@@ -736,6 +736,7 @@ export async function listMyTasks(actorId: string) {
       title: tasks.title,
       status: tasks.status,
       priority: tasks.priority,
+      startDate: tasks.startDate,
       dueDate: tasks.dueDate,
       sortOrder: tasks.sortOrder,
       projectId: projects.id,

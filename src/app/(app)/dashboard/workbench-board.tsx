@@ -31,6 +31,7 @@ export type WorkbenchTask = {
   title: string;
   status: "todo" | "doing" | "done";
   priority: string;
+  startDate: string | null;
   dueDate: string | null;
   projectId: string;
   projectName: string;

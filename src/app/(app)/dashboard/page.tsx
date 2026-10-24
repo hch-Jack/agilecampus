@@ -4,6 +4,7 @@ import { listMySubtaskProgress, listMyTasks } from "@/lib/task";
 import { getFeedUnreadCount, listMyTaskActivities, WORKBENCH_SCOPE } from "@/lib/activity";
 import { addDays, todayIn, weekdayOfDate } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
+import { listMyTaskPlans } from "@/lib/task-plan";
 import { pickProjectFilter, projectChips } from "@/lib/workbench-filters";
 import { buildWorkbenchStats } from "@/lib/workbench-stats";
 import { getDashboardLayout } from "@/lib/dashboard-layout-store";
@@ -60,6 +61,11 @@ export default async function DashboardPage({
     listMyTeamResourceUsages(userId),
     listMyRecentAttachments(userId),
   ]);
+  // 个人计划段：本人对这些任务自记的「打算什么时候做」（可多段区间或单天），供日程表日历编辑/展示
+  const plans = await listMyTaskPlans(
+    userId,
+    myTasks.map((t) => t.id),
+  );
 
   // 「今天 / 本周截止」一律按**用户自己的时区**在服务端算成 YYYY-MM-DD，
   // 再由服务端传给看板 —— 客户端不取时钟，免得同一个人在两处看到不同的「今天」。
@@ -104,6 +110,7 @@ export default async function DashboardPage({
 
   const data: DashboardData = {
     visibleTasks,
+    plans,
     doneCount,
     hideDone,
     projectFilter,
