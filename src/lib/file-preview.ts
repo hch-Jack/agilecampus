@@ -15,6 +15,7 @@ export type PreviewKind =
   | "audio"
   | "text"
   | "word"
+  | "doc"
   | "excel"
   | "ppt"
   | "unsupported";
@@ -23,24 +24,65 @@ const IMAGE_EXTS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "
 const PDF_EXTS = new Set(["pdf"]);
 const VIDEO_EXTS = new Set(["mp4", "webm", "ogv", "mov", "m4v", "mkv"]);
 const AUDIO_EXTS = new Set(["mp3", "wav", "ogg", "oga", "m4a", "flac", "aac", "wma"]);
-// 按纯文本预览的扩展名（HTML/XML 也按源码文本展示，绝不内联渲染）
+// 按纯文本预览的扩展名（HTML/XML 也按源码文本展示，绝不内联渲染）。
+// 覆盖常见源码、脚本、配置与构建文件；`.m`（Obj-C/MATLAB）、`.v`（Verilog）、
+// `.s`（汇编）、`.f`（Fortran）这类同名多义扩展也统一按文本看。
 const TEXT_EXTS = new Set([
-  "txt", "md", "markdown", "csv", "tsv", "json", "xml", "yml", "yaml", "toml", "ini",
-  "conf", "config", "log", "properties", "env",
-  "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "rb", "java", "c", "h", "cpp", "hpp",
-  "cs", "go", "rs", "php", "sql", "sh", "bat", "ps1", "html", "htm", "css", "scss",
-  "less", "vue", "svelte",
+  // 文档 / 数据 / 配置
+  "txt", "md", "markdown", "mdx", "rst", "adoc", "csv", "tsv", "json", "jsonc", "json5",
+  "xml", "yml", "yaml", "toml", "ini", "conf", "config", "log", "properties", "env",
+  "lock", "sum", "map",
+  // JS / TS 生态
+  "ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs", "vue", "svelte", "astro",
+  // 系统 / 后端语言
+  "py", "pyw", "pyi", "rb", "java", "kt", "kts", "scala", "groovy", "gradle", "clj",
+  "cljs", "cljc", "edn", "cs", "fs", "fsx", "vb", "vbs", "go", "rs", "php", "swift",
+  "dart", "lua", "pl", "pm", "r", "jl", "ex", "exs", "erl", "hrl", "hs", "lhs", "elm",
+  "ml", "mli", "nim", "zig", "d", "pas", "tcl", "awk", "sed", "sol", "move", "rkt",
+  "scm", "lisp", "el", "vb", "vhd", "vhdl", "sv", "v", "ino",
+  // C / C++ 家族
+  "c", "h", "cpp", "hpp", "cc", "cxx", "hh", "hxx", "c++", "h++", "m", "mm", "cu", "cuh",
+  // 汇编 / 数值
+  "s", "asm", "f", "f90", "f95", "for",
+  // 脚本 / 构建 / 基础设施
+  "sql", "sh", "bash", "zsh", "fish", "bat", "cmd", "ps1", "psm1", "mk", "mak", "cmake",
+  "bazel", "bzl", "tf", "tfvars", "hcl", "nix", "dockerfile", "makefile", "proto",
+  "graphql", "gql", "tex", "bib",
+  // Web
+  "html", "htm", "xhtml", "css", "scss", "sass", "less",
+  // Notebook（JSON 文本）
+  "ipynb",
 ]);
-// Office 在线预览：docx 走 mammoth 转 HTML，xlsx/xls 等走 SheetJS 转表格，
-// pptx 走 pptx-preview 渲染幻灯片。旧版二进制 .doc / .ppt 无可靠的纯 JS
-// 渲染方案，不支持预览（提示下载）。
-const WORD_EXTS = new Set(["docx"]);
-const EXCEL_EXTS = new Set(["xlsx", "xlsm", "xlsb", "xls"]);
-const PPT_EXTS = new Set(["pptx"]);
+// 无扩展名但确定是文本的常见文件名（取 basename 小写比较）
+const TEXT_FILENAMES = new Set([
+  "makefile", "gnumakefile", "dockerfile", "containerfile", "cmakelists.txt", "jenkinsfile",
+  "vagrantfile", "gemfile", "rakefile", "procfile", "justfile", "brewfile",
+  "license", "licence", "notice", "readme", "changelog", "authors", "contributors",
+  ".gitignore", ".gitattributes", ".gitmodules", ".dockerignore", ".editorconfig",
+  ".npmrc", ".nvmrc", ".yarnrc", ".babelrc", ".prettierrc", ".prettierignore",
+  ".eslintrc", ".eslintignore", ".stylelintrc", ".env", ".env.local", ".htaccess",
+]);
+// Office 在线预览：docx 走 docx-preview（保真渲染，mammoth 兜底），
+// 旧版二进制 .doc 走 CFB 解析出正文纯文本；xlsx/xls 等走 SheetJS 转表格；
+// pptx 走 pptx-preview 渲染幻灯片。旧版 .ppt 无可靠的纯 JS 渲染方案（提示下载）。
+const WORD_EXTS = new Set(["docx", "docm", "dotx", "dotm"]);
+// 旧版 Word 97-2003 二进制格式：只能抽取正文，排版与图片无法还原
+const DOC_EXTS = new Set(["doc", "dot"]);
+const EXCEL_EXTS = new Set(["xlsx", "xlsm", "xlsb", "xls", "xltx", "xltm", "xlt", "ods"]);
+const PPT_EXTS = new Set(["pptx", "pptm", "ppsx", "potx"]);
 
 function extOf(filename: string): string {
   const dot = filename.lastIndexOf(".");
   return dot === -1 ? "" : filename.slice(dot + 1).toLowerCase();
+}
+
+function baseNameOf(filename: string): string {
+  const slash = Math.max(filename.lastIndexOf("/"), filename.lastIndexOf("\\"));
+  return filename.slice(slash + 1).toLowerCase();
+}
+
+function isTextName(filename: string): boolean {
+  return TEXT_EXTS.has(extOf(filename)) || TEXT_FILENAMES.has(baseNameOf(filename));
 }
 
 /**
@@ -64,9 +106,12 @@ export function detectPreviewKind(
   ) {
     return "word";
   }
+  // 旧版二进制 Word：只能抽正文，故单列一种预览方式
+  if (mime === "application/msword" || DOC_EXTS.has(ext)) return "doc";
   if (
     mime.startsWith("application/vnd.openxmlformats-officedocument.spreadsheetml") ||
     mime.startsWith("application/vnd.ms-excel") ||
+    mime === "application/vnd.oasis.opendocument.spreadsheet" ||
     EXCEL_EXTS.has(ext)
   ) {
     return "excel";
@@ -77,15 +122,18 @@ export function detectPreviewKind(
   ) {
     return "ppt";
   }
-  // text/html 按文本展示源码；application/json、+xml、+json 等 API 常见类型也归文本
+  // text/html 按文本展示源码；application/json、+xml、+json 等 API 常见类型也归文本。
+  // 代码文件在部分系统会带 application/x-... 或 octet-stream，靠扩展名/文件名兜底。
   if (
     mime.startsWith("text/") ||
     mime === "application/json" ||
     mime === "application/javascript" ||
     mime === "application/xml" ||
+    mime === "application/x-httpd-php" ||
+    mime === "application/x-sh" ||
     mime.endsWith("+json") ||
     mime.endsWith("+xml") ||
-    TEXT_EXTS.has(ext)
+    isTextName(filename)
   ) {
     return "text";
   }

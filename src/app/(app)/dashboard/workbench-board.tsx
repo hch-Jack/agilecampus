@@ -6,6 +6,7 @@ import {
   useState,
   useOptimistic,
   useTransition,
+  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import Link from "next/link";
@@ -24,7 +25,9 @@ import {
 import type { ColumnPatch } from "@/lib/board-columns";
 import { moveTaskAction } from "@/app/(app)/projects/[projectId]/actions";
 import { ACTIVITY_NEW_EVENT } from "@/components/activity-feed";
+import { SubtaskProgress } from "@/components/subtask-progress";
 import { dashboardHref } from "@/lib/workbench-filters";
+import { isOverdueTask, sortBoardTasks } from "@/lib/workbench-order";
 
 export type WorkbenchTask = {
   id: string;
@@ -69,15 +72,18 @@ function WorkbenchCardBody({
   onTitleClick?: (e: ReactMouseEvent<HTMLAnchorElement>) => void;
 }) {
   const canWrite = WRITE_ROLES.includes(task.role);
-  const overdue = task.dueDate && task.dueDate < today;
-  const dueToday = task.dueDate === today;
+  const overdue = isOverdueTask(task, today);
+  const dueToday = !overdue && task.dueDate === today;
 
   return (
     <>
       <Link
         href={`/projects/${task.projectId}/tasks/${task.id}`}
         onClick={onTitleClick}
-        className="font-medium text-ink hover:text-primary"
+        // card-link 把可点区域铺满整张卡；可拖拽时保留抓手光标
+        className={`card-link font-medium text-ink hover:text-primary ${
+          canWrite ? "cursor-grab" : "cursor-pointer"
+        }`}
       >
         {task.title}
       </Link>
@@ -96,22 +102,7 @@ function WorkbenchCardBody({
             <span className="text-ink-faint">截止 {task.dueDate}</span>
           ))}
       </p>
-      {task.subTotal != null && task.subTotal > 0 && (
-        <div className="mt-2">
-          <p className="text-xs text-ink-faint">
-            子任务 <span className="tabular-nums">{task.subDone ?? 0}/{task.subTotal}</span>
-          </p>
-          {/* 动态宽度须内联 style（Tailwind 不生成拼接类名），先例 projects/page.tsx */}
-          <div className="mt-1 h-1 overflow-hidden rounded-full bg-sunken">
-            <div
-              className="h-full rounded-full bg-done"
-              style={{
-                width: `${Math.round(((task.subDone ?? 0) / task.subTotal) * 100)}%`,
-              }}
-            />
-          </div>
-        </div>
-      )}
+      <SubtaskProgress total={task.subTotal ?? 0} done={task.subDone ?? 0} />
     </>
   );
 }
@@ -126,6 +117,7 @@ function WorkbenchCard({
   locked: boolean;
 }) {
   const canWrite = WRITE_ROLES.includes(task.role);
+  const overdue = isOverdueTask(task, today);
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: task.id,
     disabled: !canWrite || locked,
@@ -161,7 +153,9 @@ function WorkbenchCard({
         e.currentTarget.style.setProperty("--rx", "0deg");
         e.currentTarget.style.setProperty("--ry", "0deg");
       }}
-      className={`ac-card proj-card p-3 text-sm transition ${isDragging ? "dragging" : ""}`}
+      className={`ac-card workbench-card proj-card relative p-3 text-sm transition ${
+        overdue ? "is-overdue" : ""
+      } ${isDragging ? "dragging" : ""}`}
     >
       <div {...listeners} {...attributes}>
         <WorkbenchCardBody
@@ -191,6 +185,8 @@ function Column({
   locked: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.key, disabled: locked });
+  // 逾期卡片置顶、逾期最久的在前；非逾期保持服务端顺序
+  const ordered = sortBoardTasks(tasks, today);
 
   return (
     <div
@@ -203,7 +199,7 @@ function Column({
         {column.label}
         <span className="ac-badge bg-surface text-ink-soft">{tasks.length}</span>
       </h3>
-      {tasks.map((t) => (
+      {ordered.map((t) => (
         <WorkbenchCard key={t.id} task={t} today={today} locked={locked} />
       ))}
     </div>
@@ -231,6 +227,9 @@ export function WorkbenchBoard({
   const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  // 「隐藏已完成」时连整列一起收掉：服务端已经把 done 任务过滤掉，
+  // 再留一个空列只会白占三分之一宽度
+  const columns = hideDone ? COLUMNS.filter((c) => c.key !== "done") : COLUMNS;
   const [activeTask, setActiveTask] = useState<WorkbenchTask | null>(null);
   // 浮层宽度取被拖卡片的实际宽度：看板卡随工作台网格缩放，不能写死 262px
   const [dragWidth, setDragWidth] = useState<number | null>(null);
@@ -263,7 +262,7 @@ export function WorkbenchBoard({
     const over = event.over?.id;
     if (!over) return;
     const key = String(over) as (typeof COLUMNS)[number]["key"];
-    if (!COLUMNS.some((c) => c.key === key)) return;
+    if (!columns.some((c) => c.key === key)) return;
     const task = optimisticTasks.find((t) => t.id === taskId);
     // 已在目标列则无须提交
     if (!task || task.status === key) return;
@@ -298,6 +297,8 @@ export function WorkbenchBoard({
           <h2 className="font-display text-sm font-semibold text-ink">我的任务看板</h2>
           <Link
             href={dashboardHref({ hideDone: !hideDone, project: projectFilter })}
+            // 筛选只是换数据，不该把已经翻到下面的用户弹回页首
+            scroll={false}
             aria-pressed={hideDone}
             className={`ac-badge ${
               hideDone
@@ -313,6 +314,7 @@ export function WorkbenchBoard({
           <nav className="mt-2 flex shrink-0 flex-wrap items-center gap-1.5" aria-label="按项目筛选">
             <Link
               href={dashboardHref({ hideDone, project: null })}
+              scroll={false}
               aria-pressed={!projectFilter}
               className={`ac-badge ${
                 !projectFilter
@@ -326,6 +328,7 @@ export function WorkbenchBoard({
               <Link
                 key={c.id}
                 href={dashboardHref({ hideDone, project: c.id })}
+                scroll={false}
                 aria-pressed={projectFilter === c.id}
                 className={`ac-badge ${
                   projectFilter === c.id
@@ -342,8 +345,11 @@ export function WorkbenchBoard({
         {error && <p className="mt-1 text-sm text-high">{error}</p>}
 
         <div className="workbench-board-content ac-scroll-hidden mt-2 min-h-0 flex-1">
-          <div className="workbench-columns grid gap-4">
-            {COLUMNS.map((col) => (
+          <div
+            className="workbench-columns grid gap-4"
+            style={{ "--workbench-cols": columns.length } as CSSProperties}
+          >
+            {columns.map((col) => (
               <Column
                 key={col.key}
                 column={col}
@@ -365,7 +371,9 @@ export function WorkbenchBoard({
       <DragOverlay dropAnimation={null}>
         {activeTask ? (
           <div
-            className="ac-card proj-card proj-ghost w-[262px] p-3 text-sm"
+            className={`ac-card workbench-card proj-card proj-ghost w-[262px] p-3 text-sm ${
+              isOverdueTask(activeTask, today) ? "is-overdue" : ""
+            }`}
             style={dragWidth ? { width: dragWidth } : undefined}
           >
             <WorkbenchCardBody task={activeTask} today={today} />

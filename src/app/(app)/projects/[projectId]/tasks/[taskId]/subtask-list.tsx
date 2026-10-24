@@ -23,6 +23,14 @@ export const STATUS_LABEL: Record<string, string> = {
   done: "已完成",
 };
 
+// 与 task-card.tsx / 详情页顶部共用同一组优先级软色（本地复制，避免跨页依赖）
+const PRIORITY_BADGE: Record<string, string> = {
+  high: "bg-high-soft text-high",
+  medium: "bg-medium-soft text-medium",
+  low: "bg-low-soft text-low",
+};
+const PRIORITY_LABEL: Record<string, string> = { high: "高", medium: "中", low: "低" };
+
 export type SubtaskRowData = {
   id: string;
   title: string;
@@ -60,7 +68,7 @@ export function SubtaskList({
           暂无子任务{canWrite ? "，可在下方添加" : ""}
         </p>
       ) : (
-        <ul className="mt-2 space-y-1">
+        <ul className="mt-2 space-y-2">
           {subtasks.map((s) => (
             <SubtaskRow
               key={s.id}
@@ -108,65 +116,78 @@ function SubtaskRow({
   const error = toggleState?.error ?? deleteState?.error;
 
   return (
-    <li
-      className={`flex items-center gap-2 rounded px-1 py-1 ${canWrite ? "hover:bg-sunken" : ""}`}
-    >
-      {canWrite ? (
-        // 每行独立表单：勾选变更即提交，未勾选时 done 字段缺省 → action 落回「待办」
-        <form action={toggleAction}>
-          <input type="hidden" name="projectId" value={projectId} />
-          <input type="hidden" name="taskId" value={taskId} />
-          <input type="hidden" name="subtaskId" value={subtask.id} />
-          <input
-            type="checkbox"
-            name="done"
-            value="1"
-            defaultChecked={done}
-            disabled={toggling}
-            aria-label={`完成子任务：${subtask.title}`}
-            className="h-4 w-4 accent-primary"
-            onChange={(e) => e.currentTarget.form?.requestSubmit()}
-          />
-        </form>
-      ) : (
-        <span className={`ac-badge ${STATUS_BADGE[subtask.status] ?? ""}`}>
-          {STATUS_LABEL[subtask.status] ?? subtask.status}
-        </span>
-      )}
+    <li className="ac-card relative p-3 transition-colors hover:border-primary/40">
+      <div className="flex items-start gap-3">
+        {canWrite ? (
+          // 每张卡独立表单：勾选变更即提交，未勾选时 done 字段缺省 → action 落回「待办」。
+          // z-10 让勾选框浮在整卡链接的点击层之上。
+          <form action={toggleAction} className="relative z-10 mt-0.5">
+            <input type="hidden" name="projectId" value={projectId} />
+            <input type="hidden" name="taskId" value={taskId} />
+            <input type="hidden" name="subtaskId" value={subtask.id} />
+            <input
+              type="checkbox"
+              name="done"
+              value="1"
+              defaultChecked={done}
+              disabled={toggling}
+              aria-label={`完成子任务：${subtask.title}`}
+              className="h-4 w-4 accent-primary"
+              onChange={(e) => e.currentTarget.form?.requestSubmit()}
+            />
+          </form>
+        ) : (
+          <span className={`ac-badge shrink-0 ${STATUS_BADGE[subtask.status] ?? ""}`}>
+            {STATUS_LABEL[subtask.status] ?? subtask.status}
+          </span>
+        )}
 
-      {/* 除勾选框与删除钮外整行可点，跳该子任务自己的详情页 */}
-      <Link
-        href={`/projects/${projectId}/tasks/${subtask.id}`}
-        className="min-w-0 flex-1 hover:opacity-80"
-      >
-        <span
-          className={`block truncate text-sm ${done ? "text-ink-faint line-through" : "text-ink"}`}
+        {/* 除勾选框与删除钮外整张卡片可点，进该子任务自己的详情页 */}
+        <Link
+          href={`/projects/${projectId}/tasks/${subtask.id}`}
+          className="card-link min-w-0 flex-1"
         >
-          {subtask.title}
-        </span>
-        <span className="block truncate text-xs text-ink-faint">
-          {subtask.assigneeName ?? "未分配"}
-          {subtask.dueDate ? ` · ${subtask.dueDate}` : ""}
-        </span>
-      </Link>
+          <span className="flex flex-wrap items-center gap-1.5">
+            <span
+              className={`text-sm font-medium ${
+                done ? "text-ink-faint line-through" : "text-ink"
+              }`}
+            >
+              {subtask.title}
+            </span>
+            <span
+              className={`ac-badge ${
+                PRIORITY_BADGE[subtask.priority] ?? PRIORITY_BADGE.medium
+              }`}
+            >
+              {PRIORITY_LABEL[subtask.priority] ?? subtask.priority}
+            </span>
+          </span>
+          <span className="mt-1 block text-xs text-ink-faint">
+            {subtask.assigneeName ?? "未分配"}
+            {subtask.dueDate ? ` · 截止 ${subtask.dueDate}` : ""}
+          </span>
+        </Link>
 
-      {canWrite && (
-        <form
-          action={deleteAction}
-          onSubmit={(e) => {
-            if (!confirm("确认删除该子任务？")) e.preventDefault();
-          }}
-        >
-          <input type="hidden" name="projectId" value={projectId} />
-          <input type="hidden" name="taskId" value={taskId} />
-          <input type="hidden" name="subtaskId" value={subtask.id} />
-          <button disabled={deleting} className="text-xs text-high underline disabled:opacity-50">
-            删除
-          </button>
-        </form>
-      )}
+        {canWrite && (
+          <form
+            action={deleteAction}
+            className="relative z-10"
+            onSubmit={(e) => {
+              if (!confirm("确认删除该子任务？")) e.preventDefault();
+            }}
+          >
+            <input type="hidden" name="projectId" value={projectId} />
+            <input type="hidden" name="taskId" value={taskId} />
+            <input type="hidden" name="subtaskId" value={subtask.id} />
+            <button disabled={deleting} className="text-xs text-high underline disabled:opacity-50">
+              删除
+            </button>
+          </form>
+        )}
+      </div>
 
-      {error && <p className="text-xs text-high">{error}</p>}
+      {error && <p className="mt-1 text-xs text-high">{error}</p>}
     </li>
   );
 }

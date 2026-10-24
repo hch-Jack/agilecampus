@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
 import type { DbTx } from "@/db";
@@ -259,6 +259,19 @@ export async function updateTask(
         newValue: c.newValue,
       })),
     );
+
+  // 父任务完成时级联完成所有未完成子任务（看板把父卡拖进「已完成」也走这里）。
+  // 递归沿用同一个 exec / 事务：子级照常写自己的状态动态，并给本任务补 subtask_done。
+  // 只单向级联，父任务被拖回待办时不会把子任务重新打开。
+  if (patch.status === "done" && task.status !== "done") {
+    const openChildren = await exec
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(and(eq(tasks.parentTaskId, taskId), ne(tasks.status, "done")));
+    for (const child of openChildren) {
+      await updateTask(actorId, child.id, { status: "done" }, opts);
+    }
+  }
 
   // 子任务状态跨「已完成」边界时给父任务也记一条，父任务时间线可见子任务进展；
   // 未涉 done 的流转（待办↔进行中）不入父任务动态，避免看板拖拽刷屏

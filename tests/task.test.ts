@@ -5,7 +5,14 @@ import { tasks } from "@/db/schema";
 import { createUser } from "@/lib/user";
 import { createTeam, joinTeam, updateMemberRole } from "@/lib/team";
 import { createProject, createMilestone } from "@/lib/project";
-import { createTask, updateTask, deleteTask, listProjectTasks } from "@/lib/task";
+import {
+  createTask,
+  createSubtask,
+  updateTask,
+  deleteTask,
+  listProjectTasks,
+  listSubtasks,
+} from "@/lib/task";
 import { resetDb } from "./helpers";
 
 async function makeUser(email: string) {
@@ -228,6 +235,56 @@ describe("updateTask", () => {
     expect(updated.status).toBe("done");
     expect(updated.projectId).toBe(project.id);  // 未被挪走
     expect(updated.sortOrder).toBe(t.sortOrder); // 未被篡改
+  });
+});
+
+describe("父任务完成级联", () => {
+  beforeEach(resetDb);
+
+  it("父任务标记完成时把所有未完成子任务一并完成", async () => {
+    const { student, project } = await scene();
+    const parent = await createTask(student.id, project.id, { title: "父" });
+    const c1 = await createSubtask(student.id, parent.id, { title: "子1" });
+    const c2 = await createSubtask(student.id, parent.id, { title: "子2" });
+    await updateTask(student.id, c2.id, { status: "done" });
+
+    await updateTask(student.id, parent.id, { status: "done" });
+
+    const subs = await listSubtasks(student.id, parent.id);
+    expect(subs.map((s) => [s.id, s.status])).toEqual([
+      [c1.id, "done"],
+      [c2.id, "done"],
+    ]);
+  });
+
+  it("移动到进行中不会改动子任务状态，且再次完成不重复级联", async () => {
+    const { student, project } = await scene();
+    const parent = await createTask(student.id, project.id, { title: "父" });
+    const child = await createSubtask(student.id, parent.id, { title: "子" });
+
+    await updateTask(student.id, parent.id, { status: "doing" });
+    expect((await listSubtasks(student.id, parent.id))[0].status).toBe("todo");
+
+    await updateTask(student.id, parent.id, { status: "done" });
+    expect((await listSubtasks(student.id, parent.id))[0].status).toBe("done");
+
+    // 已经是 done 的父任务再次提交 done：没有状态变化，也不再走级联
+    await updateTask(student.id, child.id, { status: "todo" });
+    await updateTask(student.id, parent.id, { status: "done" });
+    expect((await listSubtasks(student.id, parent.id))[0].status).toBe("todo");
+  });
+
+  it("孙任务随父链一起完成", async () => {
+    const { student, project } = await scene();
+    const parent = await createTask(student.id, project.id, { title: "父" });
+    const child = await createSubtask(student.id, parent.id, { title: "子" });
+    const grandchild = await createSubtask(student.id, child.id, { title: "孙" });
+
+    await updateTask(student.id, parent.id, { status: "done" });
+
+    expect((await listSubtasks(student.id, parent.id))[0].status).toBe("done");
+    expect((await listSubtasks(student.id, child.id))[0].id).toBe(grandchild.id);
+    expect((await listSubtasks(student.id, child.id))[0].status).toBe("done");
   });
 });
 

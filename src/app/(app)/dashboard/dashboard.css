@@ -441,14 +441,55 @@ body.proj-cosmic.dashboard-dragging * {
   cursor: grabbing !important;
 }
 
-/* 看板列：窄卡片单列堆叠，宽到 560px 才三列 */
+/* —— 逾期提醒 ——
+   工作台里的「逾期」统计卡与逾期任务卡共用一套橙色语义：
+   浅色主题用暖橙底 + 描边；宇宙主题调亮字色、压低底色，避免跟深蓝背景打架。 */
+.dashboard-shell {
+  --dw-overdue-ink: #c2410c;
+  --dw-overdue-soft: #fff4e8;
+  --dw-overdue-line: #e9a15c;
+}
+body.proj-cosmic .dashboard-shell {
+  --dw-overdue-ink: #ffc08a;
+  --dw-overdue-soft: rgba(255, 169, 94, 0.12);
+  --dw-overdue-line: rgba(255, 169, 94, 0.55);
+}
+
+/* 橙色底必须跟着卡片自身的圆角走。`inherit` 取的是父级
+   .dashboard-widget-content 的圆角（0），方角内描边会被外层 overflow 裁成
+   一段直角，四角露出双层边；直接用卡片圆角 token 才能和卡片边框贴合。 */
+.dw-stat.is-alert {
+  border-radius: var(--radius-card);
+  background-color: var(--dw-overdue-soft);
+  box-shadow: inset 0 0 0 1px var(--dw-overdue-line);
+}
+.dw-stat.is-alert .dw-stat-label {
+  color: var(--dw-overdue-ink);
+}
+.dw-stat.is-alert .dw-stat-value {
+  color: var(--dw-overdue-ink);
+}
+
+/* 逾期任务卡：整卡暖色底 + 橙边。宇宙主题的 `body.proj-cosmic .ac-card`
+   是无层级规则，必须同层级覆盖，否则背景会被压回深蓝玻璃。 */
+.workbench-card.is-overdue {
+  border-color: var(--dw-overdue-line);
+  background-color: var(--dw-overdue-soft);
+}
+body.proj-cosmic .workbench-card.is-overdue {
+  border-color: var(--dw-overdue-line);
+  background-color: var(--dw-overdue-soft);
+}
+
+/* 看板列：窄卡片单列堆叠，宽到 560px 才按当前列数排开。
+   列数由「隐藏已完成」决定（2 或 3），走内联 CSS 变量，别写死三列留空位。 */
 .workbench-board-content {
   container-type: inline-size;
   overflow-y: auto;
 }
 @container (min-width: 560px) {
   .workbench-columns {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(var(--workbench-cols, 3), minmax(0, 1fr));
     height: 100%;
     align-items: stretch;
   }
