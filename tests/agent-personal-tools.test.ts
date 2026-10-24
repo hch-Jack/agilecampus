@@ -89,11 +89,13 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
         "list_resource_usages",
         "list_tasks",
         "open_file",
+        "open_message",
         "open_page",
         "plan_sprint",
         "query_progress",
         "read_messages",
         "respond_group_invite",
+        "search_messages",
         "save_personal_context",
         "send_message",
         "update_label",
@@ -106,6 +108,8 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     expect(projectTools).not.toHaveProperty("save_personal_context");
     expect(projectTools).not.toHaveProperty("list_message_threads");
     expect(projectTools).not.toHaveProperty("read_messages");
+    expect(projectTools).not.toHaveProperty("search_messages");
+    expect(projectTools).not.toHaveProperty("open_message");
     expect(projectTools).not.toHaveProperty("respond_group_invite");
     expect(projectTools).not.toHaveProperty("attach_message_file_to_task");
     // 发送 / 转发 / 建群只在工作台：项目页没有消息上下文，也没有发消息的入口
@@ -398,7 +402,7 @@ describe("个人写工具的草案，落库口都吃得下", () => {
 });
 
 // 右侧助手在项目页里会带一个「焦点项目」：不改会话归属，只多放出 6 件项目专属工具。
-// 这里钉住工具面——多放一件或少放一件都会改变模型的选择空间（37 → 43 已是有意为之）。
+// 这里钉住工具面——多放一件或少放一件都会改变模型的选择空间（39 → 45 已是有意为之）。
 describe("buildPersonalTools：焦点项目的工具面", () => {
   beforeEach(resetDb);
 
@@ -407,8 +411,8 @@ describe("buildPersonalTools：焦点项目的工具面", () => {
     const base = buildPersonalTools(student.id);
     const focused = buildPersonalTools(student.id, project.id);
 
-    expect(Object.keys(base)).toHaveLength(37);
-    expect(Object.keys(focused)).toHaveLength(43);
+    expect(Object.keys(base)).toHaveLength(39);
+    expect(Object.keys(focused)).toHaveLength(45);
     expect(Object.keys(focused).filter((name) => !(name in base)).sort()).toEqual(
       [...FOCUS_PROJECT_TOOL_NAMES].sort(),
     );

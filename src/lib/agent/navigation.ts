@@ -1,6 +1,7 @@
 import { getProjectForUser } from "@/lib/project";
 import { getTeamForMember } from "@/lib/team";
 import { getTaskDetail } from "@/lib/task";
+import { assertMessageId, getMessageJumpTarget } from "@/lib/message-search";
 import { AppError, ForbiddenError } from "@/lib/errors";
 import type { AssistantNavigation } from "./assistant-panel-shared";
 
@@ -116,4 +117,26 @@ export function isNavigationEnvelope(value: unknown): value is NavigationEnvelop
     value !== null &&
     (value as { __navigate?: unknown }).__navigate === true
   );
+}
+
+/**
+ * 「跳到某条消息」：先按 messageId 校验可见性，再拼消息页的深链。
+ * 消息页读 `dm` / `group` + `msg`，打开会话后滚动并高亮那条消息。
+ */
+export async function resolveMessageNavigation(
+  actorId: string,
+  rawMessageId: string,
+): Promise<AssistantNavigation> {
+  const messageId = assertMessageId(rawMessageId);
+  const target = await getMessageJumpTarget(actorId, messageId);
+  const qs = new URLSearchParams();
+  qs.set(target.kind === "dm" ? "dm" : "group", target.conversationId);
+  qs.set("msg", target.messageId);
+  return {
+    label:
+      target.kind === "dm"
+        ? `与 ${target.conversationName} 的对话`
+        : `群聊「${target.conversationName}」`,
+    href: `/messages?${qs.toString()}`,
+  };
 }

@@ -172,17 +172,28 @@ function AttachmentLink({
 }
 
 // 群聊气泡：他人消息气泡上方标发送人名；群聊无已读回执，时间行不带 已读/未读
-function GroupBubble({ m, tz }: { m: GroupMessageView; tz: string }) {
+function GroupBubble({
+  m,
+  tz,
+  highlighted,
+}: {
+  m: GroupMessageView;
+  tz: string;
+  highlighted: boolean;
+}) {
   return (
-    <div className={`flex ${m.mine ? "justify-end" : "justify-start"}`}>
+    <div
+      data-message-id={m.id}
+      className={`flex scroll-mt-4 ${m.mine ? "justify-end" : "justify-start"}`}
+    >
       <div className={`max-w-[75%] ${m.mine ? "items-end" : "items-start"} flex flex-col gap-0.5`}>
         {!m.mine && <span className="px-1 text-[11px] text-ink-faint">{m.senderName}</span>}
         <div
-          className={`break-words rounded-2xl px-3.5 py-2 text-sm ${
+          className={`break-words rounded-2xl px-3.5 py-2 text-sm transition-shadow ${
             m.mine
               ? "rounded-br-sm bg-primary text-white"
               : "rounded-bl-sm border border-line bg-sunken text-ink"
-          }`}
+          } ${highlighted ? "ring-2 ring-primary ring-offset-2 ring-offset-surface" : ""}`}
         >
           {m.content && <p className="whitespace-pre-wrap">{m.content}</p>}
           {m.attachment && <AttachmentLink att={m.attachment} mine={m.mine} />}
@@ -195,10 +206,28 @@ function GroupBubble({ m, tz }: { m: GroupMessageView; tz: string }) {
 
 type Selection = { kind: "dm" | "group"; id: string } | null;
 
+/**
+ * 助手深链（`/messages?dm=…&msg=…`）在服务端解析好的目标：
+ * 私信带对端资料（首屏头部就能显示名字），群聊只带 id，群资料交给打开会话的 action。
+ */
+export type MessageJumpTarget =
+  | { kind: "dm"; id: string; messageId: string; peer: DmPeer }
+  | { kind: "group"; id: string; messageId: string };
+
 // 网络异常兜底文案：action 抛的非 AppError（网络断、序列化失败等）统一落到这里
 const NET_FAIL = (): { ok: false; error: string } => ({ ok: false, error: "网络异常，请稍后再试" });
 
-export function MessagesClient({ timeZone }: { timeZone: string }) {
+// 距底部多少像素内算「贴着底」：轮询整表替换后只有贴底的人才继续跟到底
+const STICK_BOTTOM_PX = 48;
+
+export function MessagesClient({
+  timeZone,
+  initialTarget = null,
+}: {
+  timeZone: string;
+  /** 助手「跳到某条消息」的深链目标；为空则按普通打开处理 */
+  initialTarget?: MessageJumpTarget | null;
+}) {
   // 统一会话列表（私信 + 群聊混排）与群邀请
   const [convs, setConvs] = useState<UnifiedConversation[]>([]);
   const [invites, setInvites] = useState<GroupInviteView[]>([]);
@@ -245,6 +274,13 @@ export function MessagesClient({ timeZone }: { timeZone: string }) {
   const listRef = useRef<HTMLDivElement>(null);
   // 轮询取「当前打开的会话」：ref 由 effect 与选中动作同步，回调据此丢弃陈旧响应
   const activeRef = useRef<Selection>(null);
+  // 滚动跟随：只有本来就在底部（或刚换会话 / 刚发送）时才自动贴底，
+  // 否则 4s 轮询一换数组就把正在翻历史的人拽回最下面
+  const atBottomRef = useRef(true);
+  const forceBottomRef = useRef(false);
+  // 深链定位：消息还没加载出来时先记住，等 msgs 到位再滚动 + 高亮
+  const pendingJumpRef = useRef<string | null>(initialTarget?.messageId ?? null);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
 
   useEffect(() => {
     activeRef.current = selection;
@@ -321,13 +357,75 @@ export function MessagesClient({ timeZone }: { timeZone: string }) {
     return () => clearInterval(timer);
   }, [refreshConvs, refreshInvites, refreshDmMsgs, refreshGroupMsgs]);
 
-  // 消息变化 / 换会话时滚到底部
+  // 助手深链：打开目标会话，并等消息到位后滚到那条消息。
+  // 已经停在消息页时再让助手跳一条，路由只会换 query、组件不卸载，
+  // 所以按目标签名消费，同一个目标不重复触发。
+  const consumedTargetRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!initialTarget) {
+      // 离开深链 URL 后重置，下次再跳同一目标还能生效
+      consumedTargetRef.current = null;
+      return;
+    }
+    const signature = `${initialTarget.kind}:${initialTarget.id}:${initialTarget.messageId}`;
+    if (consumedTargetRef.current === signature) return;
+    consumedTargetRef.current = signature;
+
+    if (initialTarget.kind === "dm") {
+      openDm(initialTarget.id, initialTarget.peer, initialTarget.messageId);
+    } else {
+      openGroup(initialTarget.id, initialTarget.messageId);
+    }
+    // 依赖只认目标签名：openDm/openGroup 每次渲染都会重建，不能进依赖数组
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTarget?.kind, initialTarget?.id, initialTarget?.messageId]);
+
+  // 消息变化 / 换会话：深链目标优先定位；否则只有贴底的人继续跟到底
   useEffect(() => {
     const el = listRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+
+    const jumpId = pendingJumpRef.current;
+    if (jumpId) {
+      const node = el.querySelector<HTMLElement>(`[data-message-id="${jumpId}"]`);
+      if (node) {
+        pendingJumpRef.current = null;
+        // 只滚消息容器，不用 scrollIntoView —— 后者会连带滚动整页，
+        // 消息页在窄屏上刚好容不下 72vh 时会被顶出几像素
+        const nodeRect = node.getBoundingClientRect();
+        const listRect = el.getBoundingClientRect();
+        el.scrollTop +=
+          nodeRect.top - listRect.top - el.clientHeight / 2 + nodeRect.height / 2;
+        setHighlightId(jumpId);
+        // 不用 effect 清理来收尾：轮询 4s 会重跑本效果，清理会把计时器提前掐掉，
+        // 高亮就一直留在那条消息上
+        setTimeout(() => {
+          setHighlightId((cur) => (cur === jumpId ? null : cur));
+        }, 2600);
+      }
+      // 首轮消息还没回来：等下一次 msgs 变化再试，别先贴到底
+      if (msgs.length === 0) return;
+      // 已加载却找不到：群聊窗口只取最近 200 条，更早的消息可能不在其中
+      pendingJumpRef.current = null;
+      setNotice("没在当前会话里找到这条消息（可能已被删除或早于最近记录），已为你打开该会话");
+      return;
+    }
+
+    if (forceBottomRef.current || atBottomRef.current) {
+      forceBottomRef.current = false;
+      el.scrollTop = el.scrollHeight;
+    }
   }, [msgs, selection]);
 
-  function openDm(id: string, p: DmPeer) {
+  // 记录用户是否贴着底；手动往上翻后就不再被轮询拽回去
+  function handleListScroll() {
+    const el = listRef.current;
+    if (!el) return;
+    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_BOTTOM_PX;
+    if (!atBottomRef.current) forceBottomRef.current = false;
+  }
+
+  function openDm(id: string, p: DmPeer, jumpTo?: string) {
     setCreateOpen(false);
     setSelection({ kind: "dm", id });
     activeRef.current = { kind: "dm", id };
@@ -336,10 +434,15 @@ export function MessagesClient({ timeZone }: { timeZone: string }) {
     setMembersOpen(false);
     setMsgs([]);
     setSendError("");
+    // 换会话：没给深链目标就照旧贴底
+    pendingJumpRef.current = jumpTo ?? null;
+    atBottomRef.current = !jumpTo;
+    forceBottomRef.current = !jumpTo;
+    setHighlightId(null);
     refreshDmMsgs(id);
   }
 
-  function openGroup(id: string) {
+  function openGroup(id: string, jumpTo?: string) {
     setCreateOpen(false);
     setSelection({ kind: "group", id });
     activeRef.current = { kind: "group", id };
@@ -348,6 +451,10 @@ export function MessagesClient({ timeZone }: { timeZone: string }) {
     setMembersOpen(false);
     setMsgs([]);
     setSendError("");
+    pendingJumpRef.current = jumpTo ?? null;
+    atBottomRef.current = !jumpTo;
+    forceBottomRef.current = !jumpTo;
+    setHighlightId(null);
     refreshGroupMsgs(id);
   }
 
@@ -553,6 +660,10 @@ export function MessagesClient({ timeZone }: { timeZone: string }) {
     setDraft("");
     setFile(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
+    // 自己刚发的消息必须可见：即便刚才在翻历史，也跳回底部
+    pendingJumpRef.current = null;
+    atBottomRef.current = true;
+    forceBottomRef.current = true;
     // 两个 action 成功时都回全量，客户端直接整表替换
     setMsgs(r.data.messages);
     if (a.kind === "group" && "group" in r.data) {
@@ -905,7 +1016,11 @@ export function MessagesClient({ timeZone }: { timeZone: string }) {
                 <span className="ml-auto text-xs text-ink-faint">消息自动留存</span>
               </header>
 
-              <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+              <div
+                ref={listRef}
+                onScroll={handleListScroll}
+                className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4"
+              >
                 {msgs.length === 0 && (
                   <p className="pt-8 text-center text-xs text-ink-faint">
                     还没有消息，发送第一条吧（支持传文件，单个 ≤ 10MB）
@@ -914,14 +1029,18 @@ export function MessagesClient({ timeZone }: { timeZone: string }) {
                 {msgs.map((m) => {
                   const dm = m as DmMessageView;
                   return (
-                    <div key={dm.id} className={`flex ${dm.mine ? "justify-end" : "justify-start"}`}>
+                    <div
+                      key={dm.id}
+                      data-message-id={dm.id}
+                      className={`flex scroll-mt-4 ${dm.mine ? "justify-end" : "justify-start"}`}
+                    >
                       <div className={`max-w-[75%] ${dm.mine ? "items-end" : "items-start"} flex flex-col gap-0.5`}>
                         <div
-                          className={`break-words rounded-2xl px-3.5 py-2 text-sm ${
+                          className={`break-words rounded-2xl px-3.5 py-2 text-sm transition-shadow ${
                             dm.mine
                               ? "rounded-br-sm bg-primary text-white"
                               : "rounded-bl-sm border border-line bg-sunken text-ink"
-                          }`}
+                          } ${highlightId === dm.id ? "ring-2 ring-primary ring-offset-2 ring-offset-surface" : ""}`}
                         >
                           {dm.content && <p className="whitespace-pre-wrap">{dm.content}</p>}
                           {dm.attachment && <AttachmentLink att={dm.attachment} mine={dm.mine} />}
@@ -1043,14 +1162,23 @@ export function MessagesClient({ timeZone }: { timeZone: string }) {
                 </div>
               )}
 
-              <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+              <div
+                ref={listRef}
+                onScroll={handleListScroll}
+                className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4"
+              >
                 {msgs.length === 0 && (
                   <p className="pt-8 text-center text-xs text-ink-faint">
                     还没有消息，发第一条吧（支持传文件，单个 ≤ 10MB）
                   </p>
                 )}
                 {msgs.map((m) => (
-                  <GroupBubble key={m.id} m={m as GroupMessageView} tz={timeZone} />
+                  <GroupBubble
+                    key={m.id}
+                    m={m as GroupMessageView}
+                    tz={timeZone}
+                    highlighted={highlightId === m.id}
+                  />
                 ))}
               </div>
 

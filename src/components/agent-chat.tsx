@@ -103,6 +103,10 @@ export function AgentChat({
   /** 当前正在预览的附件（助手 open_file 自动弹出，或用户点消息里的入口） */
   const [previewFile, setPreviewFile] = useState<AssistantFile | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  // 翻历史时别被后续消息（答复、删除、pending 切换）拽回底部：
+  // 只有本来就贴着底、或自己刚发出一条时才自动跟到底
+  const atBottomRef = useRef(true);
+  const forceBottomRef = useRef(false);
   const router = useRouter();
 
   const busy = pending || deletingId !== null;
@@ -112,13 +116,24 @@ export function AgentChat({
     onBusyChange?.(busy);
   }, [busy, onBusyChange]);
 
-  // 消息区是唯一可滚动的部分：不主动贴底的话，刚发出的那句、以及随后落下来的答复
-  // （还带一叠草案卡）全长在视野下方，得手动往下拖才看得见 —— 看上去像「没反应」。
+  // 消息区是唯一可滚动的部分：贴底的人要一直跟到最新（刚发出的那句、随后落下来的答复，
+  // 还带一叠草案卡）；正在往上翻历史的人则保持原位，别被回答到达 / 删除一轮打断。
   // 依赖里带上 pending：从「思考中…」转回结果时再贴一次，等卡片撑开也不会露在半路。
   useEffect(() => {
     const el = listRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    if (forceBottomRef.current || atBottomRef.current) {
+      forceBottomRef.current = false;
+      el.scrollTop = el.scrollHeight;
+    }
   }, [messages, pending]);
+
+  function handleListScroll() {
+    const el = listRef.current;
+    if (!el) return;
+    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= 48;
+    if (!atBottomRef.current) forceBottomRef.current = false;
+  }
 
   /**
    * 发送一句话。`focus` 是这一轮带的项目上下文 —— 默认取屏幕上的当前项目；
@@ -129,6 +144,9 @@ export function AgentChat({
     if (!trimmed || pending || disabled) return false;
     setError(null);
     const localId = nextLocalId();
+    // 自己刚发出一条：即便刚才在翻历史，也要把这条与随后的答复带进视野
+    atBottomRef.current = true;
+    forceBottomRef.current = true;
     setMessages((m) => [...m, { role: "user", content: trimmed, localId }]);
     setPending(true);
     try {
@@ -279,6 +297,7 @@ export function AgentChat({
           草案行尾的删除键曾因此点不到。留出稳定槽位，滚动条出现与否都不压按钮。 */}
       <div
         ref={listRef}
+        onScroll={handleListScroll}
         className="min-h-0 flex-1 space-y-2.5 overflow-y-auto pr-3 [scrollbar-gutter:stable]"
       >
         {messages.map((m, i) => {
