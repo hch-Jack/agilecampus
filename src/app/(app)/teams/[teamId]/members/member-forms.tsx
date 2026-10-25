@@ -1,9 +1,10 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useRef, useState } from "react";
 import type { TeamContentCounts } from "@/lib/team";
 import type { TeamRole, UserIdentity } from "@/db/schema";
 import { IdentityBadge, RoleBadge } from "@/components/badges";
+import { ConfirmDangerDialog } from "@/components/confirm-danger-dialog";
 import { leaveTeamAction, removeMemberAction, type FormState } from "./actions";
 
 export function MemberRow({
@@ -92,84 +93,157 @@ export function LeaveTeamForm({
 }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(leaveTeamAction, null);
   const [hint, setHint] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<{
+    open: boolean;
+    type: "normal" | "willDissolve" | "needsSuccessor";
+    successorName?: string;
+  }>({ open: false, type: "normal" });
+  const formRef = useRef<HTMLFormElement>(null);
+
+  // 计算 willDissolve 场景的内容列表
+  const dissolveContent = (() => {
+    const c = counts;
+    const content = [
+      c && c.projects > 0 && `${c.projects} 个项目`,
+      c && c.milestones > 0 && `${c.milestones} 个里程碑`,
+      c && c.tasks > 0 && `${c.tasks} 个任务`,
+    ].filter((s): s is string => Boolean(s));
+    return content.length > 0
+      ? `将永久删除 ${content.join("、")}，以及这些项目下的全部对话记录、标签与资源占用。`
+      : "该团队名下还没有项目。";
+  })();
+
+  // 弹窗内容根据场景不同
+  const dialogTitle = dialog.type === "willDissolve" ? "退出并解散团队" : "退出团队";
+  const confirmLabel = dialog.type === "willDissolve" ? "确认退出并解散" : "确认退出";
+
+  const dialogContent = (() => {
+    if (dialog.type === "needsSuccessor") {
+      return (
+        <>
+          <p className="font-medium text-ink">确认退出团队「{teamName}」？</p>
+          <p className="mt-2">
+            你是该团队唯一的管理员，将把管理员移交给「{dialog.successorName}」。
+          </p>
+        </>
+      );
+    }
+    if (dialog.type === "willDissolve") {
+      return (
+        <>
+          <p className="font-medium text-ink">确认退出并解散团队「{teamName}」？</p>
+          <ul className="mt-2 space-y-1">
+            <li className="flex items-start gap-2">
+              <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-danger/60" />
+              <span>你是该团队唯一的成员，退出即解散。</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-danger/60" />
+              <span>{dissolveContent}</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-danger/60" />
+              <span>此操作不可撤销。</span>
+            </li>
+          </ul>
+        </>
+      );
+    }
+    return (
+      <>
+        <p className="font-medium text-ink">确认退出团队「{teamName}」？</p>
+        <p className="mt-2">退出后需重新凭邀请码加入。</p>
+      </>
+    );
+  })();
+
+  function handleClick() {
+    setHint(null);
+
+    if (needsSuccessor) {
+      const form = formRef.current;
+      if (!form) return;
+      const select = form.elements.namedItem("successorUserId");
+      const picked =
+        select instanceof HTMLSelectElement ? select.selectedOptions[0]?.textContent ?? undefined : undefined;
+      if (!picked) {
+        setHint("请先选择一名接任的管理员。");
+        return;
+      }
+      setDialog({ open: true, type: "needsSuccessor", successorName: picked });
+      return;
+    }
+
+    if (willDissolve) {
+      setDialog({ open: true, type: "willDissolve" });
+      return;
+    }
+
+    setDialog({ open: true, type: "normal" });
+  }
 
   return (
-    <form
-      action={formAction}
-      className="ac-card space-y-2 p-4"
-      onSubmit={(e) => {
-        setHint(null);
+    <>
+      <form ref={formRef} action={formAction} className="ac-card space-y-2 p-4">
+        <input type="hidden" name="teamId" value={teamId} />
+        {willDissolve && <input type="hidden" name="dissolveIfSole" value="1" />}
+        <h2 className="font-medium text-ink">退出团队</h2>
 
-        if (needsSuccessor) {
-          const select = e.currentTarget.elements.namedItem("successorUserId");
-          const picked =
-            select instanceof HTMLSelectElement ? select.selectedOptions[0]?.textContent : null;
-          if (!picked) {
-            // 拦在本地，省一次注定被服务端拒掉的往返
-            e.preventDefault();
-            setHint("请先选择一名接任的管理员。");
-            return;
-          }
-          const text =
-            `确认退出团队「${teamName}」？\n\n` +
-            `你是该团队唯一的管理员，将把管理员移交给「${picked}」。`;
-          if (!confirm(text)) e.preventDefault();
-          return;
-        }
+        {needsSuccessor && (
+          <label className="block space-y-1">
+            <span className="text-xs font-medium text-ink-soft">
+              你是唯一的管理员，退出前必须指定一名成员接任
+            </span>
+            <select name="successorUserId" defaultValue="" className="ac-field w-auto text-sm">
+              <option value="">请选择接任者</option>
+              {candidates.map((c) => (
+                <option key={c.userId} value={c.userId}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
 
-        if (willDissolve) {
-          const c = counts;
-          const content = [
-            c && c.projects > 0 && `${c.projects} 个项目`,
-            c && c.milestones > 0 && `${c.milestones} 个里程碑`,
-            c && c.tasks > 0 && `${c.tasks} 个任务`,
-          ].filter((s): s is string => Boolean(s));
-          const text = [
-            `确认退出并解散团队「${teamName}」？`,
-            "",
-            "你是该团队唯一的成员，退出即解散。",
-            content.length > 0
-              ? `将永久删除 ${content.join("、")}，以及这些项目下的全部对话记录、标签与资源占用。`
-              : "该团队名下还没有项目。",
-            "此操作不可撤销。",
-          ].join("\n");
-          if (!confirm(text)) e.preventDefault();
-          return;
-        }
+        <button
+          type="button"
+          disabled={pending}
+          onClick={handleClick}
+          className="inline-flex items-center gap-1.5 text-sm text-high underline disabled:opacity-50"
+        >
+          {/* log-out：门+箭头，传达「退出」语义 */}
+          <svg
+            className="h-4 w-4 flex-shrink-0"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+          {pending ? "处理中…" : willDissolve ? "退出并解散团队" : "退出团队"}
+        </button>
 
-        if (!confirm(`确认退出团队「${teamName}」？\n\n退出后需重新凭邀请码加入。`)) {
-          e.preventDefault();
-        }
-      }}
-    >
-      <input type="hidden" name="teamId" value={teamId} />
-      {/* 与页面上那个「退出并解散团队」的确认框配对：没渲染它就不带这个字段，
-          服务端据此拒绝一次「顺手就把整个团队删了」的退出（见 lib/team.ts leaveTeam） */}
-      {willDissolve && <input type="hidden" name="dissolveIfSole" value="1" />}
-      <h2 className="font-medium text-ink">退出团队</h2>
+        {hint && <p className="text-sm text-high">{hint}</p>}
+        {state?.error && <p className="text-sm text-high">{state.error}</p>}
+      </form>
 
-      {needsSuccessor && (
-        <label className="block space-y-1">
-          <span className="text-xs font-medium text-ink-soft">
-            你是唯一的管理员，退出前必须指定一名成员接任
-          </span>
-          <select name="successorUserId" defaultValue="" className="ac-field w-auto text-sm">
-            <option value="">请选择接任者</option>
-            {candidates.map((c) => (
-              <option key={c.userId} value={c.userId}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-
-      <button disabled={pending} className="text-sm text-high underline disabled:opacity-50">
-        {pending ? "处理中…" : willDissolve ? "退出并解散团队" : "退出团队"}
-      </button>
-
-      {hint && <p className="text-sm text-high">{hint}</p>}
-      {state?.error && <p className="text-sm text-high">{state.error}</p>}
-    </form>
+      <ConfirmDangerDialog
+        open={dialog.open}
+        title={dialogTitle}
+        confirmLabel={confirmLabel}
+        onConfirm={() => {
+          setDialog((d) => ({ ...d, open: false }));
+          formRef.current?.requestSubmit();
+        }}
+        onCancel={() => setDialog((d) => ({ ...d, open: false }))}
+      >
+        {dialogContent}
+      </ConfirmDangerDialog>
+    </>
   );
 }

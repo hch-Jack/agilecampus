@@ -1,12 +1,10 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useRef, useState } from "react";
 import type { TeamContentCounts } from "@/lib/team";
 import { dissolveTeamAction, type FormState } from "./actions";
+import { ConfirmDangerDialog } from "@/components/confirm-danger-dialog";
 
-// 确认框里说清「按下去会失去什么」。计数从服务端随 props 下来——
-// confirm() 跑在浏览器里，这里是唯一拿得到它们的地方。
-// 硬删除不可逆，所以数量和「不可撤销」这两件事必须写进去，不能只说一句「确认解散？」。
 function impactLines(counts: TeamContentCounts): string[] {
   const content = [
     counts.projects > 0 && `${counts.projects} 个项目`,
@@ -19,7 +17,6 @@ function impactLines(counts: TeamContentCounts): string[] {
       ? `将永久删除 ${content.join("、")}，以及这些项目下的全部对话记录、标签与资源占用。`
       : "该团队名下还没有项目。",
   ];
-  // members 含操作者自己，只有一个人时不必提
   if (counts.members > 1) lines.push(`连同 ${counts.members} 名成员一并移出团队。`);
   lines.push("此操作不可撤销。");
   return lines;
@@ -38,23 +35,69 @@ export function DissolveTeamForm({
     dissolveTeamAction,
     null,
   );
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
 
-  // className 里的 w-full：让这一行独占一行（父级是 flex-wrap 的链接行），按钮再靠 ml-auto 右对齐。
-  // 这样错误文案才有整行宽度可写 —— 若让 form 去 shrink-to-fit，长文案会被挤成一条窄柱。
+  const lines = impactLines(counts);
+
   return (
-    <form
-      action={formAction}
-      className="flex w-full flex-wrap items-center gap-2"
-      onSubmit={(e) => {
-        const text = [`确认解散团队「${teamName}」？`, "", ...impactLines(counts)].join("\n");
-        if (!confirm(text)) e.preventDefault();
-      }}
-    >
-      <input type="hidden" name="teamId" value={teamId} />
-      <button disabled={pending} className="ml-auto text-xs text-high underline disabled:opacity-50">
-        {pending ? "解散中…" : "解散团队"}
-      </button>
-      {state?.error && <p className="w-full text-right text-sm text-high">{state.error}</p>}
-    </form>
+    <>
+      <form ref={formRef} action={formAction} className="flex flex-col items-end">
+        <input type="hidden" name="teamId" value={teamId} />
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => setDialogOpen(true)}
+          className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium
+                     text-danger/80 transition-all
+                     hover:text-danger hover:bg-danger/10
+                     hover:scale-105
+                     hover:shadow-[0_0_12px_rgba(250,81,81,0.35)]
+                     hover:ring-1 hover:ring-danger/30
+                     disabled:opacity-50"
+        >
+          {/* users-x：两人 + X，传达「团队解散、成员散伙」的语义 */}
+          <svg
+            className="h-4 w-4 flex-shrink-0"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <line x1="17" y1="8" x2="22" y2="13" />
+            <line x1="22" y1="8" x2="17" y2="13" />
+            <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+          </svg>
+          {pending ? "解散中…" : "解散团队"}
+        </button>
+        {state?.error && <p className="mt-1 text-right text-sm text-high">{state.error}</p>}
+      </form>
+
+      <ConfirmDangerDialog
+        open={dialogOpen}
+        title="解散团队"
+        confirmLabel="确认解散"
+        onConfirm={() => {
+          setDialogOpen(false);
+          formRef.current?.requestSubmit();
+        }}
+        onCancel={() => setDialogOpen(false)}
+      >
+        <p className="font-medium text-ink">确认解散团队「{teamName}」？</p>
+        <ul className="mt-2 space-y-1">
+          {lines.map((line, i) => (
+            <li key={i} className="flex items-start gap-2">
+              <span className="mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-danger/60" />
+              <span>{line}</span>
+            </li>
+          ))}
+        </ul>
+      </ConfirmDangerDialog>
+    </>
   );
 }

@@ -49,11 +49,11 @@ export default async function TeamsPage() {
                 <Link href={`/teams/${t.id}/labels`} className="ac-btn-ghost">
                   标签
                 </Link>
-                {/* 解散是不可逆的硬删除，只在管理员面前渲染这个入口 */}
-                {t.role === "admin" && (
-                  <DissolveTeamForm teamId={t.id} teamName={t.name} counts={t.counts} />
-                )}
               </div>
+              {/* 解散是不可逆的硬删除，只在管理员面前渲染，独立于导航链接行以免误触 */}
+              {t.role === "admin" && (
+                <DissolveTeamForm teamId={t.id} teamName={t.name} counts={t.counts} />
+              )}
             </li>
           ))}
         </ul>
