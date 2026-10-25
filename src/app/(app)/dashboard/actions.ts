@@ -14,7 +14,13 @@ import {
   type DashboardWidgetId,
 } from "@/lib/dashboard-layout";
 import { saveDashboardLayout } from "@/lib/dashboard-layout-store";
-import { decideApproval, type ApprovalDecision } from "@/lib/approval";
+import {
+  decideApproval,
+  listMyApprovalHistory,
+  type ApprovalDecision,
+  type ApprovalHistoryRow,
+} from "@/lib/approval";
+import { DECISION_NOTE_MAX_LENGTH } from "@/lib/approval-view";
 import { AppError } from "@/lib/errors";
 import { revalidatePath } from "next/cache";
 
@@ -104,6 +110,8 @@ export type DecideApprovalResult = { ok: true } | { error: string };
 const decideSchema = z.object({
   requestId: z.uuid(),
   decision: z.enum(["approved", "rejected"]),
+  /** 拒绝原因（选填）：仅拒绝时生效，随系统消息回执发给申请人 */
+  note: z.string().max(DECISION_NOTE_MAX_LENGTH).optional(),
 });
 
 /**
@@ -124,6 +132,7 @@ export async function decideApprovalAction(
       session.user.id,
       parsed.data.requestId,
       parsed.data.decision as ApprovalDecision,
+      parsed.data.note,
     );
   } catch (e) {
     if (e instanceof AppError) return { error: e.message };
@@ -131,4 +140,20 @@ export async function decideApprovalAction(
   }
   revalidatePath("/dashboard");
   return { ok: true };
+}
+
+// —— 任务看板「审批记录」弹窗 ——
+
+export type ApprovalHistoryResult = { ok: true; data: ApprovalHistoryRow[] } | { error: string };
+
+/** 与我有关的审批历史（我发起 + 我审批），打开弹窗时现拉一次 */
+export async function listMyApprovalHistoryAction(): Promise<ApprovalHistoryResult> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+  try {
+    return { ok: true, data: await listMyApprovalHistory(session.user.id) };
+  } catch (e) {
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
 }

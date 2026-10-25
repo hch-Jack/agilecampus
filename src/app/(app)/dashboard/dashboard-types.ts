@@ -33,6 +33,8 @@ export type DashboardMessages = {
   dm: number;
   group: number;
   invites: number;
+  /** 未读系统消息（审批申请与结果回执） */
+  system: number;
 };
 
 /** 跨项目的待完成里程碑（按目标日期升序） */

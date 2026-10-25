@@ -160,6 +160,7 @@ export default async function ProjectPage({
               assigneeId: t.assigneeId,
               milestoneId: t.milestoneId,
               labels: t.labels,
+              requireApproval: t.requireApproval,
               subTotal: p?.total,
               subDone: p?.done,
             };

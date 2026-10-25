@@ -27,6 +27,8 @@ const createTaskSchema = z.object({
   dueDate: z.iso.date("日期格式不正确").optional(),
   milestoneId: z.uuid().optional(),
   priority: z.enum(["low", "medium", "high"]).optional(),
+  /** 完成是否需要审批：页面默认勾选，取消勾选时表单不提交该字段 */
+  requireApproval: z.boolean().optional(),
 });
 
 export async function createTaskAction(
@@ -44,6 +46,8 @@ export async function createTaskAction(
     dueDate: raw.dueDate || undefined,
     milestoneId: raw.milestoneId || undefined,
     priority: raw.priority || undefined,
+    // 复选框只会在勾选时提交 "on"
+    requireApproval: raw.requireApproval === "on",
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 

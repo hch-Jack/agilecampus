@@ -12,6 +12,7 @@ import { listMyProjects, listMyUpcomingMilestones } from "@/lib/project";
 import { listMyTeams } from "@/lib/team";
 import { listMyTeamResourceUsages } from "@/lib/resource";
 import {
+  countUnreadSystemMessages,
   isApproverAnywhere,
   listMyTaskApprovalSummaries,
   listPendingApprovalsForApprover,
@@ -47,6 +48,7 @@ export default async function DashboardPage({
     dmUnread,
     groupUnread,
     pendingInvites,
+    systemUnread,
     tz,
     milestoneRows,
     resourceUsages,
@@ -62,6 +64,7 @@ export default async function DashboardPage({
     countUnread(userId),
     countGroupUnread(userId),
     countPendingGroupInvites(userId),
+    countUnreadSystemMessages(userId),
     resolveUserTimeZone(userId),
     listMyUpcomingMilestones(userId),
     listMyTeamResourceUsages(userId),
@@ -164,7 +167,12 @@ export default async function DashboardPage({
       counts: t.counts,
     })),
     upcoming,
-    messages: { dm: dmUnread, group: groupUnread, invites: pendingInvites },
+    messages: {
+      dm: dmUnread,
+      group: groupUnread,
+      invites: pendingInvites,
+      system: systemUnread,
+    },
     // 查询里已过滤掉空日期，这里只是把可空类型收窄
     milestones: milestoneRows.map((m) => ({
       id: m.id,

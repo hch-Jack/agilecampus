@@ -10,6 +10,7 @@ import {
   index,
   integer,
   jsonb,
+  boolean,
   check,
   customType,
   type AnyPgColumn,
@@ -354,6 +355,9 @@ export const tasks = pgTable(
     dueDate: date("due_date"),
     status: taskStatusEnum("status").notNull().default("todo"),
     priority: taskPriorityEnum("priority").notNull().default("medium"),
+    // 完成是否需要老师/管理员审批：建任务时勾选，默认要审（沿用审批流上线前的口径）。
+    // 关掉后学生把任务拖到「已完成」即直接完成，不再生成完成申请。
+    requireApproval: boolean("require_approval").notNull().default(true),
     sortOrder: doublePrecision("sort_order").notNull().default(0),
     createdAt: dbTimestampNow("created_at").notNull(),
     updatedAt: dbTimestampNow("updated_at").notNull(),
@@ -704,6 +708,8 @@ export const approvalRequests = pgTable(
     // 决定人；pending 时为空。决定人被删号后置空，决定记录本身保留
     approverId: uuid("approver_id").references(() => users.id, { onDelete: "set null" }),
     decidedAt: dbTimestamp("decided_at"),
+    // 审批人填写的拒绝原因（通过时为空）：随回执系统消息发给申请人，详情页也展示
+    decisionNote: text("decision_note"),
     createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [

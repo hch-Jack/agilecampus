@@ -528,6 +528,7 @@ export function DashboardGrid({
                 title={DASHBOARD_WIDGETS[item.type].title}
                 editing={editing}
                 dragging={activeId === item.id}
+                alert={item.type === "approvals" && data.approvals.length > 0}
                 onRemove={() => handleRemove(item.id)}
                 onDragStart={(e) => begin(e, item.id, "move")}
                 onResizeStart={(e) => begin(e, item.id, "resize")}

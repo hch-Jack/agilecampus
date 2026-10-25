@@ -34,6 +34,8 @@ export type BoardTask = {
   assigneeId: string | null;
   milestoneId: string | null;
   labels: { id: string; name: string; color: string }[];
+  /** 完成是否需要审批：false 时学生拖到「已完成」直接完成，不弹完成申请 */
+  requireApproval: boolean;
   /** 直接子任务的进度；无子任务时缺省 */
   subTotal?: number;
   subDone?: number;
@@ -120,8 +122,13 @@ export function Board({
     // 已在目标列则无须提交
     if (!column || !task || column.matches(task)) return;
 
-    // 学生把任务拖到「已完成」：不直接落列，先弹完成申请窗
-    if (column.patch.status === "done" && viewerRole === "student" && task.status !== "done") {
+    // 学生把任务拖到「已完成」：需要审批的才弹完成申请窗，关掉审批的直接落列完成
+    if (
+      column.patch.status === "done" &&
+      viewerRole === "student" &&
+      task.status !== "done" &&
+      task.requireApproval
+    ) {
       setCompletionTask(task);
       return;
     }

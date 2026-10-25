@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { FilePreviewModal } from "@/components/file-preview";
+import { RejectReasonDialog } from "@/components/reject-reason-dialog";
 import { decideApprovalAction } from "@/app/(app)/dashboard/actions";
 import type { ApprovalDetail } from "@/lib/approval";
 import { formatDateTime } from "@/lib/time";
@@ -34,6 +35,7 @@ export function SystemApprovalModal({
   const [detail, setDetail] = useState<ApprovalDetail | null>(null);
   const [error, setError] = useState("");
   const [busy, startTransition] = useTransition();
+  const [rejecting, setRejecting] = useState(false);
   const [previewFile, setPreviewFile] = useState<
     { url: string; filename: string; mimeType: string | null; size: number } | null
   >(null);
@@ -51,17 +53,22 @@ export function SystemApprovalModal({
     };
   }, [approvalId]);
 
-  function decide(decision: "approved" | "rejected") {
+  function decide(decision: "approved" | "rejected", note?: string) {
     startTransition(async () => {
       setError("");
-      const r = await decideApprovalAction({ requestId: approvalId, decision });
+      const r = await decideApprovalAction({ requestId: approvalId, decision, note });
       if ("error" in r) {
         setError(r.error);
         return;
       }
+      setRejecting(false);
       onDecided();
     });
   }
+
+  /** 拒绝原因对话框的抬头：优先用已加载的详情，未加载完再退回通用文案 */
+  const rejectSubject =
+    (detail?.type === "task_done" ? detail.taskTitle : detail?.resourceName) ?? "该申请";
 
   const statusBadge =
     detail?.status === "approved" ? (
@@ -111,6 +118,15 @@ export function SystemApprovalModal({
                   </span>
                 )}
               </p>
+
+              {detail.decisionNote && (
+                <div>
+                  <p className="text-xs font-medium text-ink-soft">拒绝原因（审批人填写）</p>
+                  <p className="mt-1 whitespace-pre-wrap break-words rounded-field border border-line bg-sunken p-3 text-xs leading-relaxed text-ink">
+                    {detail.decisionNote}
+                  </p>
+                </div>
+              )}
 
               {detail.type === "task_done" ? (
                 <>
@@ -182,7 +198,10 @@ export function SystemApprovalModal({
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => decide("rejected")}
+                    onClick={() => {
+                      setError("");
+                      setRejecting(true);
+                    }}
                     className="ac-btn-ghost px-3 py-1.5 text-sm disabled:opacity-50"
                   >
                     拒绝
@@ -203,6 +222,16 @@ export function SystemApprovalModal({
 
         {previewFile && (
           <FilePreviewModal file={previewFile} onClose={() => setPreviewFile(null)} />
+        )}
+
+        {rejecting && (
+          <RejectReasonDialog
+            subject={rejectSubject}
+            busy={busy}
+            error={error}
+            onCancel={() => setRejecting(false)}
+            onConfirm={(note) => decide("rejected", note)}
+          />
         )}
       </div>
     </div>
