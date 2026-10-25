@@ -22,6 +22,13 @@ export const COUNTDOWN_TITLE_MAX_LENGTH = 40;
 export const CLOCK_MAX_ZONES = 3;
 export const CLOCK_ZONE_MAX_LENGTH = 64;
 
+/** 日程表：甘特占内容区的比例范围（分区拖拽可调） */
+export const SCHEDULE_GANTT_RATIO_MIN = 0.15;
+export const SCHEDULE_GANTT_RATIO_MAX = 0.7;
+/** 日程表：宽卡时任务池占正文宽度的比例范围 */
+export const SCHEDULE_POOL_RATIO_MIN = 0.2;
+export const SCHEDULE_POOL_RATIO_MAX = 0.5;
+
 export const WIDGET_IDS = [
   "task_board",
   "schedule",
@@ -79,6 +86,14 @@ export type DashboardWidgetConfig = {
   lunar?: boolean;
   /** 时钟：世界时钟的 IANA 时区（最多 CLOCK_MAX_ZONES 个） */
   zones?: string[];
+  /** 日程表：是否显示甘特 / 任务池 / 月历（缺省 = 显示） */
+  showGantt?: boolean;
+  showPool?: boolean;
+  showCalendar?: boolean;
+  /** 日程表：甘特占内容区高度的比例 */
+  ganttRatio?: number;
+  /** 日程表：宽卡时任务池占正文宽度的比例 */
+  poolRatio?: number;
 };
 
 /**
@@ -120,8 +135,9 @@ export const DASHBOARD_WIDGETS: Record<DashboardWidgetId, DashboardWidgetMeta> =
   schedule: {
     id: "schedule",
     title: "日程表",
-    description: "任务官方起止甘特（只读）+ 月历编辑个人计划日",
-    defaultSize: { w: 12, h: 8 },
+    description: "甘特 + 任务池 + 月历，可拖动分区、按需隐藏",
+    // 默认 8×9：甘特、任务池、月历三段同屏，任务池还能展开成左侧竖栏
+    defaultSize: { w: 8, h: 9 },
     minSize: { w: 6, h: 6 },
   },
   stat_overdue: {
@@ -246,17 +262,38 @@ export const DASHBOARD_WIDGETS: Record<DashboardWidgetId, DashboardWidgetMeta> =
 };
 
 /**
- * 默认布局 = 改造前的页面结构：一行四张统计卡 → 通栏看板 → 通栏最新记录。
- * 高度按 32px 行高换算，贴近原来的 `p-3` 统计瓦片与 `min-h-40` 看板列。
+ * 默认布局：所有卡片都放出来，按「高频 → 辅助」从上到下铺满 12 列。
+ *
+ * 版式（共 23 行）：
+ *   y0-1   四张统计卡
+ *   y2-7   看板（8 列）+ 最新记录 / 消息（右 4 列）
+ *   y8-16  日程表（8 列 × 9 行）+ 我的项目 / 时钟 / 快捷入口（右 4 列）
+ *   y17-19 一排 3 列辅助卡（即将到期、里程碑、资源、附件）
+ *   y20-22 一排 3 列辅助卡（团队、便签、倒计时、专注）
+ *
+ * 时钟与快捷入口从页尾提到日程表右侧：这两张是小工具，常用的不该压在最底下。
+ * 辅助卡统一压到 3 列 × 3 行（约 240×120），两排就装完，整页高度反而比之前更短。
  */
 const DEFAULT_ITEMS: DashboardLayoutItem[] = [
   { id: "stat_overdue", type: "stat_overdue", x: 0, y: 0, w: 3, h: 2 },
   { id: "stat_today", type: "stat_today", x: 3, y: 0, w: 3, h: 2 },
   { id: "stat_week", type: "stat_week", x: 6, y: 0, w: 3, h: 2 },
   { id: "stat_doing", type: "stat_doing", x: 9, y: 0, w: 3, h: 2 },
-  { id: "task_board", type: "task_board", x: 0, y: 2, w: 12, h: 6 },
-  { id: "schedule", type: "schedule", x: 0, y: 8, w: 12, h: 8 },
-  { id: "activity_feed", type: "activity_feed", x: 0, y: 16, w: 12, h: 4 },
+  { id: "task_board", type: "task_board", x: 0, y: 2, w: 8, h: 6 },
+  { id: "activity_feed", type: "activity_feed", x: 8, y: 2, w: 4, h: 4 },
+  { id: "unread_messages", type: "unread_messages", x: 8, y: 6, w: 4, h: 2 },
+  { id: "schedule", type: "schedule", x: 0, y: 8, w: 8, h: 9 },
+  { id: "my_projects", type: "my_projects", x: 8, y: 8, w: 4, h: 3 },
+  { id: "clock", type: "clock", x: 8, y: 11, w: 4, h: 3 },
+  { id: "quick_links", type: "quick_links", x: 8, y: 14, w: 4, h: 3 },
+  { id: "upcoming", type: "upcoming", x: 0, y: 17, w: 3, h: 3 },
+  { id: "milestones", type: "milestones", x: 3, y: 17, w: 3, h: 3 },
+  { id: "resource_usage", type: "resource_usage", x: 6, y: 17, w: 3, h: 3 },
+  { id: "recent_attachments", type: "recent_attachments", x: 9, y: 17, w: 3, h: 3 },
+  { id: "my_teams", type: "my_teams", x: 0, y: 20, w: 3, h: 3 },
+  { id: "note", type: "note", x: 3, y: 20, w: 3, h: 3 },
+  { id: "countdown", type: "countdown", x: 6, y: 20, w: 3, h: 3 },
+  { id: "focus_timer", type: "focus_timer", x: 9, y: 20, w: 3, h: 3 },
 ];
 
 export const DEFAULT_DASHBOARD_LAYOUT: DashboardLayoutDoc = { v: 1, items: DEFAULT_ITEMS };
@@ -335,6 +372,25 @@ function sanitizeConfig(
         ? input.targetAt
         : undefined;
     return title === undefined && targetAt === undefined ? undefined : { title, targetAt };
+  }
+
+  if (type === "schedule") {
+    const config: DashboardWidgetConfig = {};
+    if (typeof input.showGantt === "boolean") config.showGantt = input.showGantt;
+    if (typeof input.showPool === "boolean") config.showPool = input.showPool;
+    if (typeof input.showCalendar === "boolean") config.showCalendar = input.showCalendar;
+    if (typeof input.ganttRatio === "number" && Number.isFinite(input.ganttRatio)) {
+      // 比例留 3 位小数：拖拽时前端也只发这个精度
+      config.ganttRatio = Math.round(
+        clamp(input.ganttRatio, SCHEDULE_GANTT_RATIO_MIN, SCHEDULE_GANTT_RATIO_MAX) * 1000,
+      ) / 1000;
+    }
+    if (typeof input.poolRatio === "number" && Number.isFinite(input.poolRatio)) {
+      config.poolRatio = Math.round(
+        clamp(input.poolRatio, SCHEDULE_POOL_RATIO_MIN, SCHEDULE_POOL_RATIO_MAX) * 1000,
+      ) / 1000;
+    }
+    return Object.keys(config).length > 0 ? config : undefined;
   }
 
   return undefined;

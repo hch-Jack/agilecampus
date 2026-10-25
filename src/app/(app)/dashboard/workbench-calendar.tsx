@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useOptimistic, useTransition } from "react";
+import type { CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { addMonth, calendarGrid, taskCoversDay, ymKey, ymOf, type YM } from "@/lib/calendar";
 import { formatMonthDay, parseDay } from "@/lib/gantt";
@@ -11,6 +12,7 @@ import {
 } from "@/app/(app)/projects/[projectId]/actions";
 import type { TaskPlanSegment } from "@/lib/task-plan";
 import type { WorkbenchTask } from "./workbench-board";
+import { TrackSplitter } from "./track-splitter";
 
 // 月历是日程表的一部分（无独立「日历」标题，由外层日程表承载）。
 // 每格里两类标记：
@@ -51,10 +53,24 @@ export function WorkbenchCalendar({
   tasks,
   plans,
   today,
+  showPool = true,
+  poolRatio,
+  poolRatioMin = 0.2,
+  poolRatioMax = 0.5,
+  onPoolRatioPreview,
+  onPoolRatioCommit,
 }: {
   tasks: WorkbenchTask[];
   plans: Record<string, TaskPlanSegment[]>;
   today: string;
+  /** 任务池是否显示（由日程表卡片的开关控制） */
+  showPool?: boolean;
+  /** 宽卡时任务池占正文宽度的比例；窄卡自动忽略 */
+  poolRatio?: number;
+  poolRatioMin?: number;
+  poolRatioMax?: number;
+  onPoolRatioPreview?: (ratio: number) => void;
+  onPoolRatioCommit?: (ratio: number) => void;
 }) {
   const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -184,8 +200,8 @@ export function WorkbenchCalendar({
   const selectedSegs = selected ? optimisticPlans[selected.id] ?? [] : [];
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <div className="dw-cal">
+      <div className="dw-cal-toolbar flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-baseline gap-2">
           <p className="font-display text-sm tabular-nums text-ink">
             {view.year} 年 {view.month} 月
@@ -223,115 +239,136 @@ export function WorkbenchCalendar({
                 ? `区间起点 ${formatMonthDay(parseDay(rangeAnchor)!)}，再点结束日（点回起点取消）`
                 : `已选「${selected.title}」—${mode === "day" ? "点某天加单天段" : "点两天框一段区间"}`
               : `已选「${selected.title}」—只读角色不可计划`
-            : "从左侧点选任务，再点某天排计划"}
+            : showPool
+              ? "从任务池点选任务，再点某天排计划"
+              : "任务池已隐藏——点上方「任务池」开关重新显示"}
         </p>
       </div>
 
       {error && <p className="text-sm text-high">{error}</p>}
 
-      <div className="flex flex-col gap-4 lg:flex-row">
-        {/* 任务池 */}
-        <div className="ac-card max-h-80 space-y-1 overflow-y-auto p-3 lg:w-64 lg:max-h-none lg:shrink-0">
-          <h3 className="text-xs font-semibold text-ink-soft">任务池（{pool.length}）</h3>
-          <ul className="space-y-1">
-            {pool.map((t) => {
-              const canWrite = WRITE_ROLES.includes(t.role);
-              const isSel = t.id === selectedId;
-              const segs = optimisticPlans[t.id] ?? [];
-              return (
-                <li key={t.id}>
-                  <button
-                    type="button"
-                    onClick={() => canWrite && (isSel ? deselect() : setSelectedId(t.id))}
-                    disabled={!canWrite}
-                    className={`flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-xs transition ${
-                      isSel
-                        ? "bg-primary-soft text-primary ring-1 ring-primary/50"
-                        : canWrite
-                          ? "hover:bg-surface text-ink"
-                          : "text-ink-faint"
-                    }`}
-                    title={t.title}
-                  >
-                    <span
-                      className={`h-2 w-2 shrink-0 rounded-sm ${STATUS_SOFT[t.status] ?? "bg-low-soft"}`}
-                    />
-                    <span className="truncate">{t.title}</span>
-                    <span className="ml-auto shrink-0 tabular-nums text-[10px] text-ink-faint">
-                      {segs.length ? `${segs.length} 段` : "未计划"}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-          {selected && canPlan && (
-            <div className="space-y-2 pt-2">
-              {/* 单天 / 区间 模式 */}
-              <div className="flex gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMode("day");
-                    setRangeAnchor(null);
-                  }}
-                  aria-pressed={mode === "day"}
-                  className={`ac-badge ${mode === "day" ? "bg-primary text-white" : "bg-surface text-ink-soft hover:bg-primary-soft"}`}
-                >
-                  单天
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMode("range");
-                    setRangeAnchor(null);
-                  }}
-                  aria-pressed={mode === "range"}
-                  className={`ac-badge ${mode === "range" ? "bg-primary text-white" : "bg-surface text-ink-soft hover:bg-primary-soft"}`}
-                >
-                  区间
-                </button>
-              </div>
-              {/* 已有段：点 × 移除 */}
-              {selectedSegs.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {selectedSegs.map((s) => (
+      <div
+        className="dw-cal-body"
+        style={{ "--dw-pool-basis": `${(poolRatio ?? 0.3) * 100}%` } as CSSProperties}
+      >
+        {/* 任务池：窄卡里横排成一条可左右滑的 chip 带，宽卡才恢复左侧竖栏 */}
+        {showPool && (
+          <div className="ac-card dw-cal-pool p-2">
+            <h3 className="text-xs font-semibold text-ink-soft">任务池（{pool.length}）</h3>
+            <ul className="dw-cal-pool-list">
+              {pool.map((t) => {
+                const canWrite = WRITE_ROLES.includes(t.role);
+                const isSel = t.id === selectedId;
+                const segs = optimisticPlans[t.id] ?? [];
+                return (
+                  <li key={t.id}>
                     <button
                       type="button"
-                      key={segKey(s)}
-                      onClick={() => removeSegment(s)}
-                      className="ac-badge bg-primary-soft text-primary hover:brightness-95"
-                      title="移除这段"
+                      onClick={() => canWrite && (isSel ? deselect() : setSelectedId(t.id))}
+                      disabled={!canWrite}
+                      className={`dw-cal-pool-item flex items-center gap-1.5 rounded px-2 py-1 text-left text-xs transition ${
+                        isSel
+                          ? "bg-primary-soft text-primary ring-1 ring-primary/50"
+                          : canWrite
+                            ? "hover:bg-surface text-ink"
+                            : "text-ink-faint"
+                      }`}
+                      title={t.title}
                     >
-                      {fmtSeg(s)} ×
+                      <span
+                        className={`h-2 w-2 shrink-0 rounded-sm ${STATUS_SOFT[t.status] ?? "bg-low-soft"}`}
+                      />
+                      <span className="truncate">{t.title}</span>
+                      <span className="dw-cal-pool-meta ml-auto shrink-0 tabular-nums text-[10px] text-ink-faint">
+                        {segs.length ? `${segs.length} 段` : "未计划"}
+                      </span>
                     </button>
-                  ))}
-                </div>
-              )}
-              <div className="flex gap-2">
-                {selectedSegs.length > 0 && (
+                  </li>
+                );
+              })}
+            </ul>
+            {selected && canPlan && (
+              <div className="dw-cal-controls space-y-2 pt-2">
+                {/* 单天 / 区间 模式 */}
+                <div className="flex gap-1.5">
                   <button
                     type="button"
-                    onClick={clearAll}
-                    className="ac-badge bg-high-soft text-high hover:brightness-95"
+                    onClick={() => {
+                      setMode("day");
+                      setRangeAnchor(null);
+                    }}
+                    aria-pressed={mode === "day"}
+                    className={`ac-badge ${mode === "day" ? "bg-primary text-white" : "bg-surface text-ink-soft hover:bg-primary-soft"}`}
                   >
-                    清除全部
+                    单天
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("range");
+                      setRangeAnchor(null);
+                    }}
+                    aria-pressed={mode === "range"}
+                    className={`ac-badge ${mode === "range" ? "bg-primary text-white" : "bg-surface text-ink-soft hover:bg-primary-soft"}`}
+                  >
+                    区间
+                  </button>
+                </div>
+                {/* 已有段：点 × 移除 */}
+                {selectedSegs.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {selectedSegs.map((s) => (
+                      <button
+                        type="button"
+                        key={segKey(s)}
+                        onClick={() => removeSegment(s)}
+                        className="ac-badge bg-primary-soft text-primary hover:brightness-95"
+                        title="移除这段"
+                      >
+                        {fmtSeg(s)} ×
+                      </button>
+                    ))}
+                  </div>
                 )}
-                <button
-                  type="button"
-                  onClick={deselect}
-                  className="ac-badge bg-surface text-ink-soft hover:bg-primary-soft"
-                >
-                  取消
-                </button>
+                <div className="flex gap-2">
+                  {selectedSegs.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={clearAll}
+                      className="ac-badge bg-high-soft text-high hover:brightness-95"
+                    >
+                      清除全部
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={deselect}
+                    className="ac-badge bg-surface text-ink-soft hover:bg-primary-soft"
+                  >
+                    取消
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
+
+        {/* 宽卡时任务池是左栏，这条竖拖拽条改它的宽度占比（窄卡自动隐藏） */}
+        {showPool && onPoolRatioPreview && onPoolRatioCommit && (
+          <TrackSplitter
+            orientation="x"
+            label="调整任务池与月历的宽度比例"
+            min={poolRatioMin}
+            max={poolRatioMax}
+            value={poolRatio}
+            onPreview={onPoolRatioPreview}
+            onCommit={onPoolRatioCommit}
+            className="dw-cal-split"
+          />
+        )}
 
         {/* 月历网格 */}
-        <div className="ac-card flex-1 p-3">
+        <div className="ac-card dw-cal-grid flex-1 p-3">
           <div className="mb-1 grid grid-cols-7 gap-px text-center text-[11px] text-ink-faint">
             {WEEKDAYS.map((w) => (
               <span key={w} className="py-1">
@@ -356,7 +393,7 @@ export function WorkbenchCalendar({
                   type="button"
                   key={day}
                   onClick={() => onDayClick(day)}
-                  className={`flex min-h-20 flex-col border p-1 text-left align-top transition hover:bg-surface ${
+                  className={`dw-cal-day flex flex-col border p-1 text-left align-top transition hover:bg-surface ${
                     isAnchor
                       ? "border-primary ring-1 ring-primary/60"
                       : "border-line"
