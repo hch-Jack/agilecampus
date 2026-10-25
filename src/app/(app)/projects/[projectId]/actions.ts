@@ -11,7 +11,8 @@ import {
 } from "@/lib/task-plan";
 import { setTaskLabels } from "@/lib/label";
 import { createMilestone } from "@/lib/project";
-import { AppError, ForbiddenError } from "@/lib/errors";
+import { AppError, ApprovalRequestedError, ForbiddenError } from "@/lib/errors";
+import { ATTACHMENT_MAX_SIZE, uploadAttachment } from "@/lib/attachment";
 
 export type FormState = { error: string } | null;
 // 更新任务专用：成功回 { ok: true }，供编辑弹窗据以自闭
@@ -277,4 +278,69 @@ export async function updateTaskAction(
   }
   revalidatePath(`/projects/${projectId}`);
   return { ok: true };
+}
+
+// —— 完成申请提交（完成情况说明 + 附件 + 触发审批）——
+
+const submitCompletionSchema = z.object({
+  taskId: z.uuid(),
+  projectId: z.uuid(),
+  completionNote: z.string().trim().min(1, "请填写完成情况"),
+});
+
+export type SubmitCompletionResult =
+  | { ok: true; approvalRequested: boolean }
+  | { error: string };
+
+/** 附件个数上限：完成资料够用且不拖慢一次提交 */
+const COMPLETION_MAX_FILES = 5;
+
+/**
+ * 学生提交完成申请：先传附件（此时任务仍在进行中，附件路径合法），
+ * 再标 done——学生会被审批流拦截（即申请已受理），管理员直接完成。
+ * 拦截型错误在这里是「预期成功」，须转成 ok 返回，别让弹窗当失败展示。
+ */
+export async function submitCompletionAction(
+  formData: FormData,
+): Promise<SubmitCompletionResult> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+
+  const parsed = submitCompletionSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  const files = formData
+    .getAll("files")
+    .filter((f): f is File => f instanceof File && f.size > 0);
+  if (files.length > COMPLETION_MAX_FILES)
+    return { error: `附件最多 ${COMPLETION_MAX_FILES} 个` };
+  for (const f of files) {
+    if (f.size > ATTACHMENT_MAX_SIZE) return { error: `附件「${f.name}」超过 10MB` };
+  }
+
+  try {
+    for (const f of files) {
+      await uploadAttachment(session.user.id, parsed.data.taskId, {
+        filename: f.name,
+        mimeType: f.type || null,
+        size: f.size,
+        data: Buffer.from(await f.arrayBuffer()),
+      });
+    }
+    try {
+      await updateTask(session.user.id, parsed.data.taskId, {
+        status: "done",
+        completionNote: parsed.data.completionNote,
+      });
+      // 未被拦截 = 操作者是审批者本人（管理员），任务直接完成
+      return { ok: true, approvalRequested: false };
+    } catch (e) {
+      // 学生：完成申请已受理，任务保持未完成状态
+      if (e instanceof ApprovalRequestedError) return { ok: true, approvalRequested: true };
+      throw e;
+    }
+  } catch (e) {
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
 }

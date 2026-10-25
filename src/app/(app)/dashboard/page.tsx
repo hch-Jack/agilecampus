@@ -13,8 +13,8 @@ import { listMyTeams } from "@/lib/team";
 import { listMyTeamResourceUsages } from "@/lib/resource";
 import {
   isApproverAnywhere,
+  listMyTaskApprovalSummaries,
   listPendingApprovalsForApprover,
-  listPendingTaskDoneTaskIds,
 } from "@/lib/approval";
 import { listMyRecentAttachments } from "@/lib/attachment";
 import { countUnread } from "@/lib/dm";
@@ -89,12 +89,26 @@ export default async function DashboardPage({
       r.parentTaskId ? [[r.parentTaskId, r] as const] : [],
     ),
   );
-  // 学生提交的完成申请未决时，看板卡片打「待审批」角标（任务仍在待办/进行中列）
-  const pendingApprovalTasks = await listPendingTaskDoneTaskIds(myTasks.map((t) => t.id));
+  // 我名下任务的完成审批状态（作为申请人的最近一次）：卡片渲染醒目徽章，点开看详情
+  const approvalSummaries = await listMyTaskApprovalSummaries(
+    userId,
+    myTasks.map((t) => t.id),
+  );
   const enriched: WorkbenchTask[] = myTasks.map((t) => {
     const p = byParent.get(t.id);
-    const extra = pendingApprovalTasks.has(t.id) ? { pendingApproval: true } : {};
-    return p ? { ...t, subTotal: p.total, subDone: p.done, ...extra } : { ...t, ...extra };
+    const a = approvalSummaries.get(t.id);
+    return {
+      ...t,
+      ...(p ? { subTotal: p.total, subDone: p.done } : {}),
+      ...(a
+        ? {
+            approvalStatus: a.status,
+            approvalApproverName: a.approverName,
+            approvalDecidedAt: a.decidedAt,
+            approvalRequestedAt: a.createdAt,
+          }
+        : {}),
+    };
   });
 
   // 筛选管线：统计/动态流用全量；看板先过项目再过 hideDone

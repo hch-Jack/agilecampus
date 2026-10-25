@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { teams } from "@/db/schema";
 import { getTeamMembership } from "@/lib/team";
 import { listTeamResourceUsages } from "@/lib/resource";
+import { listMyResourceRequests } from "@/lib/approval";
 import { formatShortDateTime } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
 import { ResourceForm } from "./resource-form";
@@ -37,6 +38,8 @@ export default async function ResourcesPage({
 
   const tz = await resolveUserTimeZone(session.user.id);
   const { usages, byUser, byResource } = await listTeamResourceUsages(session.user.id, teamId);
+  // 我的占用申请（学生提交待老师/管理员审批的那份），与任务完成审批同款的状态可见性
+  const myRequests = await listMyResourceRequests(session.user.id, teamId);
   const active = usages.filter((u) => u.active);
   const canEnd = (userId: string) => userId === session.user.id || me.role === "admin";
 
@@ -54,6 +57,36 @@ export default async function ResourcesPage({
       </header>
 
       <ResourceForm teamId={teamId} timeZone={tz} needsApproval={me.role === "student"} />
+
+      {myRequests.length > 0 && (
+        <section className="ac-card p-5">
+          <h2 className="font-display text-base font-semibold text-ink">我的申请</h2>
+          <ul className="mt-3 space-y-2.5">
+            {myRequests.map((r) => (
+              <li key={r.id} className="flex items-baseline justify-between gap-2 text-sm">
+                <span className="min-w-0">
+                  <span className="block truncate font-medium text-ink">{r.resourceName}</span>
+                  <span className="block truncate text-xs text-ink-faint">
+                    {formatShortDateTime(tz, r.createdAt)} 提交
+                    {r.decidedAt && r.approverName
+                      ? ` · ${r.approverName} 于 ${formatShortDateTime(tz, r.decidedAt)} 决定`
+                      : " · 等待老师或管理员审批"}
+                  </span>
+                </span>
+                {r.status === "pending" && (
+                  <span className="ac-badge shrink-0 bg-medium-soft text-medium">审批中</span>
+                )}
+                {r.status === "approved" && (
+                  <span className="ac-badge shrink-0 bg-done/10 text-done">已通过</span>
+                )}
+                {r.status === "rejected" && (
+                  <span className="ac-badge shrink-0 bg-high-soft text-high">已驳回</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {/* 时长汇总 */}
       <div className="grid gap-4 sm:grid-cols-2">

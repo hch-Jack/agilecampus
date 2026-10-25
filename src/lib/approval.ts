@@ -11,12 +11,14 @@
  * 老师身份不越权审批；建团者恒为 admin）。通知走站内私信（dm），申请时提醒
  * 审批人、决定后回执申请人——消息页的未读/轮询基础设施自动生效。
  */
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db, type DbTx } from "@/db";
 import {
   approvalRequests,
   projects,
   resourceUsages,
+  systemMessages,
+  taskAttachments,
   tasks,
   teamMembers,
   teams,
@@ -27,7 +29,6 @@ import {
 } from "@/db/schema";
 import { AppError, ForbiddenError, isUniqueViolation } from "./errors";
 import { getTeamMembership } from "./team";
-import { sendDm } from "./dm";
 import { recordTaskActivity } from "./activity";
 import { notifyTaskCompleted } from "./notify";
 
@@ -40,13 +41,17 @@ export function isApproverRole(role: TeamRole): boolean {
   return APPROVER_ROLES.includes(role);
 }
 
-// 私信发送失败不阻断主流程（与 notify.ts 的 fire-and-forget 同口径）
-async function notifyDmSafe(fromId: string, toId: string, content: string): Promise<void> {
-  if (fromId === toId) return;
+// 系统消息写入失败不阻断主流程（与 notify.ts 的 fire-and-forget 同口径）
+async function notifySystemSafe(
+  userId: string,
+  approvalId: string,
+  content: string,
+  exec: typeof db | DbTx = db,
+): Promise<void> {
   try {
-    await sendDm(fromId, toId, { content });
+    await exec.insert(systemMessages).values({ userId, approvalId, content });
   } catch (e) {
-    console.error("[approval] 审批私信发送失败", e);
+    console.error("[approval] 系统消息写入失败", e);
   }
 }
 
@@ -177,27 +182,24 @@ export async function requestTaskCompletion(
   if (!task) throw new AppError("任务不存在");
 
   // 申请行落库；同任务已有 pending 时 partial unique index 报错，转成可读文案
+  let requestId: string;
   try {
-    await exec.insert(approvalRequests).values({
-      teamId: task.teamId,
-      requesterId: actorId,
-      type: "task_done",
-      taskId,
-    });
+    const [row] = await exec
+      .insert(approvalRequests)
+      .values({ teamId: task.teamId, requesterId: actorId, type: "task_done", taskId })
+      .returning({ id: approvalRequests.id });
+    requestId = row.id;
   } catch (e) {
     if (isUniqueViolation(e)) throw new AppError("该任务已有待审批的完成申请");
     throw e;
   }
 
+  const [requester] = await exec.select({ name: users.name }).from(users).where(eq(users.id, actorId));
+  const content = `【完成审批】${requester?.name ?? "有成员"} 申请完成任务「${task.title}」（${task.projectName}）`;
   const approverIds = (await listTeamApproverIds(task.teamId, exec)).map((r) => r.userId);
   for (const approverId of approverIds) {
-    // 事务路径下私信在申请行提交前发出：站内消息纯 DB 写，最坏情况是外层事务
-    // 回滚后审批人多收到一条无源头的提醒，可接受（与 fire-and-forget 通知同口径）
-    void notifyDmSafe(
-      actorId,
-      approverId,
-      `【完成审批】${task.projectName} 的任务「${task.title}」申请标记完成，请到工作台「待办审批」卡片处理。`,
-    );
+    if (approverId === actorId) continue;
+    await notifySystemSafe(approverId, requestId!, content, exec);
   }
 }
 
@@ -231,24 +233,27 @@ export async function requestResourceUsage(
   if (input.endTime && input.endTime.getTime() <= input.startTime.getTime())
     throw new AppError("结束时间须晚于开始时间");
 
-  await db.insert(approvalRequests).values({
-    teamId,
-    requesterId: actorId,
-    type: "resource_usage",
-    resourceName: name,
-    purpose: input.purpose?.trim() || null,
-    startTime: input.startTime,
-    endTime: input.endTime ?? null,
-  });
+  const [row] = await db
+    .insert(approvalRequests)
+    .values({
+      teamId,
+      requesterId: actorId,
+      type: "resource_usage",
+      resourceName: name,
+      purpose: input.purpose?.trim() || null,
+      startTime: input.startTime,
+      endTime: input.endTime ?? null,
+    })
+    .returning({ id: approvalRequests.id });
+  const requestId = row.id;
 
   const [team] = await db.select({ name: teams.name }).from(teams).where(eq(teams.id, teamId));
+  const [requester] = await db.select({ name: users.name }).from(users).where(eq(users.id, actorId));
+  const content = `【资源审批】${requester?.name ?? "有成员"} 申请占用「${name}」（${team?.name ?? "团队"}）`;
   const approverIds = (await listTeamApproverIds(teamId)).map((r) => r.userId);
   for (const approverId of approverIds) {
-    void notifyDmSafe(
-      actorId,
-      approverId,
-      `【资源审批】${team?.name ?? "团队"} 的资源「${name}」申请占用，请到工作台「待办审批」卡片处理。`,
-    );
+    if (approverId === actorId) continue;
+    await notifySystemSafe(approverId, requestId, content);
   }
 }
 
@@ -334,12 +339,12 @@ export async function decideApproval(
     }
   });
 
-  // 回执申请人（事务已提交）
+  // 回执申请人（事务已提交）：结果也走系统消息，与申请提醒同栏
   const [approver] = await db.select({ name: users.name }).from(users).where(eq(users.id, actorId));
   const approverName = approver?.name ?? "管理员";
-  await notifyDmSafe(
-    actorId,
+  await notifySystemSafe(
     request.requesterId,
+    requestId,
     decision === "approved"
       ? `【审批通过】你申请${objectText}已获通过（审批人：${approverName}）。`
       : `【审批被拒】你申请${objectText}未获通过（审批人：${approverName}），如有疑问请与其沟通。`,
@@ -350,12 +355,302 @@ export async function decideApproval(
 }
 
 /** 决定后的申请行状态（测试用） */
-
-/** 决定后的申请行状态（测试用） */
 export async function getApprovalStatus(requestId: string): Promise<ApprovalStatus | null> {
   const [row] = await db
     .select({ status: approvalRequests.status })
     .from(approvalRequests)
     .where(eq(approvalRequests.id, requestId));
   return row?.status ?? null;
+}
+
+// —— 系统消息 ——
+
+/** 消息页「系统消息」一栏的一行。canDecide：这条申请正等着我批（老师/管理员视角） */
+export type SystemMessageRow = {
+  id: string;
+  approvalId: string;
+  content: string;
+  readAt: Date | null;
+  createdAt: Date;
+  // 来自关联审批的上下文
+  approvalType: ApprovalType;
+  approvalStatus: ApprovalStatus;
+  taskId: string | null;
+  projectId: string | null;
+  taskTitle: string | null;
+  resourceName: string | null;
+  purpose: string | null;
+  startTime: Date | null;
+  endTime: Date | null;
+  requesterName: string;
+  canDecide: boolean;
+};
+
+export async function listMySystemMessages(userId: string, limit = 30): Promise<SystemMessageRow[]> {
+  const rows = await db
+    .select({
+      id: systemMessages.id,
+      approvalId: systemMessages.approvalId,
+      content: systemMessages.content,
+      readAt: systemMessages.readAt,
+      createdAt: systemMessages.createdAt,
+      approvalType: approvalRequests.type,
+      approvalStatus: approvalRequests.status,
+      teamId: approvalRequests.teamId,
+      taskId: approvalRequests.taskId,
+      projectId: tasks.projectId,
+      taskTitle: tasks.title,
+      resourceName: approvalRequests.resourceName,
+      purpose: approvalRequests.purpose,
+      startTime: approvalRequests.startTime,
+      endTime: approvalRequests.endTime,
+      requesterName: users.name,
+    })
+    .from(systemMessages)
+    .innerJoin(approvalRequests, eq(systemMessages.approvalId, approvalRequests.id))
+    .innerJoin(users, eq(approvalRequests.requesterId, users.id))
+    .leftJoin(tasks, eq(approvalRequests.taskId, tasks.id))
+    .where(eq(systemMessages.userId, userId))
+    .orderBy(desc(systemMessages.createdAt))
+    .limit(limit);
+
+  if (rows.length === 0) return [];
+
+  // canDecide：批量取我在涉及团队里的角色（每个 teamId 只进一次集合再在内存判）
+  const teamIds = [...new Set(rows.map((r) => r.teamId))];
+  const myRoles = await db
+    .select({ teamId: teamMembers.teamId, role: teamMembers.role })
+    .from(teamMembers)
+    .where(and(eq(teamMembers.userId, userId), inArray(teamMembers.teamId, teamIds)));
+  const roleByTeam = new Map(myRoles.map((r) => [r.teamId, r.role]));
+
+  return rows.map((r) => ({
+    id: r.id,
+    approvalId: r.approvalId,
+    content: r.content,
+    readAt: r.readAt,
+    createdAt: r.createdAt,
+    approvalType: r.approvalType,
+    approvalStatus: r.approvalStatus,
+    taskId: r.taskId,
+    projectId: r.projectId,
+    taskTitle: r.taskTitle,
+    resourceName: r.resourceName,
+    purpose: r.purpose,
+    startTime: r.startTime,
+    endTime: r.endTime,
+    requesterName: r.requesterName,
+    canDecide:
+      r.approvalStatus === "pending" && isApproverRole(roleByTeam.get(r.teamId) ?? "student"),
+  }));
+}
+
+export async function countUnreadSystemMessages(userId: string): Promise<number> {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(systemMessages)
+    .where(and(eq(systemMessages.userId, userId), isNull(systemMessages.readAt)));
+  return row?.count ?? 0;
+}
+
+/** 展开系统消息栏即全部置读（与 dm 打开会话即已读的口径一致） */
+export async function markSystemMessagesRead(userId: string): Promise<void> {
+  await db
+    .update(systemMessages)
+    .set({ readAt: sql`now()` })
+    .where(and(eq(systemMessages.userId, userId), isNull(systemMessages.readAt)));
+}
+
+/**
+ * 审批详情：审批人弹小窗查看申请内容（任务完成说明+附件 / 资源申请快照），
+ * 学生本人也可回看结果。权限：该审批所在团队的老师/管理员，或申请人本人。
+ */
+export type ApprovalDetail = {
+  approvalId: string;
+  type: ApprovalType;
+  status: ApprovalStatus;
+  requesterName: string;
+  taskId: string | null;
+  projectId: string | null;
+  taskTitle: string | null;
+  resourceName: string | null;
+  purpose: string | null;
+  // 资源申请快照的起止时间（任务完成申请为 null）
+  startTime: Date | null;
+  endTime: Date | null;
+  completionNote: string | null;
+  decidedAt: Date | null;
+  approverName: string | null;
+  // 任务完成申请：任务页附件（学生作为「完成资料」上传的就在其中）
+  attachments: { id: string; filename: string; mimeType: string | null; size: number }[];
+};
+
+export async function getApprovalDetail(
+  actorId: string,
+  approvalId: string,
+): Promise<ApprovalDetail> {
+  const [row] = await db
+    .select({
+      teamId: approvalRequests.teamId,
+      requesterId: approvalRequests.requesterId,
+      requesterName: users.name,
+      type: approvalRequests.type,
+      status: approvalRequests.status,
+      taskId: approvalRequests.taskId,
+      projectId: tasks.projectId,
+      taskTitle: tasks.title,
+      completionNote: tasks.completionNote,
+      resourceName: approvalRequests.resourceName,
+      purpose: approvalRequests.purpose,
+      startTime: approvalRequests.startTime,
+      endTime: approvalRequests.endTime,
+      decidedAt: approvalRequests.decidedAt,
+    })
+    .from(approvalRequests)
+    .innerJoin(users, eq(approvalRequests.requesterId, users.id))
+    .leftJoin(tasks, eq(approvalRequests.taskId, tasks.id))
+    .where(eq(approvalRequests.id, approvalId));
+  if (!row) throw new AppError("审批不存在");
+
+  if (row.requesterId !== actorId) {
+    const membership = await getTeamMembership(actorId, row.teamId);
+    if (!membership || !isApproverRole(membership.role)) throw new ForbiddenError();
+  }
+
+  let approverName: string | null = null;
+  if (row.decidedAt) {
+    const [decided] = await db
+      .select({ approverId: approvalRequests.approverId })
+      .from(approvalRequests)
+      .where(eq(approvalRequests.id, approvalId));
+    if (decided?.approverId) {
+      const [u] = await db.select({ name: users.name }).from(users).where(eq(users.id, decided.approverId));
+      approverName = u?.name ?? null;
+    }
+  }
+
+  const attachments = row.taskId
+    ? await db
+        .select({
+          id: taskAttachments.id,
+          filename: taskAttachments.filename,
+          mimeType: taskAttachments.mimeType,
+          size: taskAttachments.size,
+        })
+        .from(taskAttachments)
+        .where(eq(taskAttachments.taskId, row.taskId))
+        .orderBy(desc(taskAttachments.createdAt))
+    : [];
+
+  return {
+    approvalId,
+    type: row.type,
+    status: row.status,
+    requesterName: row.requesterName,
+    taskId: row.taskId,
+    projectId: row.projectId,
+    taskTitle: row.taskTitle,
+    resourceName: row.resourceName,
+    purpose: row.purpose,
+    startTime: row.startTime,
+    endTime: row.endTime,
+    completionNote: row.completionNote,
+    decidedAt: row.decidedAt,
+    approverName,
+    attachments,
+  };
+}
+
+/**
+ * 工作台看板徽章用：我在这些任务上**作为申请人**的最近一次审批状态。
+ * 拒绝后重新申请会有多行，取最新一条即当前状态。
+ */
+export type TaskApprovalSummary = {
+  taskId: string;
+  status: ApprovalStatus;
+  approverName: string | null;
+  decidedAt: Date | null;
+  createdAt: Date;
+};
+
+export async function listMyTaskApprovalSummaries(
+  userId: string,
+  taskIds: string[],
+): Promise<Map<string, TaskApprovalSummary>> {
+  if (taskIds.length === 0) return new Map();
+  const rows = await db
+    .select({
+      taskId: approvalRequests.taskId,
+      status: approvalRequests.status,
+      approverName: users.name,
+      decidedAt: approvalRequests.decidedAt,
+      createdAt: approvalRequests.createdAt,
+    })
+    .from(approvalRequests)
+    .leftJoin(users, eq(approvalRequests.approverId, users.id))
+    .where(
+      and(
+        eq(approvalRequests.requesterId, userId),
+        eq(approvalRequests.type, "task_done"),
+        inArray(approvalRequests.taskId, taskIds),
+      ),
+    )
+    .orderBy(desc(approvalRequests.createdAt));
+
+  const map = new Map<string, TaskApprovalSummary>();
+  for (const r of rows) {
+    if (r.taskId && !map.has(r.taskId)) {
+      map.set(r.taskId, {
+        taskId: r.taskId,
+        status: r.status,
+        approverName: r.approverName,
+        decidedAt: r.decidedAt,
+        createdAt: r.createdAt,
+      });
+    }
+  }
+  return map;
+}
+
+/** 资源页「我的申请」：我的资源占用申请，倒序（与任务完成审批同款的状态可见性） */
+export type MyResourceRequestRow = {
+  id: string;
+  resourceName: string | null;
+  purpose: string | null;
+  startTime: Date | null;
+  endTime: Date | null;
+  status: ApprovalStatus;
+  approverName: string | null;
+  decidedAt: Date | null;
+  createdAt: Date;
+};
+
+export async function listMyResourceRequests(
+  userId: string,
+  teamId: string,
+  limit = 10,
+): Promise<MyResourceRequestRow[]> {
+  return db
+    .select({
+      id: approvalRequests.id,
+      resourceName: approvalRequests.resourceName,
+      purpose: approvalRequests.purpose,
+      startTime: approvalRequests.startTime,
+      endTime: approvalRequests.endTime,
+      status: approvalRequests.status,
+      approverName: users.name,
+      decidedAt: approvalRequests.decidedAt,
+      createdAt: approvalRequests.createdAt,
+    })
+    .from(approvalRequests)
+    .leftJoin(users, eq(approvalRequests.approverId, users.id))
+    .where(
+      and(
+        eq(approvalRequests.requesterId, userId),
+        eq(approvalRequests.teamId, teamId),
+        eq(approvalRequests.type, "resource_usage"),
+      ),
+    )
+    .orderBy(desc(approvalRequests.createdAt))
+    .limit(limit);
 }

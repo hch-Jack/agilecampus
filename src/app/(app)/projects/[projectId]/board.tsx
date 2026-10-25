@@ -17,6 +17,7 @@ import type { GroupBy } from "@/lib/board-filters";
 import { moveTaskAction } from "./actions";
 import { TaskCard } from "./task-card";
 import { ACTIVITY_NEW_EVENT } from "@/components/activity-feed";
+import { CompletionRequestModal } from "@/components/completion-request-modal";
 
 export type Option = { id: string; name: string };
 
@@ -74,6 +75,7 @@ export function Board({
   tasks,
   groupBy,
   canWrite,
+  viewerRole,
   members,
   milestones,
 }: {
@@ -81,6 +83,8 @@ export function Board({
   tasks: BoardTask[];
   groupBy: GroupBy;
   canWrite: boolean;
+  /** 看板访问者在团队里的角色：学生拖到「已完成」要走完成申请弹窗 */
+  viewerRole: "admin" | "teacher" | "student";
   members: Option[];
   milestones: Option[];
 }) {
@@ -93,6 +97,8 @@ export function Board({
       current.map((t) => (t.id === move.taskId ? { ...t, ...move.patch } : t)),
   );
   const [activeTask, setActiveTask] = useState<BoardTask | null>(null);
+  // 学生拖到「已完成」→ 完成申请弹窗（确认 + 完成情况/附件），任务留在原列
+  const [completionTask, setCompletionTask] = useState<BoardTask | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
   );
@@ -113,6 +119,12 @@ export function Board({
     const task = optimisticTasks.find((t) => t.id === taskId);
     // 已在目标列则无须提交
     if (!column || !task || column.matches(task)) return;
+
+    // 学生把任务拖到「已完成」：不直接落列，先弹完成申请窗
+    if (column.patch.status === "done" && viewerRole === "student" && task.status !== "done") {
+      setCompletionTask(task);
+      return;
+    }
 
     startTransition(async () => {
       setError(null);
@@ -150,6 +162,14 @@ export function Board({
           />
         ))}
       </div>
+      {completionTask && (
+        <CompletionRequestModal
+          taskId={completionTask.id}
+          projectId={projectId}
+          taskTitle={completionTask.title}
+          onClose={() => setCompletionTask(null)}
+        />
+      )}
       {/* 拖拽浮层：卡片跟手，原位留低透明幽灵（样式见 project.css 的 proj-ghost） */}
       <DragOverlay dropAnimation={null}>
         {activeTask ? (

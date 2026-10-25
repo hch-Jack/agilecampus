@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { IdentityBadge } from "@/components/badges";
 import { FilePreviewModal } from "@/components/file-preview";
 import { detectPreviewKind } from "@/lib/file-preview";
@@ -23,6 +23,8 @@ import {
   kickMemberAction,
   leaveGroupAction,
   listMyGroupInvitesAction,
+  listSystemMessagesAction,
+  markSystemMessagesReadAction,
   openConversationAction,
   openGroupConversationAction,
   respondToGroupInviteAction,
@@ -30,6 +32,9 @@ import {
   sendGroupMessageAction,
   sendMessageAction,
 } from "./actions";
+import { decideApprovalAction } from "@/app/(app)/dashboard/actions";
+import type { SystemMessageRow } from "@/lib/approval";
+import { SystemApprovalModal } from "./system-approval-modal";
 
 // 单文件上限与 lib/dm.ts 的 DM_ATTACHMENT_MAX_SIZE 一致，客户端先拦一道省一次往返
 const FILE_MAX_SIZE = 10 * 1024 * 1024;
@@ -171,6 +176,77 @@ function AttachmentLink({
   );
 }
 
+// 系统消息单条：审批人可直接 通过/拒绝 或点开详情；结果回执纯展示
+function SystemMessageItem({
+  m,
+  timeZone,
+  onOpenDetail,
+  onDecided,
+}: {
+  m: SystemMessageRow;
+  timeZone: string;
+  onOpenDetail: (m: SystemMessageRow) => void;
+  onDecided: () => void;
+}) {
+  const [busy, startTransition] = useTransition();
+  const [error, setError] = useState("");
+
+  function decide(decision: "approved" | "rejected") {
+    startTransition(async () => {
+      setError("");
+      const r = await decideApprovalAction({ requestId: m.approvalId, decision });
+      if ("error" in r) {
+        setError(r.error);
+        return;
+      }
+      onDecided();
+    });
+  }
+
+  return (
+    <li className={`px-3 py-2 ${m.readAt ? "" : "bg-primary-soft/40"}`}>
+      <p className="text-xs leading-relaxed text-ink-soft">{m.content}</p>
+      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+        <span className="text-[11px] text-ink-faint">{fmtTime(timeZone, m.createdAt.toISOString())}</span>
+        {m.approvalStatus === "approved" && (
+          <span className="ac-badge bg-done/10 text-done">已通过</span>
+        )}
+        {m.approvalStatus === "rejected" && (
+          <span className="ac-badge bg-high-soft text-high">已驳回</span>
+        )}
+        <button
+          type="button"
+          onClick={() => onOpenDetail(m)}
+          className="text-[11px] text-primary underline underline-offset-2"
+        >
+          {m.approvalType === "task_done" ? "查看完成情况" : "查看申请详情"}
+        </button>
+        {m.canDecide && (
+          <>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => decide("approved")}
+              className="ac-btn px-2 py-0.5 text-[11px] disabled:opacity-50"
+            >
+              通过
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => decide("rejected")}
+              className="ac-btn-ghost px-2 py-0.5 text-[11px] disabled:opacity-50"
+            >
+              拒绝
+            </button>
+          </>
+        )}
+      </div>
+      {error && <p className="mt-1 text-[11px] text-high">{error}</p>}
+    </li>
+  );
+}
+
 // 群聊气泡：他人消息气泡上方标发送人名；群聊无已读回执，时间行不带 已读/未读
 function GroupBubble({
   m,
@@ -233,6 +309,11 @@ export function MessagesClient({
   const [invites, setInvites] = useState<GroupInviteView[]>([]);
   const [invitesOpen, setInvitesOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+
+  // 系统消息（审批通知）：申请提醒给审批人、结果回执给申请人
+  const [systemMsgs, setSystemMsgs] = useState<SystemMessageRow[]>([]);
+  const [systemOpen, setSystemOpen] = useState(false);
+  const [detailRow, setDetailRow] = useState<SystemMessageRow | null>(null);
 
   // 当前打开的会话；peer 是私信头部，group 是群头部（每次轮询整包替换，成员条自动纠偏）
   const [selection, setSelection] = useState<Selection>(null);
@@ -304,6 +385,15 @@ export function MessagesClient({
     }
   }, []);
 
+  const refreshSystemMsgs = useCallback(async () => {
+    try {
+      const r = await listSystemMessagesAction();
+      if (r.ok) setSystemMsgs(r.data);
+    } catch {
+      // 轮询失败静默，下一轮再试
+    }
+  }, []);
+
   // 全量拉私信（顺带把未读置为已读）。换人时先清空，避免闪现上一个人的消息。
   const refreshDmMsgs = useCallback(async (id: string) => {
     try {
@@ -348,6 +438,7 @@ export function MessagesClient({
     const tick = async () => {
       await refreshConvs();
       await refreshInvites();
+      await refreshSystemMsgs();
       const a = activeRef.current;
       if (a?.kind === "dm") await refreshDmMsgs(a.id);
       else if (a?.kind === "group") await refreshGroupMsgs(a.id);
@@ -355,7 +446,7 @@ export function MessagesClient({
     tick();
     const timer = setInterval(tick, POLL_MS);
     return () => clearInterval(timer);
-  }, [refreshConvs, refreshInvites, refreshDmMsgs, refreshGroupMsgs]);
+  }, [refreshConvs, refreshInvites, refreshSystemMsgs, refreshDmMsgs, refreshGroupMsgs]);
 
   // 助手深链：打开目标会话，并等消息到位后滚到那条消息。
   // 已经停在消息页时再让助手跳一条，路由只会换 query、组件不卸载，
@@ -631,6 +722,18 @@ export function MessagesClient({
     refreshConvs();
   }
 
+  // —— 系统消息（审批通知） ——
+
+  function toggleSystem() {
+    const opening = !systemOpen;
+    setSystemOpen(opening);
+    if (opening) {
+      // 展开即全部置读：本地先标掉红点，服务端由 action 落库
+      setSystemMsgs((prev) => prev.map((m) => (m.readAt ? m : { ...m, readAt: new Date() })));
+      void markSystemMessagesReadAction();
+    }
+  }
+
   // —— 发送（私信/群聊共用一套表单） ——
 
   async function handleSend(e: React.FormEvent) {
@@ -767,6 +870,18 @@ export function MessagesClient({
 
   return (
     <div className="proj-page-enter">
+      {detailRow && (
+        <SystemApprovalModal
+          approvalId={detailRow.approvalId}
+          canDecide={detailRow.canDecide}
+          timeZone={timeZone}
+          onClose={() => setDetailRow(null)}
+          onDecided={() => {
+            setDetailRow(null);
+            refreshSystemMsgs();
+          }}
+        />
+      )}
       {notice && (
         <div className="mb-2 flex items-center justify-between rounded-field border border-line bg-sunken px-3 py-1.5 text-xs text-ink-soft">
           <span>{notice}</span>
@@ -783,6 +898,51 @@ export function MessagesClient({
       <div className="grid h-[72vh] min-h-[480px] grid-cols-1 overflow-hidden rounded-field border border-line bg-surface sm:grid-cols-[280px_1fr]">
         {/* 左栏：搜索 + 建群 + 邀请 + 统一消息列表 */}
         <aside className={`flex-col border-r border-line ${selection ? "hidden sm:flex" : "flex"}`}>
+          {/* 系统消息：审批通知（申请提醒/结果回执）都在这一栏 */}
+          <div className="border-b border-line">
+            <button
+              type="button"
+              onClick={toggleSystem}
+              className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-sunken"
+            >
+              <span
+                aria-hidden
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-primary-soft text-base"
+              >
+                🔔
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium text-ink">系统消息</span>
+                <span className="block truncate text-xs text-ink-faint">
+                  {systemMsgs[0]
+                    ? systemMsgs[0].content
+                    : "审批申请与结果都会出现在这里"}
+                </span>
+              </span>
+              {systemMsgs.some((m) => !m.readAt) && (
+                <UnreadBadge count={systemMsgs.filter((m) => !m.readAt).length} />
+              )}
+            </button>
+            {systemOpen && (
+              <div className="max-h-72 overflow-y-auto pb-2">
+                {systemMsgs.length === 0 ? (
+                  <p className="px-3 pb-1 text-xs text-ink-faint">暂无系统消息</p>
+                ) : (
+                  <ul>
+                    {systemMsgs.map((m) => (
+                      <SystemMessageItem
+                        key={m.id}
+                        m={m}
+                        timeZone={timeZone}
+                        onOpenDetail={setDetailRow}
+                        onDecided={refreshSystemMsgs}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
           <form onSubmit={handleSearch} className="border-b border-line p-3">
             <div className="flex gap-2">
               <input

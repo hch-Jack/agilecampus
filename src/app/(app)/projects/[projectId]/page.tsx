@@ -165,6 +165,7 @@ export default async function ProjectPage({
             };
           })}
           canWrite={canWrite}
+          viewerRole={role}
           members={members}
           milestones={projectMilestones.map((m) => ({ id: m.id, name: m.title }))}
         />
