@@ -92,6 +92,8 @@ export type DashboardApproval = {
 
 /** 整页一次性装配的数据；加卡不需要再请求服务端 */
 export type DashboardData = {
+  /** 是否在任一团队担任审批人：决定「恢复默认」用的是老师/管理员默认布局还是通用默认 */
+  isApprover: boolean;
   visibleTasks: WorkbenchTask[];
   plans: Record<string, TaskPlanSegment[]>;
   doneCount: number;

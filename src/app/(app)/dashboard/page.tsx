@@ -138,6 +138,7 @@ export default async function DashboardPage({
     }));
 
   const data: DashboardData = {
+    isApprover,
     visibleTasks,
     plans,
     doneCount,

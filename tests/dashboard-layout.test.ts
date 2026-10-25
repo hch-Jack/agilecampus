@@ -97,6 +97,13 @@ describe("卡片目录与默认布局", () => {
     });
     expect(projectItem!.y).toBeGreaterThan(approvalsItem!.y);
   });
+
+  it("恢复默认的归一化链路不吞掉审批人的待办审批卡", () => {
+    // 编辑模式「恢复默认」= normalizeLayoutDoc(defaultDashboardLayoutFor(isApprover))
+    const approverDoc = normalizeLayoutDoc(defaultDashboardLayoutFor(true));
+    expect(approverDoc.items.map((item) => item.type)).toContain("approvals");
+    expect(normalizeLayoutDoc(defaultDashboardLayoutFor(false))).toEqual(DEFAULT_DASHBOARD_LAYOUT);
+  });
 });
 
 describe("normalizeLayoutDoc", () => {
