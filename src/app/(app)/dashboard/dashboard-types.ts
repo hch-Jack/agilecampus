@@ -33,6 +33,8 @@ export type DashboardMessages = {
   dm: number;
   group: number;
   invites: number;
+  /** 未读系统消息（审批申请与结果回执） */
+  system: number;
 };
 
 /** 跨项目的待完成里程碑（按目标日期升序） */
@@ -90,6 +92,8 @@ export type DashboardApproval = {
 
 /** 整页一次性装配的数据；加卡不需要再请求服务端 */
 export type DashboardData = {
+  /** 是否在任一团队担任审批人：决定「恢复默认」用的是老师/管理员默认布局还是通用默认 */
+  isApprover: boolean;
   visibleTasks: WorkbenchTask[];
   plans: Record<string, TaskPlanSegment[]>;
   doneCount: number;

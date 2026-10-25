@@ -130,10 +130,12 @@ export function MyTeamsWidget({ teams }: { teams: DashboardTeam[] }) {
 }
 
 export function MessagesWidget({ messages }: { messages: DashboardMessages }) {
+  // 系统消息和另外三个格子同款式；点它直接落到消息页的系统消息会话
   const items = [
-    { key: "dm", label: "私信", value: messages.dm },
-    { key: "group", label: "群聊", value: messages.group },
-    { key: "invites", label: "群邀请", value: messages.invites },
+    { key: "dm", label: "私信", value: messages.dm, href: "/messages" },
+    { key: "group", label: "群聊", value: messages.group, href: "/messages" },
+    { key: "invites", label: "群邀请", value: messages.invites, href: "/messages" },
+    { key: "system", label: "系统消息", value: messages.system, href: "/messages?system=1" },
   ] as const;
 
   return (
@@ -142,7 +144,7 @@ export function MessagesWidget({ messages }: { messages: DashboardMessages }) {
         {items.map((item) => (
           <Link
             key={item.key}
-            href="/messages"
+            href={item.href}
             className="dw-tile rounded-lg border border-line bg-surface px-2 py-2 text-center transition-colors hover:border-primary/50"
           >
             <p

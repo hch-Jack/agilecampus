@@ -136,9 +136,10 @@
   font-size: 0.875rem;
 }
 
+/* 私信 / 群聊 / 群邀请 / 系统消息 四个瓦片 */
 .dw-tile-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -315,14 +316,14 @@
   }
 
   /* 消息 / 快捷入口：改成一行小瓦片，隐藏说明文字 */
-  .dw-tile-grid,
-  .dw-links {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+  .dw-tile-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 4px;
   }
 
   .dw-links {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
   }
 
   .dw-tile {
@@ -855,6 +856,21 @@ body.proj-cosmic .dashboard-shell {
 body.proj-cosmic .workbench-card.is-overdue {
   border-color: var(--dw-overdue-line);
   background-color: var(--dw-overdue-soft);
+}
+
+/* 待办审批卡还有未处理申请：整卡暖橙底 + 橙边，和「逾期」同一套橙色语义。
+   宇宙主题的 `body.proj-cosmic .ac-card` 会压回深蓝玻璃，需要更高层级覆盖。 */
+.dashboard-widget-alert .dashboard-widget-inner {
+  border-color: var(--dw-overdue-line);
+  background-color: var(--dw-overdue-soft);
+  box-shadow: inset 0 0 0 1px var(--dw-overdue-line);
+}
+body.proj-cosmic .dashboard-widget-alert .dashboard-widget-inner {
+  border-color: var(--dw-overdue-line);
+  background-color: var(--dw-overdue-soft);
+  box-shadow:
+    inset 0 0 0 1px var(--dw-overdue-line),
+    0 8px 24px -14px rgba(0, 0, 0, 0.55);
 }
 
 /* 看板列：窄卡片单列堆叠，宽到 560px 才按当前列数排开。

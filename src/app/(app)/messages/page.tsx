@@ -56,6 +56,15 @@ export default async function MessagesPage({
   // 数据全走 client 轮询的 server action（会话列表 + 会话内消息），页面只做登录门禁；
   // 时区要在服务端定下来传给客户端 —— 客户端只知道浏览器时区，那不是用户的偏好
   const timeZone = await resolveUserTimeZone(session.user.id);
-  const initialTarget = await resolveJumpTarget(session.user.id, await searchParams);
-  return <MessagesClient timeZone={timeZone} initialTarget={initialTarget} />;
+  const sp = await searchParams;
+  const initialTarget = await resolveJumpTarget(session.user.id, sp);
+  // 工作台「系统消息」瓦片的深链：直接打开系统消息会话（审批通知）
+  const initialSystem = one(sp.system) === "1" && !initialTarget;
+  return (
+    <MessagesClient
+      timeZone={timeZone}
+      initialTarget={initialTarget}
+      initialSystem={initialSystem}
+    />
+  );
 }

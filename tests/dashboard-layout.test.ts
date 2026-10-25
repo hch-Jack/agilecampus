@@ -80,6 +80,30 @@ describe("卡片目录与默认布局", () => {
     assertNoOverlap(approverDoc.items);
     expect(defaultDashboardLayoutFor(false)).toEqual(DEFAULT_DASHBOARD_LAYOUT);
   });
+
+  it("审批人的待办审批卡占据「我的项目」原位置，我的项目顺延到下面", () => {
+    const approverDoc = defaultDashboardLayoutFor(true);
+    const oldProjectSlot = DEFAULT_DASHBOARD_LAYOUT.items.find(
+      (item) => item.type === "my_projects",
+    );
+    const approvalsItem = approverDoc.items.find((item) => item.type === "approvals");
+    const projectItem = approverDoc.items.find((item) => item.type === "my_projects");
+    expect(oldProjectSlot).toBeDefined();
+    expect(approvalsItem).toBeDefined();
+    expect(projectItem).toBeDefined();
+    expect({ x: approvalsItem!.x, y: approvalsItem!.y }).toEqual({
+      x: oldProjectSlot!.x,
+      y: oldProjectSlot!.y,
+    });
+    expect(projectItem!.y).toBeGreaterThan(approvalsItem!.y);
+  });
+
+  it("恢复默认的归一化链路不吞掉审批人的待办审批卡", () => {
+    // 编辑模式「恢复默认」= normalizeLayoutDoc(defaultDashboardLayoutFor(isApprover))
+    const approverDoc = normalizeLayoutDoc(defaultDashboardLayoutFor(true));
+    expect(approverDoc.items.map((item) => item.type)).toContain("approvals");
+    expect(normalizeLayoutDoc(defaultDashboardLayoutFor(false))).toEqual(DEFAULT_DASHBOARD_LAYOUT);
+  });
 });
 
 describe("normalizeLayoutDoc", () => {

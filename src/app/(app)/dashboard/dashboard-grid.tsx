@@ -10,8 +10,8 @@ import {
 } from "react";
 import {
   DASHBOARD_WIDGETS,
-  DEFAULT_DASHBOARD_LAYOUT,
   addWidget,
+  defaultDashboardLayoutFor,
   moveWidget,
   normalizeLayoutDoc,
   removeWidget,
@@ -293,7 +293,9 @@ export function DashboardGrid({
     ) {
       return;
     }
-    commit(normalizeLayoutDoc(DEFAULT_DASHBOARD_LAYOUT));
+    // 审批人恢复的是「带待办审批卡」的默认布局，与首次进入时一致；
+    // 这里不能直接用通用 DEFAULT_DASHBOARD_LAYOUT，否则审批卡会凭空消失。
+    commit(normalizeLayoutDoc(defaultDashboardLayoutFor(data.isApprover)));
   }
 
   function handleConfigChange(id: string) {
@@ -528,6 +530,7 @@ export function DashboardGrid({
                 title={DASHBOARD_WIDGETS[item.type].title}
                 editing={editing}
                 dragging={activeId === item.id}
+                alert={item.type === "approvals" && data.approvals.length > 0}
                 onRemove={() => handleRemove(item.id)}
                 onDragStart={(e) => begin(e, item.id, "move")}
                 onResizeStart={(e) => begin(e, item.id, "resize")}

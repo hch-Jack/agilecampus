@@ -4,6 +4,9 @@
  * import 任何东西，postgres 驱动就会被打进浏览器包。
  */
 
+/** 拒绝原因的长度上限：对话框 maxLength、server action 校验与落库截断共用 */
+export const DECISION_NOTE_MAX_LENGTH = 200;
+
 export function approvalDetailHref(row: {
   type: "task_done" | "resource_usage";
   taskId: string | null;

@@ -8,10 +8,11 @@
  *   管理员登记沿用原直登路径，不经审批。
  *
  * 审批人口径：团队角色 admin 或 teacher（team_members.role 单值，学生角色的
- * 老师身份不越权审批；建团者恒为 admin）。通知走站内私信（dm），申请时提醒
- * 审批人、决定后回执申请人——消息页的未读/轮询基础设施自动生效。
+ * 老师身份不越权审批；建团者恒为 admin）。通知走站内**系统消息**：申请时提醒
+ * 审批人、决定后回执申请人（拒绝原因随回执带给申请人）。
  */
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { db, type DbTx } from "@/db";
 import {
   approvalRequests,
@@ -28,6 +29,7 @@ import {
   type TeamRole,
 } from "@/db/schema";
 import { AppError, ForbiddenError, isUniqueViolation } from "./errors";
+import { DECISION_NOTE_MAX_LENGTH } from "./approval-view";
 import { getTeamMembership } from "./team";
 import { recordTaskActivity } from "./activity";
 import { notifyTaskCompleted } from "./notify";
@@ -272,7 +274,11 @@ export async function decideApproval(
   actorId: string,
   requestId: string,
   decision: ApprovalDecision,
+  note?: string | null,
 ): Promise<void> {
+  // 拒绝原因由审批人随手填，留空即沿用通用文案；超长截断避免撑爆消息卡片
+  const decisionNote =
+    decision === "rejected" && note?.trim() ? note.trim().slice(0, DECISION_NOTE_MAX_LENGTH) : null;
   const [request] = await db
     .select()
     .from(approvalRequests)
@@ -300,7 +306,12 @@ export async function decideApproval(
     // 原子抢占 pending
     const [decided] = await tx
       .update(approvalRequests)
-      .set({ status: decision, approverId: actorId, decidedAt: sql`now()` })
+      .set({
+        status: decision,
+        approverId: actorId,
+        decidedAt: sql`now()`,
+        decisionNote,
+      })
       .where(and(eq(approvalRequests.id, requestId), eq(approvalRequests.status, "pending")))
       .returning();
     if (!decided) throw new AppError("该审批已被处理");
@@ -347,7 +358,9 @@ export async function decideApproval(
     requestId,
     decision === "approved"
       ? `【审批通过】你申请${objectText}已获通过（审批人：${approverName}）。`
-      : `【审批被拒】你申请${objectText}未获通过（审批人：${approverName}），如有疑问请与其沟通。`,
+      : decisionNote
+        ? `【审批被拒】你申请${objectText}未获通过（审批人：${approverName}）。拒绝原因：${decisionNote}`
+        : `【审批被拒】你申请${objectText}未获通过（审批人：${approverName}），如有疑问请与其沟通。`,
   );
 
   // 通过的任务走既有完成通知口径（知会创建者/负责人）
@@ -375,6 +388,8 @@ export type SystemMessageRow = {
   // 来自关联审批的上下文
   approvalType: ApprovalType;
   approvalStatus: ApprovalStatus;
+  /** 申请所在团队：任务完成与资源占用都能据此拼出「跳转」目标 */
+  teamId: string;
   taskId: string | null;
   projectId: string | null;
   taskTitle: string | null;
@@ -384,6 +399,8 @@ export type SystemMessageRow = {
   endTime: Date | null;
   requesterName: string;
   canDecide: boolean;
+  /** 审批人拒绝时填写的原因（通过/未决为空） */
+  decisionNote: string | null;
 };
 
 export async function listMySystemMessages(userId: string, limit = 30): Promise<SystemMessageRow[]> {
@@ -405,6 +422,7 @@ export async function listMySystemMessages(userId: string, limit = 30): Promise<
       startTime: approvalRequests.startTime,
       endTime: approvalRequests.endTime,
       requesterName: users.name,
+      decisionNote: approvalRequests.decisionNote,
     })
     .from(systemMessages)
     .innerJoin(approvalRequests, eq(systemMessages.approvalId, approvalRequests.id))
@@ -432,6 +450,7 @@ export async function listMySystemMessages(userId: string, limit = 30): Promise<
     createdAt: r.createdAt,
     approvalType: r.approvalType,
     approvalStatus: r.approvalStatus,
+    teamId: r.teamId,
     taskId: r.taskId,
     projectId: r.projectId,
     taskTitle: r.taskTitle,
@@ -442,6 +461,7 @@ export async function listMySystemMessages(userId: string, limit = 30): Promise<
     requesterName: r.requesterName,
     canDecide:
       r.approvalStatus === "pending" && isApproverRole(roleByTeam.get(r.teamId) ?? "student"),
+    decisionNote: r.decisionNote,
   }));
 }
 
@@ -453,7 +473,7 @@ export async function countUnreadSystemMessages(userId: string): Promise<number>
   return row?.count ?? 0;
 }
 
-/** 展开系统消息栏即全部置读（与 dm 打开会话即已读的口径一致） */
+/** 打开系统消息会话即全部置读（与 dm 打开会话即已读的口径一致） */
 export async function markSystemMessagesRead(userId: string): Promise<void> {
   await db
     .update(systemMessages)
@@ -481,6 +501,8 @@ export type ApprovalDetail = {
   completionNote: string | null;
   decidedAt: Date | null;
   approverName: string | null;
+  /** 拒绝原因（审批人填写；通过或未决为空） */
+  decisionNote: string | null;
   // 任务完成申请：任务页附件（学生作为「完成资料」上传的就在其中）
   attachments: { id: string; filename: string; mimeType: string | null; size: number }[];
 };
@@ -505,6 +527,7 @@ export async function getApprovalDetail(
       startTime: approvalRequests.startTime,
       endTime: approvalRequests.endTime,
       decidedAt: approvalRequests.decidedAt,
+      decisionNote: approvalRequests.decisionNote,
     })
     .from(approvalRequests)
     .innerJoin(users, eq(approvalRequests.requesterId, users.id))
@@ -557,6 +580,7 @@ export async function getApprovalDetail(
     completionNote: row.completionNote,
     decidedAt: row.decidedAt,
     approverName,
+    decisionNote: row.decisionNote,
     attachments,
   };
 }
@@ -653,4 +677,75 @@ export async function listMyResourceRequests(
     )
     .orderBy(desc(approvalRequests.createdAt))
     .limit(limit);
+}
+
+/**
+ * 工作台看板「审批记录」弹窗：与我有关的全部审批（我发起的 + 我审批过的），
+ * 倒序。学生只看得到自己发起的；老师/管理员两种方向都能看到，客户端按
+ * direction 分组展示。决定时间、拒绝原因一并带回，作为「回复」列。
+ */
+export type ApprovalHistoryRow = {
+  id: string;
+  type: ApprovalType;
+  status: ApprovalStatus;
+  /** requested = 我发起；decided = 我审批 */
+  direction: "requested" | "decided";
+  teamId: string;
+  teamName: string;
+  requesterName: string;
+  approverName: string | null;
+  taskId: string | null;
+  projectId: string | null;
+  taskTitle: string | null;
+  resourceName: string | null;
+  purpose: string | null;
+  createdAt: Date;
+  decidedAt: Date | null;
+  decisionNote: string | null;
+};
+
+export async function listMyApprovalHistory(
+  userId: string,
+  limit = 50,
+): Promise<ApprovalHistoryRow[]> {
+  const requester = alias(users, "requester");
+  const approver = alias(users, "approver");
+
+  const rows = await db
+    .select({
+      id: approvalRequests.id,
+      type: approvalRequests.type,
+      status: approvalRequests.status,
+      requesterId: approvalRequests.requesterId,
+      teamId: approvalRequests.teamId,
+      teamName: teams.name,
+      requesterName: requester.name,
+      approverName: approver.name,
+      taskId: approvalRequests.taskId,
+      projectId: tasks.projectId,
+      taskTitle: tasks.title,
+      resourceName: approvalRequests.resourceName,
+      purpose: approvalRequests.purpose,
+      createdAt: approvalRequests.createdAt,
+      decidedAt: approvalRequests.decidedAt,
+      decisionNote: approvalRequests.decisionNote,
+    })
+    .from(approvalRequests)
+    .innerJoin(teams, eq(approvalRequests.teamId, teams.id))
+    .innerJoin(requester, eq(approvalRequests.requesterId, requester.id))
+    .leftJoin(approver, eq(approvalRequests.approverId, approver.id))
+    .leftJoin(tasks, eq(approvalRequests.taskId, tasks.id))
+    .where(
+      or(
+        eq(approvalRequests.requesterId, userId),
+        eq(approvalRequests.approverId, userId),
+      ),
+    )
+    .orderBy(desc(approvalRequests.createdAt))
+    .limit(limit);
+
+  return rows.map(({ requesterId, ...r }) => ({
+    ...r,
+    direction: requesterId === userId ? "requested" : "decided",
+  }));
 }

@@ -110,6 +110,8 @@ export async function createTask(
     milestoneId?: string;
     priority?: TaskPriority;
     parentTaskId?: string;
+    /** 完成是否需要审批；缺省 true（沿用既有审批口径） */
+    requireApproval?: boolean;
   },
   opts?: { tx?: DbTx },
 ) {
@@ -133,6 +135,7 @@ export async function createTask(
       milestoneId: input.milestoneId,
       parentTaskId: input.parentTaskId,
       priority: input.priority ?? "medium",
+      requireApproval: input.requireApproval ?? true,
       sortOrder: Date.now(),
     })
     .returning();
@@ -182,10 +185,12 @@ export async function updateTask(
   // 学生把**顶层任务**标成 done（含待办直跳完成，堵住绕过审批的口子）：不直接改
   // 状态，转成完成审批申请（老师/管理员任一通过才算完成）。子任务不拦（进度颗粒
   // 太细，审批只看父任务）；teacher 只读本就改不了；管理员/老师操作即审批者本人。
+  // requireApproval=false 的任务是创建时明确勾掉审批的，学生可直接完成。
   const completionNeedsApproval =
     patch.status === "done" &&
     task.status !== "done" &&
     !task.parentTaskId &&
+    task.requireApproval &&
     access.role === "student";
 
   // 状态变化落定前撤掉未决的完成申请：拖回待办/进行中=申请人撤回；管理员直接完成=申请被替代
@@ -394,6 +399,7 @@ export async function listProjectTasks(actorId: string, projectId: string) {
       assigneeName: users.name,
       updatedAt: tasks.updatedAt,
       completionNote: tasks.completionNote,
+      requireApproval: tasks.requireApproval,
     })
     .from(tasks)
     .leftJoin(users, eq(tasks.assigneeId, users.id))
@@ -481,6 +487,7 @@ export async function getTaskDetail(actorId: string, taskId: string) {
       parentTaskId: tasks.parentTaskId,
       assigneeId: tasks.assigneeId,
       assigneeName: users.name,
+      requireApproval: tasks.requireApproval,
       updatedAt: tasks.updatedAt,
       createdAt: tasks.createdAt,
     })
@@ -792,6 +799,7 @@ export async function listMyTasks(actorId: string) {
       priority: tasks.priority,
       startDate: tasks.startDate,
       dueDate: tasks.dueDate,
+      requireApproval: tasks.requireApproval,
       sortOrder: tasks.sortOrder,
       projectId: projects.id,
       projectName: projects.name,

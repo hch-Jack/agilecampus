@@ -307,19 +307,19 @@ const DEFAULT_ITEMS: DashboardLayoutItem[] = [
 export const DEFAULT_DASHBOARD_LAYOUT: DashboardLayoutDoc = { v: 1, items: DEFAULT_ITEMS };
 
 /**
- * 老师/管理员的默认布局：在通用默认之上追加「待办审批」卡（放在动态流下方）。
+ * 老师/管理员的默认布局：把「待办审批」卡放进权限内最高频的位置 ——
+ * 通用默认里「我的项目」那一格（日程表右侧第一张），尺寸一并沿用；
+ * 「我的项目」顺延到页尾单独占一行（y=23），不与时钟、快捷入口等右栏卡片重叠。
+ *
  * 只有从未自定义过布局的审批人首次进入时用一次，自定义后完全以库中为准。
  */
 export function defaultDashboardLayoutFor(isApprover: boolean): DashboardLayoutDoc {
   if (!isApprover) return DEFAULT_DASHBOARD_LAYOUT;
-  return {
-    v: 1,
-    items: [
-      ...DEFAULT_ITEMS,
-      // 通用默认的最后一行在 y=20；审批卡另起一行，避免与日程表等新卡重叠
-      { id: "approvals", type: "approvals", x: 0, y: 23, w: 4, h: 4 },
-    ],
-  };
+  const items: DashboardLayoutItem[] = DEFAULT_ITEMS.map((item) =>
+    item.type === "my_projects" ? { ...item, id: "approvals", type: "approvals" } : item,
+  );
+  items.push({ id: "my_projects", type: "my_projects", x: 0, y: 23, w: 4, h: 4 });
+  return { v: 1, items };
 }
 
 function defaultDoc(): DashboardLayoutDoc {
