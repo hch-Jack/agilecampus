@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import {
   approvalRequests,
-  dmMessages,
+  systemMessages,
   resourceUsages,
   taskActivities,
   tasks,
@@ -14,11 +14,16 @@ import { createProject } from "@/lib/project";
 import { createTask, createSubtask, updateTask } from "@/lib/task";
 import { createResourceUsage } from "@/lib/resource";
 import {
+  countUnreadSystemMessages,
   decideApproval,
+  getApprovalDetail,
   getApprovalStatus,
   isApproverAnywhere,
+  listMyResourceRequests,
+  listMySystemMessages,
   listPendingApprovalsForApprover,
   listPendingTaskDoneTaskIds,
+  markSystemMessagesRead,
   requestResourceUsage,
 } from "@/lib/approval";
 import { ApprovalRequestedError, AppError, ForbiddenError } from "@/lib/errors";
@@ -78,14 +83,15 @@ describe("任务完成审批：申请与撤回", () => {
     expect(pending!.requesterId).toBe(student.id);
     expect(pending!.type).toBe("task_done");
 
-    const dms = await db
-      .select({ recipientId: dmMessages.recipientId, content: dmMessages.content })
-      .from(dmMessages)
-      .where(eq(dmMessages.senderId, student.id));
-    const recipients = dms.map((d) => d.recipientId).sort();
+    // 提醒走系统消息（不再建点对点私信）：老师与管理员各一条，学生自己没有
+    const msgs = await db
+      .select({ userId: systemMessages.userId, content: systemMessages.content })
+      .from(systemMessages);
+    const recipients = msgs.map((m) => m.userId).sort();
     expect(recipients).toEqual([admin.id, teacher.id].sort());
-    expect(dms[0].content).toContain("完成审批");
-    expect(dms[0].content).toContain("待办审批");
+    expect(msgs[0].content).toContain("完成审批");
+    expect(await countUnreadSystemMessages(teacher.id)).toBe(1);
+    expect(await listMySystemMessages(student.id)).toHaveLength(0);
   });
 
   it("同一任务同时只允许一条 pending 申请", async () => {
@@ -182,11 +188,16 @@ describe("任务完成审批：决定", () => {
     expect(after.status).toBe("done");
     expect(await getApprovalStatus(pending.id)).toBe("approved");
 
+    // 回执走系统消息；学生与审批人都能打开详情
     const [receipt] = await db
-      .select()
-      .from(dmMessages)
-      .where(and(eq(dmMessages.senderId, teacher.id), eq(dmMessages.recipientId, student.id)));
+      .select({ content: systemMessages.content })
+      .from(systemMessages)
+      .where(eq(systemMessages.userId, student.id));
     expect(receipt.content).toContain("审批通过");
+    const detailForStudent = await getApprovalDetail(student.id, pending.id);
+    expect(detailForStudent.taskTitle).toBe("数据采集");
+    const detailForTeacher = await getApprovalDetail(teacher.id, pending.id);
+    expect(detailForTeacher.requesterName).toBe("student");
 
     // 动态里有补记的状态变更（审批人操作）
     const acts = await db
@@ -228,9 +239,9 @@ describe("任务完成审批：决定", () => {
     expect(after.status).toBe("doing");
 
     const [receipt] = await db
-      .select()
-      .from(dmMessages)
-      .where(and(eq(dmMessages.senderId, admin.id), eq(dmMessages.recipientId, student.id)));
+      .select({ content: systemMessages.content })
+      .from(systemMessages)
+      .where(eq(systemMessages.userId, student.id));
     expect(receipt.content).toContain("审批被拒");
 
     // 拒绝后可重新申请
@@ -313,13 +324,18 @@ describe("资源占用审批", () => {
     expect(usages[0].resourceName).toBe("GPU-01");
 
     const [receipt] = await db
-      .select()
-      .from(dmMessages)
-      .where(and(eq(dmMessages.senderId, teacher.id), eq(dmMessages.recipientId, student.id)));
+      .select({ content: systemMessages.content })
+      .from(systemMessages)
+      .where(eq(systemMessages.userId, student.id));
     expect(receipt.content).toContain("审批通过");
+
+    // 资源申请的详情：申请人自己可回看快照
+    const detail = await getApprovalDetail(student.id, pending.id);
+    expect(detail.type).toBe("resource_usage");
+    expect(detail.resourceName).toBe("GPU-01");
   });
 
-  it("拒绝：不建占用行，学生收到被拒私信", async () => {
+  it("拒绝：不建占用行，学生收到被拒回执", async () => {
     const { admin, student, team } = await scene();
     await requestResourceUsage(student.id, team.id, {
       resourceName: "示波器",
@@ -333,9 +349,9 @@ describe("资源占用审批", () => {
     await decideApproval(admin.id, pending.id, "rejected");
     expect(await db.select().from(resourceUsages)).toHaveLength(0);
     const [receipt] = await db
-      .select()
-      .from(dmMessages)
-      .where(and(eq(dmMessages.senderId, admin.id), eq(dmMessages.recipientId, student.id)));
+      .select({ content: systemMessages.content })
+      .from(systemMessages)
+      .where(eq(systemMessages.userId, student.id));
     expect(receipt.content).toContain("审批被拒");
   });
 
@@ -389,5 +405,80 @@ describe("审批查询辅助", () => {
     expect(await isApproverAnywhere(teacher.id)).toBe(true);
     expect(await isApproverAnywhere(admin.id)).toBe(true);
     expect(await isApproverAnywhere(student.id)).toBe(false);
+  });
+});
+
+describe("系统消息查询", () => {
+  beforeEach(resetDb);
+
+  it("审批人看到申请提醒（canDecide=true），申请人只在有结果后收到回执", async () => {
+    const { student, teacher, task } = await scene();
+    await expect(updateTask(student.id, task.id, { status: "done" })).rejects.toBeInstanceOf(
+      ApprovalRequestedError,
+    );
+
+    const forTeacher = await listMySystemMessages(teacher.id);
+    expect(forTeacher).toHaveLength(1);
+    expect(forTeacher[0].canDecide).toBe(true);
+    expect(forTeacher[0].approvalStatus).toBe("pending");
+    expect(forTeacher[0].approvalType).toBe("task_done");
+    expect(forTeacher[0].taskTitle).toBe("数据采集");
+    expect(forTeacher[0].requesterName).toBe("student");
+    // 未决前学生什么都没有（不看别人的申请）
+    expect(await listMySystemMessages(student.id)).toHaveLength(0);
+
+    const [pending] = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.requesterId, student.id));
+    await decideApproval(teacher.id, pending.id, "approved");
+
+    const forStudent = await listMySystemMessages(student.id);
+    expect(forStudent).toHaveLength(1);
+    expect(forStudent[0].content).toContain("审批通过");
+    expect(forStudent[0].canDecide).toBe(false);
+    expect(forStudent[0].approvalStatus).toBe("approved");
+    // 审批人的原提醒还在，但状态已随之（未决才可批）
+    const teacherAfter = await listMySystemMessages(teacher.id);
+    expect(teacherAfter[0].canDecide).toBe(false);
+  });
+
+  it("展开系统消息栏即置读（markSystemMessagesRead）", async () => {
+    const { student, teacher, task } = await scene();
+    await expect(updateTask(student.id, task.id, { status: "done" })).rejects.toBeInstanceOf(
+      ApprovalRequestedError,
+    );
+    expect(await countUnreadSystemMessages(teacher.id)).toBe(1);
+
+    await markSystemMessagesRead(teacher.id);
+    expect(await countUnreadSystemMessages(teacher.id)).toBe(0);
+    const rows = await listMySystemMessages(teacher.id);
+    expect(rows[0].readAt).not.toBeNull();
+    // 学生的未读不受影响
+    expect(await countUnreadSystemMessages(student.id)).toBe(0);
+  });
+
+  it("listMyResourceRequests：我的资源申请带审批人与决定时刻", async () => {
+    const { student, teacher, team } = await scene();
+    await requestResourceUsage(student.id, team.id, {
+      resourceName: "服务器A",
+      purpose: "部署服务",
+      startTime: new Date("2026-11-05T09:00:00Z"),
+      endTime: new Date("2026-11-05T18:00:00Z"),
+    });
+    const [pending] = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.requesterId, student.id));
+
+    let rows = await listMyResourceRequests(student.id, team.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe("pending");
+
+    await decideApproval(teacher.id, pending.id, "approved");
+    rows = await listMyResourceRequests(student.id, team.id);
+    expect(rows[0].status).toBe("approved");
+    expect(rows[0].approverName).toBe("teacher");
+    expect(rows[0].decidedAt).not.toBeNull();
   });
 });

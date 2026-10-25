@@ -27,6 +27,8 @@ import { moveTaskAction } from "@/app/(app)/projects/[projectId]/actions";
 import { ACTIVITY_NEW_EVENT } from "@/components/activity-feed";
 import { SubtaskProgress } from "@/components/subtask-progress";
 import { dashboardHref } from "@/lib/workbench-filters";
+import { CompletionRequestModal } from "@/components/completion-request-modal";
+import { WorkbenchApprovalModal } from "./approval-status-modal";
 import { isOverdueTask, sortBoardTasks } from "@/lib/workbench-order";
 
 export type WorkbenchTask = {
@@ -41,8 +43,14 @@ export type WorkbenchTask = {
   role: "admin" | "teacher" | "student";
   subTotal?: number;
   subDone?: number;
-  /** 学生的完成申请未决：任务停在待办/进行中列，卡片打角标 */
-  pendingApproval?: boolean;
+  /**
+   * 我（作为申请人）在这个任务上最近一次完成审批的状态；从未申请过则缺省。
+   * 学生据此看到 审批中/已通过/已驳回 的醒目徽章（点开看详情）。
+   */
+  approvalStatus?: "pending" | "approved" | "rejected";
+  approvalApproverName?: string | null;
+  approvalDecidedAt?: Date | null;
+  approvalRequestedAt?: Date | null;
 };
 
 // 与 TASK_WRITE_ROLES（lib/task.ts）同集：admin/student 可写，teacher 只读。
@@ -62,16 +70,50 @@ const COLUMNS = [
   { key: "done", label: "已完成", tone: "text-done" },
 ] as const;
 
+// 完成审批状态的醒目徽章：学生提交完成申请后出现在自己的任务卡上，
+// 点开可看审批详情（审批中/已通过/已驳回）。stopPropagation 防误触拖拽。
+function ApprovalBadge({
+  task,
+  onOpen,
+}: {
+  task: WorkbenchTask;
+  onOpen: () => void;
+}) {
+  if (!task.approvalStatus) return null;
+  const view = {
+    pending: { text: "⏳ 审批中", cls: "border border-medium bg-medium-soft font-medium text-medium" },
+    approved: { text: "✓ 已通过", cls: "border border-done bg-done/10 font-medium text-done" },
+    rejected: { text: "✗ 已驳回", cls: "border border-high bg-high-soft font-medium text-high" },
+  }[task.approvalStatus];
+  return (
+    <button
+      type="button"
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onOpen();
+      }}
+      className={`ac-badge ${view.cls} transition-transform hover:scale-105`}
+      title="查看完成审批情况"
+    >
+      {view.text}
+    </button>
+  );
+}
+
 // 卡片正文（标题 + 项目/优先级/截止 + 子任务进度）。拖拽浮层也复用它，
 // 保证浮层宽度与内容同卡片一致，不会比静止时瘦一圈。
 function WorkbenchCardBody({
   task,
   today,
   onTitleClick,
+  onOpenApproval,
 }: {
   task: WorkbenchTask;
   today: string;
   onTitleClick?: (e: ReactMouseEvent<HTMLAnchorElement>) => void;
+  onOpenApproval?: () => void;
 }) {
   const canWrite = WRITE_ROLES.includes(task.role);
   const overdue = isOverdueTask(task, today);
@@ -91,11 +133,7 @@ function WorkbenchCardBody({
       </Link>
       <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
         <span className="ac-badge bg-primary-soft text-primary">{task.projectName}</span>
-        {task.pendingApproval && (
-          <span className="ac-badge bg-medium-soft text-medium" title="等待老师或管理员审批">
-            完成待审批
-          </span>
-        )}
+        {onOpenApproval && <ApprovalBadge task={task} onOpen={onOpenApproval} />}
         {!canWrite && <span className="ac-badge bg-sunken text-ink-faint">只读</span>}
         <span className={`ac-badge ${PRIORITY_BADGE[task.priority] ?? "bg-low-soft text-low"}`}>
           {task.priority}
@@ -118,10 +156,12 @@ function WorkbenchCard({
   task,
   today,
   locked,
+  onOpenApproval,
 }: {
   task: WorkbenchTask;
   today: string;
   locked: boolean;
+  onOpenApproval?: () => void;
 }) {
   const canWrite = WRITE_ROLES.includes(task.role);
   const overdue = isOverdueTask(task, today);
@@ -174,6 +214,7 @@ function WorkbenchCard({
               suppressClickRef.current = false;
             }
           }}
+          onOpenApproval={onOpenApproval}
         />
       </div>
     </div>
@@ -185,11 +226,13 @@ function Column({
   tasks,
   today,
   locked,
+  onOpenApproval,
 }: {
   column: (typeof COLUMNS)[number];
   tasks: WorkbenchTask[];
   today: string;
   locked: boolean;
+  onOpenApproval: (task: WorkbenchTask) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.key, disabled: locked });
   // 逾期卡片置顶、逾期最久的在前；非逾期保持服务端顺序
@@ -207,7 +250,13 @@ function Column({
         <span className="ac-badge bg-surface text-ink-soft">{tasks.length}</span>
       </h3>
       {ordered.map((t) => (
-        <WorkbenchCard key={t.id} task={t} today={today} locked={locked} />
+        <WorkbenchCard
+          key={t.id}
+          task={t}
+          today={today}
+          locked={locked}
+          onOpenApproval={t.approvalStatus ? () => onOpenApproval(t) : undefined}
+        />
       ))}
     </div>
   );
@@ -216,6 +265,7 @@ function Column({
 export function WorkbenchBoard({
   tasks,
   today,
+  timeZone,
   doneCount,
   hideDone,
   chips,
@@ -224,6 +274,8 @@ export function WorkbenchBoard({
 }: {
   tasks: WorkbenchTask[];
   today: string;
+  /** 用户时区（审批详情里的时刻按它显示；服务端算好传入） */
+  timeZone: string;
   doneCount: number;
   hideDone: boolean;
   chips: { id: string; name: string }[];
@@ -238,6 +290,9 @@ export function WorkbenchBoard({
   // 再留一个空列只会白占三分之一宽度
   const columns = hideDone ? COLUMNS.filter((c) => c.key !== "done") : COLUMNS;
   const [activeTask, setActiveTask] = useState<WorkbenchTask | null>(null);
+  // 学生拖到「已完成」→ 完成申请弹窗（确认 + 填写完成情况/附件）；审批详情弹窗
+  const [completionTask, setCompletionTask] = useState<WorkbenchTask | null>(null);
+  const [approvalTask, setApprovalTask] = useState<WorkbenchTask | null>(null);
   // 浮层宽度取被拖卡片的实际宽度：看板卡随工作台网格缩放，不能写死 262px
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const [optimisticTasks, moveOptimistic] = useOptimistic(
@@ -275,6 +330,12 @@ export function WorkbenchBoard({
     if (!task || task.status === key) return;
 
     const patch: ColumnPatch = { status: key };
+    // 学生把任务拖到「已完成」：不直接落列，先弹完成申请窗（确认 + 完成情况/附件）。
+    // 任务停留在原列，提交受理后由整页回流带出「审批中」徽章。
+    if (key === "done" && task.role === "student" && task.status !== "done") {
+      setCompletionTask(task);
+      return;
+    }
     startTransition(async () => {
       setError(null);
       moveOptimistic({ taskId, patch });
@@ -363,6 +424,7 @@ export function WorkbenchBoard({
                 tasks={optimisticTasks.filter((t) => t.status === col.key)}
                 today={today}
                 locked={locked}
+                onOpenApproval={setApprovalTask}
               />
             ))}
           </div>
@@ -375,6 +437,25 @@ export function WorkbenchBoard({
           </p>
         )}
       </div>
+      {completionTask && (
+        <CompletionRequestModal
+          taskId={completionTask.id}
+          projectId={completionTask.projectId}
+          taskTitle={completionTask.title}
+          onClose={() => setCompletionTask(null)}
+        />
+      )}
+      {approvalTask?.approvalStatus && (
+        <WorkbenchApprovalModal
+          taskTitle={approvalTask.title}
+          status={approvalTask.approvalStatus}
+          approverName={approvalTask.approvalApproverName}
+          decidedAt={approvalTask.approvalDecidedAt}
+          requestedAt={approvalTask.approvalRequestedAt}
+          timeZone={timeZone}
+          onClose={() => setApprovalTask(null)}
+        />
+      )}
       <DragOverlay dropAnimation={null}>
         {activeTask ? (
           <div

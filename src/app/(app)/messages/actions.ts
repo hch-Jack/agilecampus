@@ -31,6 +31,14 @@ import {
   type GroupMessageView,
   type UnifiedConversation,
 } from "@/lib/group-chat";
+import {
+  countUnreadSystemMessages,
+  getApprovalDetail,
+  listMySystemMessages,
+  markSystemMessagesRead,
+  type ApprovalDetail,
+  type SystemMessageRow,
+} from "@/lib/approval";
 
 // 注意：本文件是 "use server"，只能导出异步函数——共享类型从 @/lib/dm、@/lib/group-chat
 // 用 `import type` 引入即可（编译期擦除），切勿在此 `export type {}` 再导出，Turbopack 会
@@ -82,12 +90,13 @@ export async function getConversationsAction(): Promise<Result<UnifiedConversati
 
 export async function getUnreadCountAction(): Promise<Result<number>> {
   return withUser(async (userId) => {
-    const [dm, group, invites] = await Promise.all([
+    const [dm, group, invites, system] = await Promise.all([
       countUnread(userId),
       countGroupUnread(userId),
       countPendingGroupInvites(userId),
+      countUnreadSystemMessages(userId),
     ]);
-    return dm + group + invites;
+    return dm + group + invites + system;
   });
 }
 
@@ -221,4 +230,23 @@ export async function dissolveGroupAction(groupId: string): Promise<Result<null>
     await dissolveGroup(userId, parsed.data);
     return null;
   });
+}
+
+// —— 系统消息（审批通知）：列表 / 已读 / 审批详情 ——
+
+export async function listSystemMessagesAction(): Promise<Result<SystemMessageRow[]>> {
+  return withUser((userId) => listMySystemMessages(userId));
+}
+
+/** 展开系统消息栏即全部置读（与打开私信会话即已读同口径） */
+export async function markSystemMessagesReadAction(): Promise<Result<null>> {
+  return withUser(async (userId) => {
+    await markSystemMessagesRead(userId);
+    return null;
+  });
+}
+
+/** 审批详情：任务完成申请回完成说明+附件；资源申请回快照。审批人或申请人可读 */
+export async function getApprovalDetailAction(approvalId: string): Promise<Result<ApprovalDetail>> {
+  return withUser((userId) => getApprovalDetail(userId, approvalId));
 }

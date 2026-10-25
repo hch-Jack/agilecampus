@@ -715,6 +715,32 @@ export const approvalRequests = pgTable(
   ],
 );
 
+/**
+ * 系统消息：审批流的通知落点（替代以往的点对点私信）。
+ * 收件人在消息页「系统消息」一栏看到：申请提醒（给审批人）与结果回执（给申请人）。
+ * approvalId 关联审批行——审批行删除（任务删除级联等）时消息随之消失。
+ * readAt 由收件人展开系统消息栏时批量置为 now()，与 dm_messages 的已读口径一致。
+ */
+export const systemMessages = pgTable(
+  "system_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    approvalId: uuid("approval_id")
+      .notNull()
+      .references(() => approvalRequests.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    readAt: dbTimestamp("read_at"),
+    createdAt: dbTimestampNow("created_at").notNull(),
+  },
+  (t) => [
+    index("system_messages_user_created_idx").on(t.userId, t.createdAt),
+    index("system_messages_approval_idx").on(t.approvalId),
+  ],
+);
+
 // 个人任务计划：工作台日历里「我打算什么时候做这个任务」的自记。
 // 与任务官方起止日（tasks.start_date/due_date）无关——那是排期，这是个人安排；
 // 任务官方起止在日历里只读标记，个人计划段才是可编辑的。一个任务可有多段

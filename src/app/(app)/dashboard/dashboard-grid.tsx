@@ -342,6 +342,7 @@ export function DashboardGrid({
           <WorkbenchBoard
             tasks={data.visibleTasks}
             today={data.today}
+            timeZone={data.tz}
             doneCount={data.doneCount}
             hideDone={data.hideDone}
             chips={data.chips}
