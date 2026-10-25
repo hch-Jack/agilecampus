@@ -4,6 +4,8 @@ import { createTeam, joinTeam, listMyTeams } from "@/lib/team";
 import { createProject } from "@/lib/project";
 import { listTeamResourceUsages } from "@/lib/resource";
 import { listTeamLabels } from "@/lib/label";
+import { createTask } from "@/lib/task";
+import { uploadAttachment } from "@/lib/attachment";
 import { createGroup, inviteToGroup, listGroupConversations, listMyGroupInvites } from "@/lib/group-chat";
 import { listMyPersonalContext } from "@/lib/personal-context";
 import {
@@ -212,6 +214,35 @@ describe("POST /api/chat", () => {
     // 路径与标签都由服务端生成，模型只报了目标与 id
     expect(data.navigations).toEqual([
       { label: "赤壁演习", href: `/projects/${project.id}` },
+    ]);
+  });
+
+  it("open_file 的附件预览随响应下发 files", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "交材料" });
+    const att = await uploadAttachment(owner.id, task.id, {
+      filename: "说明.docx",
+      mimeType: null,
+      size: 3,
+      data: Buffer.from("abc"),
+    });
+    authMock.userId = student.id;
+    useScript([
+      toolStep("open_file", { attachmentId: att.id, source: "task" }),
+      textStep("已为你打开说明.docx。"),
+    ]);
+
+    const res = await chatRoute(req({ scope: "personal", userText: "打开说明文档" }));
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { files: unknown[] };
+    // URL 与元数据都由服务端按附件 id 生成，模型只报了 id 与来源
+    expect(data.files).toEqual([
+      {
+        url: `/api/attachments/${att.id}`,
+        filename: "说明.docx",
+        mimeType: null,
+        size: 3,
+      },
     ]);
   });
 

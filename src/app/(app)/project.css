@@ -406,3 +406,11 @@ body.proj-cosmic .assistant-panel {
     transition: none !important;
   }
 }
+
+/* —— 13. 附件预览弹窗 —— */
+/* 同第 12 节：宇宙主题的 --color-surface 只有 45% 不透明度，
+   预览弹窗若直接用 bg-surface 会把星空和底下的页面文字透上来。 */
+body.proj-cosmic .ac-file-preview {
+  /* 纯色不透明：预览窗口要读文字，不该透出背后的星空 */
+  background-color: #0e1322;
+}

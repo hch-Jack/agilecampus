@@ -98,6 +98,19 @@ describe("任务完成审批：申请与撤回", () => {
     );
   });
 
+  it("学生从待办直跳完成同样被拦截（堵住绕过审批的口子）", async () => {
+    const { student, task, pendingRow } = await scene();
+    // scene 里任务已被挪到进行中；拖回待办后再直跳完成
+    await updateTask(student.id, task.id, { status: "todo" });
+    await expect(updateTask(student.id, task.id, { status: "done" })).rejects.toBeInstanceOf(
+      ApprovalRequestedError,
+    );
+    const pending = (await pendingRow())!;
+    expect(pending).not.toBeNull();
+    const [after] = await db.select().from(tasks).where(eq(tasks.id, task.id));
+    expect(after.status).toBe("todo");
+  });
+
   it("任务拖回待办 = 撤回申请，pending 行删除", async () => {
     const { student, task, pendingRow } = await scene();
     await expect(updateTask(student.id, task.id, { status: "done" })).rejects.toBeInstanceOf(
@@ -183,6 +196,23 @@ describe("任务完成审批：决定", () => {
     expect(acts.some((a) => a.field === "状态" && a.newValue === "已完成")).toBe(true);
 
     await expect(decideApproval(admin.id, pending.id, "approved")).rejects.toThrow("该审批已被处理");
+  });
+
+  it("审批通过走统一完成入口：父任务的完成级联对子任务生效", async () => {
+    const { admin, student, teacher, task, pendingRow } = await scene();
+    const sub = await createSubtask(admin.id, task.id, { title: "子任务", assigneeId: student.id });
+    await expect(updateTask(student.id, task.id, { status: "done" })).rejects.toBeInstanceOf(
+      ApprovalRequestedError,
+    );
+    const pending = (await pendingRow())!;
+
+    // 审批人是 teacher（只读角色）也能通过：approvedBy 豁免写角色检查
+    await decideApproval(teacher.id, pending.id, "approved");
+
+    const [parent] = await db.select().from(tasks).where(eq(tasks.id, task.id));
+    expect(parent.status).toBe("done");
+    const [child] = await db.select().from(tasks).where(eq(tasks.id, sub.id));
+    expect(child.status).toBe("done");
   });
 
   it("拒绝：任务保持进行中，学生收到被拒私信，可重新提交", async () => {

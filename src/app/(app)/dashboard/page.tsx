@@ -4,6 +4,7 @@ import { listMySubtaskProgress, listMyTasks } from "@/lib/task";
 import { getFeedUnreadCount, listMyTaskActivities, WORKBENCH_SCOPE } from "@/lib/activity";
 import { addDays, todayIn, weekdayOfDate } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
+import { listMyTaskPlans } from "@/lib/task-plan";
 import { pickProjectFilter, projectChips } from "@/lib/workbench-filters";
 import { buildWorkbenchStats } from "@/lib/workbench-stats";
 import { getDashboardLayout } from "@/lib/dashboard-layout-store";
@@ -69,6 +70,11 @@ export default async function DashboardPage({
     listPendingApprovalsForApprover(userId),
   ]);
   const layout = await getDashboardLayout(userId, { isApprover });
+  // 个人计划段：本人对这些任务自记的「打算什么时候做」（可多段区间或单天），供日程表日历编辑/展示
+  const plans = await listMyTaskPlans(
+    userId,
+    myTasks.map((t) => t.id),
+  );
 
   // 「今天 / 本周截止」一律按**用户自己的时区**在服务端算成 YYYY-MM-DD，
   // 再由服务端传给看板 —— 客户端不取时钟，免得同一个人在两处看到不同的「今天」。
@@ -83,7 +89,7 @@ export default async function DashboardPage({
       r.parentTaskId ? [[r.parentTaskId, r] as const] : [],
     ),
   );
-  // 学生提交的完成申请未决时，看板卡片打「待审批」角标（任务仍停在「进行中」列）
+  // 学生提交的完成申请未决时，看板卡片打「待审批」角标（任务仍在待办/进行中列）
   const pendingApprovalTasks = await listPendingTaskDoneTaskIds(myTasks.map((t) => t.id));
   const enriched: WorkbenchTask[] = myTasks.map((t) => {
     const p = byParent.get(t.id);
@@ -116,6 +122,7 @@ export default async function DashboardPage({
 
   const data: DashboardData = {
     visibleTasks,
+    plans,
     doneCount,
     hideDone,
     projectFilter,

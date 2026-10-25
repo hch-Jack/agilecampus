@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
 import type { DbTx } from "@/db";
@@ -40,10 +40,16 @@ async function requireProjectAccess(actorId: string, projectId: string) {
   return access;
 }
 
-// 供 lib/label.ts 复用：贴标签属任务写操作，权限口径须与 createTask/updateTask 一致
-export async function requireTaskWrite(actorId: string, projectId: string) {
+// 供 lib/label.ts 复用：贴标签属任务写操作，权限口径须与 createTask/updateTask 一致。
+// approvedBy：仅审批通过路径（decideApproval）使用——审批人可能是只读的 teacher，
+// 写权限已由审批流验证（老师/管理员任一通过），这里豁免写角色检查但保留成员校验。
+export async function requireTaskWrite(
+  actorId: string,
+  projectId: string,
+  opts?: { tx?: DbTx; approvedBy?: boolean },
+) {
   const access = await requireProjectAccess(actorId, projectId);
-  if (!TASK_WRITE_ROLES.includes(access.role)) throw new ForbiddenError();
+  if (!opts?.approvedBy && !TASK_WRITE_ROLES.includes(access.role)) throw new ForbiddenError();
   return access;
 }
 
@@ -153,13 +159,13 @@ export async function updateTask(
     priority?: TaskPriority;
     completionNote?: string | null;
   },
-  opts?: { tx?: DbTx },
+  opts?: { tx?: DbTx; approvedBy?: boolean },
 ) {
   const exec = opts?.tx ?? db;
   const [task] = await exec.select().from(tasks).where(eq(tasks.id, taskId));
   if (!task) throw new AppError("任务不存在");
 
-  const access = await requireTaskWrite(actorId, task.projectId);
+  const access = await requireTaskWrite(actorId, task.projectId, opts);
   if (patch.assigneeId) await validateAssignee(access.project.teamId, patch.assigneeId);
   if (patch.milestoneId) await validateMilestone(task.projectId, patch.milestoneId);
   // 日期校验（口径同 createTask）：patch 只带一侧时与库中另一侧合并成对再验；
@@ -173,20 +179,19 @@ export async function updateTask(
   }
 
   // —— 完成审批拦截 ——
-  // 学生把**顶层任务** doing→done：不直接改状态，转成完成审批申请（老师/管理员
-  // 任一通过才算完成）。子任务不拦（进度颗粒太细，审批只看父任务）；
-  // teacher 只读本就改不了；管理员/老师操作即审批者本人，直接生效。
+  // 学生把**顶层任务**标成 done（含待办直跳完成，堵住绕过审批的口子）：不直接改
+  // 状态，转成完成审批申请（老师/管理员任一通过才算完成）。子任务不拦（进度颗粒
+  // 太细，审批只看父任务）；teacher 只读本就改不了；管理员/老师操作即审批者本人。
   const completionNeedsApproval =
     patch.status === "done" &&
-    task.status === "doing" &&
+    task.status !== "done" &&
     !task.parentTaskId &&
     access.role === "student";
 
-  // 状态变化落定前撤掉未决的完成申请：拖回待办=申请人撤回；管理员直接完成=申请被替代
+  // 状态变化落定前撤掉未决的完成申请：拖回待办/进行中=申请人撤回；管理员直接完成=申请被替代
   if (
     patch.status !== undefined &&
     patch.status !== task.status &&
-    task.status === "doing" &&
     !task.parentTaskId &&
     !completionNeedsApproval
   ) {
@@ -285,6 +290,19 @@ export async function updateTask(
         newValue: c.newValue,
       })),
     );
+
+  // 父任务完成时级联完成所有未完成子任务（看板把父卡拖进「已完成」也走这里）。
+  // 递归沿用同一个 exec / 事务：子级照常写自己的状态动态，并给本任务补 subtask_done。
+  // 只单向级联，父任务被拖回待办时不会把子任务重新打开。
+  if (patch.status === "done" && task.status !== "done") {
+    const openChildren = await exec
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(and(eq(tasks.parentTaskId, taskId), ne(tasks.status, "done")));
+    for (const child of openChildren) {
+      await updateTask(actorId, child.id, { status: "done" }, opts);
+    }
+  }
 
   // 子任务状态跨「已完成」边界时给父任务也记一条，父任务时间线可见子任务进展；
   // 未涉 done 的流转（待办↔进行中）不入父任务动态，避免看板拖拽刷屏
@@ -772,6 +790,7 @@ export async function listMyTasks(actorId: string) {
       title: tasks.title,
       status: tasks.status,
       priority: tasks.priority,
+      startDate: tasks.startDate,
       dueDate: tasks.dueDate,
       sortOrder: tasks.sortOrder,
       projectId: projects.id,

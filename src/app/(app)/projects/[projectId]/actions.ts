@@ -4,6 +4,11 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { createTask, updateTask, setTaskSuccessors } from "@/lib/task";
+import {
+  addTaskPlanSegment,
+  clearTaskPlan,
+  removeTaskPlanSegment,
+} from "@/lib/task-plan";
 import { setTaskLabels } from "@/lib/label";
 import { createMilestone } from "@/lib/project";
 import { AppError, ForbiddenError } from "@/lib/errors";
@@ -88,7 +93,7 @@ export async function createMilestoneAction(
 }
 
 // 拖拽可改的字段白名单。校验与授权仍全数落在 updateTask
-//（指派人须属团队、里程碑须属项目），故此处只做形状校验。
+//（指派人须属团队、里程碑须属项目、起止日须落在项目周期内且起≤止），故此处只做形状校验。
 const movePatchSchema = z.object({
   status: z.enum(["todo", "doing", "done"]).optional(),
   assigneeId: z.uuid().nullable().optional(),
@@ -122,6 +127,90 @@ export async function moveTaskAction(input: {
     throw e;
   }
   revalidatePath(`/projects/${parsed.data.projectId}`);
+  return null;
+}
+
+// 个人任务计划段：日历里给自己排「打算什么时候做这任务」，可多段（区间或单天）。
+// 注意这不是改任务官方起止日——任务排期不动，这里只动个人记录。
+const planSegmentSchema = z.object({
+  taskId: z.uuid(),
+  projectId: z.uuid(),
+  start: z.iso.date("日期格式不正确"),
+  end: z.iso.date("日期格式不正确"),
+});
+
+const planClearSchema = z.object({
+  taskId: z.uuid(),
+  projectId: z.uuid(),
+});
+
+export async function addTaskPlanSegmentAction(input: {
+  taskId: string;
+  projectId: string;
+  start: string;
+  end: string;
+}): Promise<FormState> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+  const parsed = planSegmentSchema.safeParse(input);
+  if (!parsed.success) return { error: "参数无效" };
+  try {
+    await addTaskPlanSegment(
+      session.user.id,
+      parsed.data.taskId,
+      parsed.data.projectId,
+      parsed.data.start,
+      parsed.data.end,
+    );
+  } catch (e) {
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
+  revalidatePath("/dashboard");
+  return null;
+}
+
+export async function removeTaskPlanSegmentAction(input: {
+  taskId: string;
+  projectId: string;
+  start: string;
+  end: string;
+}): Promise<FormState> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+  const parsed = planSegmentSchema.safeParse(input);
+  if (!parsed.success) return { error: "参数无效" };
+  try {
+    await removeTaskPlanSegment(
+      session.user.id,
+      parsed.data.taskId,
+      parsed.data.projectId,
+      parsed.data.start,
+      parsed.data.end,
+    );
+  } catch (e) {
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
+  revalidatePath("/dashboard");
+  return null;
+}
+
+export async function clearTaskPlanAction(input: {
+  taskId: string;
+  projectId: string;
+}): Promise<FormState> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+  const parsed = planClearSchema.safeParse(input);
+  if (!parsed.success) return { error: "参数无效" };
+  try {
+    await clearTaskPlan(session.user.id, parsed.data.taskId, parsed.data.projectId);
+  } catch (e) {
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
+  revalidatePath("/dashboard");
   return null;
 }
 

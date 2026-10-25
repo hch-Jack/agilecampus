@@ -84,6 +84,15 @@ body {
     box-shadow: var(--shadow-card);
   }
 
+  /* 整卡可点：标题链的伪元素铺满最近的定位祖先（卡片），
+     点卡片任意空白处也能进详情；卡片必须自带 `relative`。 */
+  .card-link::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: var(--radius-card);
+  }
+
   /* 表单控件统一 */
   .ac-field {
     width: 100%;

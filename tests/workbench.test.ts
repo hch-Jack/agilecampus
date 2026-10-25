@@ -24,8 +24,14 @@ import {
 } from "@/lib/workbench-filters";
 import { db } from "@/db";
 import { feedReads, taskActivities, tasks as tasksTable } from "@/db/schema";
-import { moveTaskAction } from "@/app/(app)/projects/[projectId]/actions";
+import {
+  addTaskPlanSegmentAction,
+  clearTaskPlanAction,
+  moveTaskAction,
+  removeTaskPlanSegmentAction,
+} from "@/app/(app)/projects/[projectId]/actions";
 import { clearFeedAction, deleteActivityAction, markFeedReadAction } from "@/app/(app)/actions";
+import { listMyTaskPlans } from "@/lib/task-plan";
 import { resetDb } from "./helpers";
 
 // moveTaskAction 走 auth() 与 revalidatePath，须 mock（照 task-detail-features.test.ts 头部惯例）
@@ -216,6 +222,217 @@ describe("moveTaskAction 经工作台复用", () => {
       await moveTaskAction({ taskId: task.id, projectId: project.id, patch: {} }),
     ).toEqual({ error: "参数无效" });
     expect(await taskStatus(task.id)).toBe("todo");
+  });
+});
+
+describe("个人计划段（add/remove/clear）", () => {
+  it("student 加单天段：写库并 revalidate 工作台", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+
+    const calls: unknown[][] = [];
+    revalidateMock.fn = (...a: unknown[]) => calls.push(a);
+    authMock.userId = student.id;
+    const res = await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-03-12",
+      end: "2026-03-12",
+    });
+    expect(res).toBeNull();
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({
+      [task.id]: [{ start: "2026-03-12", end: "2026-03-12" }],
+    });
+    expect(calls.some((c) => c[0] === "/dashboard")).toBe(true);
+  });
+
+  it("加区间段（起<止）", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    authMock.userId = student.id;
+    const res = await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-01-01",
+      end: "2026-01-03",
+    });
+    expect(res).toBeNull();
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({
+      [task.id]: [{ start: "2026-01-01", end: "2026-01-03" }],
+    });
+  });
+
+  it("起>止自动交换成正序", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    authMock.userId = student.id;
+    await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-01-05",
+      end: "2026-01-01",
+    });
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({
+      [task.id]: [{ start: "2026-01-01", end: "2026-01-05" }],
+    });
+  });
+
+  it("多段共存且按起始日升序（区间+单天）", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    authMock.userId = student.id;
+    await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-01-08",
+      end: "2026-01-08",
+    });
+    await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-01-01",
+      end: "2026-01-03",
+    });
+    await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-01-05",
+      end: "2026-01-05",
+    });
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({
+      [task.id]: [
+        { start: "2026-01-01", end: "2026-01-03" },
+        { start: "2026-01-05", end: "2026-01-05" },
+        { start: "2026-01-08", end: "2026-01-08" },
+      ],
+    });
+  });
+
+  it("同段重复去重（不产生第二行）", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    authMock.userId = student.id;
+    await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-01-01",
+      end: "2026-01-03",
+    });
+    await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-01-01",
+      end: "2026-01-03",
+    });
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({
+      [task.id]: [{ start: "2026-01-01", end: "2026-01-03" }],
+    });
+  });
+
+  it("remove 删指定段，其余不动", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    authMock.userId = student.id;
+    await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-01-01",
+      end: "2026-01-03",
+    });
+    await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-01-05",
+      end: "2026-01-05",
+    });
+    const res = await removeTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-01-01",
+      end: "2026-01-03",
+    });
+    expect(res).toBeNull();
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({
+      [task.id]: [{ start: "2026-01-05", end: "2026-01-05" }],
+    });
+  });
+
+  it("clear 清空所有段", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    authMock.userId = student.id;
+    await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-01-01",
+      end: "2026-01-03",
+    });
+    await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-01-05",
+      end: "2026-01-05",
+    });
+    const res = await clearTaskPlanAction({ taskId: task.id, projectId: project.id });
+    expect(res).toBeNull();
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({});
+  });
+
+  it("teacher 被拒且不写库", async () => {
+    const { owner, teacher, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: teacher.id });
+    authMock.userId = teacher.id;
+    const res = await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-03-12",
+      end: "2026-03-12",
+    });
+    expect(res).toEqual({ error: "没有权限执行此操作" });
+    expect(await listMyTaskPlans(teacher.id, [task.id])).toEqual({});
+  });
+
+  it("非法日期格式按参数无效处理", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    authMock.userId = student.id;
+    const res = await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "not-a-date",
+      end: "2026-03-12",
+    });
+    expect(res).toEqual({ error: "参数无效" });
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({});
+  });
+
+  it("计划按人隔离：两个 student 各记各的", async () => {
+    const { owner, team, student, project } = await scene();
+    const student2 = await makeUser("student2@example.com");
+    await joinTeam(student2.id, team.inviteCode);
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+
+    authMock.userId = student.id;
+    await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-01-01",
+      end: "2026-01-03",
+    });
+    authMock.userId = student2.id;
+    await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-01-05",
+      end: "2026-01-08",
+    });
+
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({
+      [task.id]: [{ start: "2026-01-01", end: "2026-01-03" }],
+    });
+    expect(await listMyTaskPlans(student2.id, [task.id])).toEqual({
+      [task.id]: [{ start: "2026-01-05", end: "2026-01-08" }],
+    });
   });
 });
 

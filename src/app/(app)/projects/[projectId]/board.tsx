@@ -33,6 +33,9 @@ export type BoardTask = {
   assigneeId: string | null;
   milestoneId: string | null;
   labels: { id: string; name: string; color: string }[];
+  /** 直接子任务的进度；无子任务时缺省 */
+  subTotal?: number;
+  subDone?: number;
 };
 
 function Column({

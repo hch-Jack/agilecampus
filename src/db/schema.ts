@@ -677,7 +677,7 @@ export type ApprovalStatus = (typeof approvalStatusEnum.enumValues)[number];
  * 审批申请：学生把任务 doing→done、登记资源占用时向老师/管理员发起，
  * 任一老师或团队管理员通过即生效。
  *
- * - task_done：taskId 指向目标任务（任务保持 doing 直至通过）；撤回或
+ * - task_done：taskId 指向目标任务（任务保持未完成直至通过）；撤回或
  *   被管理员直接完成等替代路径会删掉 pending 行。
  * - resource_usage：**通过时才建** resource_usages 行，故资源信息以快照
  *   存在本行上；拒绝则不留占用痕迹。
@@ -712,5 +712,37 @@ export const approvalRequests = pgTable(
       .where(sql`${t.status} = 'pending'`),
     index("approval_requests_team_status_idx").on(t.teamId, t.status),
     index("approval_requests_requester_idx").on(t.requesterId),
+  ],
+);
+
+// 个人任务计划：工作台日历里「我打算什么时候做这个任务」的自记。
+// 与任务官方起止日（tasks.start_date/due_date）无关——那是排期，这是个人安排；
+// 任务官方起止在日历里只读标记，个人计划段才是可编辑的。一个任务可有多段
+// （如 1/1→1/3、1/5、1/8 各一行），单天即起=止；同段重复由唯一索引去重。
+// 纯个人数据，不进任务动态流，换人/换浏览器都跟着账号走。
+export const taskPlans = pgTable(
+  "task_plans",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    // 计划做这任务的一段时间：[plannedStart, plannedEnd] 闭区间（YYYY-MM-DD，日历日，无时区）
+    plannedStart: date("planned_start").notNull(),
+    plannedEnd: date("planned_end").notNull(),
+    createdAt: dbTimestampNow("created_at").notNull(),
+    updatedAt: dbTimestampNow("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("task_plans_user_task_range_unique").on(
+      t.userId,
+      t.taskId,
+      t.plannedStart,
+      t.plannedEnd,
+    ),
+    index("task_plans_user_idx").on(t.userId),
   ],
 );

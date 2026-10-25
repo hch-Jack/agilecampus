@@ -42,6 +42,12 @@ const itemSchema = z
         targetAt: z.string().max(32).optional(),
         lunar: z.boolean().optional(),
         zones: z.array(z.string().max(CLOCK_ZONE_MAX_LENGTH)).max(CLOCK_MAX_ZONES * 4).optional(),
+        // 日程表：显示开关与分区比例（最终夹取由 normalize 负责）
+        showGantt: z.boolean().optional(),
+        showPool: z.boolean().optional(),
+        showCalendar: z.boolean().optional(),
+        ganttRatio: z.number().min(0).max(1).optional(),
+        poolRatio: z.number().min(0).max(1).optional(),
       })
       .optional(),
   })

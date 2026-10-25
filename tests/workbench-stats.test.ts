@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildWorkbenchStats } from "@/lib/workbench-stats";
+import { isOverdueTask, sortBoardTasks } from "@/lib/workbench-order";
 
 /**
  * 统计口径必须和改造前的 buildTiles 完全一致：
@@ -59,5 +60,49 @@ describe("buildWorkbenchStats", () => {
       "2026-10-25",
     );
     expect(stats).toEqual({ overdue: 0, today: 0, week: 0, doing: 1 });
+  });
+});
+
+describe("sortBoardTasks", () => {
+  const today = "2026-10-24";
+  const task = (
+    id: string,
+    dueDate: string | null,
+    status: "todo" | "doing" | "done" = "todo",
+  ) => ({ id, dueDate, status });
+
+  it("逾期卡片置顶，多个逾期按逾期最久到最少", () => {
+    const list = [
+      task("normal-1", "2026-10-28"),
+      task("late-2", "2026-10-21"),
+      task("no-due", null),
+      task("late-1", "2026-10-05"),
+      task("today", "2026-10-24"),
+      task("late-3", "2026-10-23"),
+    ];
+    expect(sortBoardTasks(list, today).map((t) => t.id)).toEqual([
+      "late-1",
+      "late-2",
+      "late-3",
+      "normal-1",
+      "no-due",
+      "today",
+    ]);
+  });
+
+  it("非逾期保持原有相对顺序（稳定），已完成不算逾期", () => {
+    const list = [
+      task("a", null),
+      task("b", "2026-10-01", "done"),
+      task("c", "2026-10-30"),
+      task("d", "2026-10-02"),
+    ];
+    expect(sortBoardTasks(list, today).map((t) => t.id)).toEqual(["d", "a", "b", "c"]);
+    expect(isOverdueTask(list[1], today)).toBe(false);
+  });
+
+  it("同一天的逾期任务保持服务端顺序", () => {
+    const list = [task("x", "2026-10-20"), task("y", "2026-10-20"), task("z", "2026-10-20")];
+    expect(sortBoardTasks(list, today).map((t) => t.id)).toEqual(["x", "y", "z"]);
   });
 });

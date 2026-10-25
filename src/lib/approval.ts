@@ -2,8 +2,8 @@
  * 审批流：学生发起、老师/团队管理员审批（任一通过即生效）。
  *
  * 两类申请：
- * - task_done：学生把任务 doing→done 时由 lib/task.ts 拦截转申请，任务保持
- *   doing 直至通过；同任务同时最多一条 pending（partial unique index 兜底）。
+ * - task_done：学生把任务标成完成（含待办直跳）时由 lib/task.ts 拦截转申请，
+ *   任务保持未完成直至通过；同任务同时最多一条 pending（partial unique index 兜底）。
  * - resource_usage：学生登记资源占用转为申请，**通过时才建占用行**；老师/
  *   管理员登记沿用原直登路径，不经审批。
  *
@@ -154,7 +154,7 @@ export async function listPendingTaskDoneTaskIds(taskIds: string[]): Promise<Set
 // —— 申请 ——
 
 /**
- * 学生把任务 doing→done → 转为完成审批申请。
+ * 学生把任务标成完成（无论当前是待办还是进行中）→ 转为完成审批申请。
  * 由 updateTask 在状态变更前调用：申请行与动态随调用方事务（或连接池）落库，
  * 私信提醒随后发出。调用方在**非事务路径**须以 ApprovalRequestedError 中断本次
  * 状态变更（看板据此回弹卡片并展示提示）；事务路径跳过 status 字段即可。
@@ -305,18 +305,13 @@ export async function decideApproval(
       if (!task) throw new AppError("任务已不存在");
       objectText = `完成的任务「${task.title}」`;
       if (decision === "approved") {
-        if (task.status !== "doing") throw new AppError("任务状态已变化，无法通过该审批");
-        const [updated] = await tx
-          .update(tasks)
-          .set({ status: "done", updatedAt: sql`now()` })
-          .where(and(eq(tasks.id, task.id), eq(tasks.status, "doing")))
-          .returning();
-        if (!updated) throw new AppError("任务状态已变化，无法通过该审批");
-        taskRow = updated;
-        // 状态补成已完成的动态（与 updateTask 的字段 diff 同款展示文本）
-        await recordTaskActivity(tx, [
-          { taskId: task.id, actorId, type: "field", field: "状态", oldValue: "进行中", newValue: "已完成" },
-        ]);
+        // 申请未决期间任务可能被挪到待办/进行中，只要还没完成就可通过
+        if (task.status === "done") throw new AppError("任务状态已变化，无法通过该审批");
+        // 经 updateTask 落「已完成」：保留父任务完成级联、字段动态与统一写入口径。
+        // approvedBy 豁免写角色检查（审批人可能是只读的 teacher，权限已由审批流验证）；
+        // 动态 import 斩断 task.ts ↔ approval.ts 的静态循环（task 顶层引 approval 的申请/撤回）。
+        const { updateTask } = await import("./task");
+        taskRow = await updateTask(actorId, decided.taskId!, { status: "done" }, { tx, approvedBy: true });
       } else {
         await recordTaskActivity(tx, [{ taskId: task.id, actorId, type: "approval_rejected" }]);
       }
