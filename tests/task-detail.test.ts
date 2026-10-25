@@ -31,11 +31,11 @@ describe("completionNote", () => {
   it("可写入完成情况", async () => {
     const { student, project } = await scene();
     const t = await createTask(student.id, project.id, { title: "甲" });
+    // completionNote 独立于状态可写；status=done 会被学生审批流拦截（approval.test.ts 专测）
     const u = await updateTask(student.id, t.id, {
-      status: "done",
       completionNote: "已按计划完成，附实验数据",
     });
-    expect(u.status).toBe("done");
+    expect(u.status).toBe("todo");
     expect(u.completionNote).toBe("已按计划完成，附实验数据");
   });
 });

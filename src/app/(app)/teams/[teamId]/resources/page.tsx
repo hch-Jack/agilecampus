@@ -53,7 +53,7 @@ export default async function ResourcesPage({
         </p>
       </header>
 
-      <ResourceForm teamId={teamId} timeZone={tz} />
+      <ResourceForm teamId={teamId} timeZone={tz} needsApproval={me.role === "student"} />
 
       {/* 时长汇总 */}
       <div className="grid gap-4 sm:grid-cols-2">

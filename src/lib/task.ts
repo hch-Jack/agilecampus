@@ -14,11 +14,12 @@ import {
   type TaskPriority,
   type TaskStatus,
 } from "@/db/schema";
-import { AppError, ForbiddenError } from "./errors";
+import { AppError, ApprovalRequestedError, ForbiddenError } from "./errors";
 import { getTeamMembership } from "./team";
 import { getProjectForUser, validateDateRange } from "./project";
 import { notifyTaskAssigned, notifyTaskCompleted } from "./notify";
 import { recordTaskActivity } from "./activity";
+import { requestTaskCompletion, withdrawTaskApprovals } from "./approval";
 
 // 任务写操作角色：admin + student（teacher 只读，设计文档 §5）
 const TASK_WRITE_ROLES = ["admin", "student"];
@@ -39,10 +40,16 @@ async function requireProjectAccess(actorId: string, projectId: string) {
   return access;
 }
 
-// 供 lib/label.ts 复用：贴标签属任务写操作，权限口径须与 createTask/updateTask 一致
-export async function requireTaskWrite(actorId: string, projectId: string) {
+// 供 lib/label.ts 复用：贴标签属任务写操作，权限口径须与 createTask/updateTask 一致。
+// approvedBy：仅审批通过路径（decideApproval）使用——审批人可能是只读的 teacher，
+// 写权限已由审批流验证（老师/管理员任一通过），这里豁免写角色检查但保留成员校验。
+export async function requireTaskWrite(
+  actorId: string,
+  projectId: string,
+  opts?: { tx?: DbTx; approvedBy?: boolean },
+) {
   const access = await requireProjectAccess(actorId, projectId);
-  if (!TASK_WRITE_ROLES.includes(access.role)) throw new ForbiddenError();
+  if (!opts?.approvedBy && !TASK_WRITE_ROLES.includes(access.role)) throw new ForbiddenError();
   return access;
 }
 
@@ -152,13 +159,13 @@ export async function updateTask(
     priority?: TaskPriority;
     completionNote?: string | null;
   },
-  opts?: { tx?: DbTx },
+  opts?: { tx?: DbTx; approvedBy?: boolean },
 ) {
   const exec = opts?.tx ?? db;
   const [task] = await exec.select().from(tasks).where(eq(tasks.id, taskId));
   if (!task) throw new AppError("任务不存在");
 
-  const access = await requireTaskWrite(actorId, task.projectId);
+  const access = await requireTaskWrite(actorId, task.projectId, opts);
   if (patch.assigneeId) await validateAssignee(access.project.teamId, patch.assigneeId);
   if (patch.milestoneId) await validateMilestone(task.projectId, patch.milestoneId);
   // 日期校验（口径同 createTask）：patch 只带一侧时与库中另一侧合并成对再验；
@@ -171,20 +178,43 @@ export async function updateTask(
     );
   }
 
+  // —— 完成审批拦截 ——
+  // 学生把**顶层任务**标成 done（含待办直跳完成，堵住绕过审批的口子）：不直接改
+  // 状态，转成完成审批申请（老师/管理员任一通过才算完成）。子任务不拦（进度颗粒
+  // 太细，审批只看父任务）；teacher 只读本就改不了；管理员/老师操作即审批者本人。
+  const completionNeedsApproval =
+    patch.status === "done" &&
+    task.status !== "done" &&
+    !task.parentTaskId &&
+    access.role === "student";
+
+  // 状态变化落定前撤掉未决的完成申请：拖回待办/进行中=申请人撤回；管理员直接完成=申请被替代
+  if (
+    patch.status !== undefined &&
+    patch.status !== task.status &&
+    !task.parentTaskId &&
+    !completionNeedsApproval
+  ) {
+    await withdrawTaskApprovals(taskId, exec);
+  }
+
+  // 被拦截时其他字段照常应用，唯独 status 不动
+  const updatePatch = completionNeedsApproval ? { ...patch, status: undefined } : patch;
+
   // 显式白名单构造，勿用 ...patch 展开：运行时宽对象可夹带 projectId/sortOrder 等越权字段
   const [updated] = await exec
     .update(tasks)
     // updatedAt 取 DB 时钟（now()）而非宿主机 new Date()：与 createdAt 的 defaultNow() 同源，保证单调性
     .set({
-      ...(patch.title !== undefined && { title: patch.title }),
-      ...(patch.description !== undefined && { description: patch.description }),
-      ...(patch.assigneeId !== undefined && { assigneeId: patch.assigneeId }),
-      ...(patch.startDate !== undefined && { startDate: patch.startDate }),
-      ...(patch.dueDate !== undefined && { dueDate: patch.dueDate }),
-      ...(patch.milestoneId !== undefined && { milestoneId: patch.milestoneId }),
-      ...(patch.status !== undefined && { status: patch.status }),
-      ...(patch.priority !== undefined && { priority: patch.priority }),
-      ...(patch.completionNote !== undefined && { completionNote: patch.completionNote }),
+      ...(updatePatch.title !== undefined && { title: updatePatch.title }),
+      ...(updatePatch.description !== undefined && { description: updatePatch.description }),
+      ...(updatePatch.assigneeId !== undefined && { assigneeId: updatePatch.assigneeId }),
+      ...(updatePatch.startDate !== undefined && { startDate: updatePatch.startDate }),
+      ...(updatePatch.dueDate !== undefined && { dueDate: updatePatch.dueDate }),
+      ...(updatePatch.milestoneId !== undefined && { milestoneId: updatePatch.milestoneId }),
+      ...(updatePatch.status !== undefined && { status: updatePatch.status }),
+      ...(updatePatch.priority !== undefined && { priority: updatePatch.priority }),
+      ...(updatePatch.completionNote !== undefined && { completionNote: updatePatch.completionNote }),
       updatedAt: sql`now()`,
     })
     .where(eq(tasks.id, taskId))
@@ -200,8 +230,9 @@ export async function updateTask(
     changes.push({ field: "描述", oldValue: activityText(task.description), newValue: activityText(patch.description) });
   if (patch.completionNote !== undefined && (patch.completionNote ?? null) !== (task.completionNote ?? null))
     changes.push({ field: "完成情况", oldValue: activityText(task.completionNote), newValue: activityText(patch.completionNote) });
-  if (patch.status !== undefined && patch.status !== task.status)
-    changes.push({ field: "状态", oldValue: STATUS_TEXT[task.status], newValue: STATUS_TEXT[patch.status] });
+  // 状态 diff 用 updatePatch：学生完成被审批拦截时状态实际未变，不该记「已完成」
+  if (updatePatch.status !== undefined && updatePatch.status !== task.status)
+    changes.push({ field: "状态", oldValue: STATUS_TEXT[task.status], newValue: STATUS_TEXT[updatePatch.status] });
   if (patch.priority !== undefined && patch.priority !== task.priority)
     changes.push({ field: "优先级", oldValue: PRIORITY_TEXT[task.priority], newValue: PRIORITY_TEXT[patch.priority] });
   if (patch.startDate !== undefined && (patch.startDate ?? null) !== (task.startDate ?? null))
@@ -275,8 +306,8 @@ export async function updateTask(
 
   // 子任务状态跨「已完成」边界时给父任务也记一条，父任务时间线可见子任务进展；
   // 未涉 done 的流转（待办↔进行中）不入父任务动态，避免看板拖拽刷屏
-  if (updated.parentTaskId && patch.status !== undefined && patch.status !== task.status) {
-    if (patch.status === "done")
+  if (updated.parentTaskId && updatePatch.status !== undefined && updatePatch.status !== task.status) {
+    if (updatePatch.status === "done")
       await recordTaskActivity(exec, [
         { taskId: updated.parentTaskId, actorId, type: "subtask_done", newValue: updated.title },
       ]);
@@ -286,11 +317,21 @@ export async function updateTask(
       ]);
   }
 
+  if (completionNeedsApproval) {
+    // 申请行 + 动态随本次事务（或连接池）落库（其他字段的 diff 已照记，唯独状态没变）；
+    // 非事务路径抛错中断，看板据此回弹卡片并展示提示；事务路径（助手批量应用）返回
+    // 未完成任务行，调用方按返回状态判断，committed 计数把这类任务算进去是已知取舍。
+    await recordTaskActivity(exec, [{ taskId, actorId, type: "approval_requested" }]);
+    await requestTaskCompletion(actorId, taskId, exec);
+    if (!opts?.tx) throw new ApprovalRequestedError();
+    return updated;
+  }
+
   if (!opts?.tx) {
     // 改派：通知新负责人
-    if (patch.assigneeId && patch.assigneeId !== task.assigneeId) void notifyTaskAssigned(updated);
-    // 完成：通知创建者(≠操作者)
-    if (patch.status === "done" && task.status !== "done") void notifyTaskCompleted(updated, actorId);
+    if (updatePatch.assigneeId && updatePatch.assigneeId !== task.assigneeId) void notifyTaskAssigned(updated);
+    // 完成：通知创建者(≠操作者)。审批拦截路径 status 未变（updatePatch 无 status），不会误发
+    if (updatePatch.status === "done" && task.status !== "done") void notifyTaskCompleted(updated, actorId);
   }
   return updated;
 }

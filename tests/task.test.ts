@@ -230,9 +230,10 @@ describe("updateTask", () => {
     const { owner, team, student, project } = await scene();
     const other = await createProject(owner.id, team.id, { name: "另一项目" });
     const t = await createTask(student.id, project.id, { title: "任务" });
-    const evil = { status: "done", projectId: other.id, sortOrder: -1 } as Parameters<typeof updateTask>[2];
+    // 用 priority 驱动合法变更：status=done 会被学生审批流拦截（approval.test.ts 专测）
+    const evil = { priority: "high", projectId: other.id, sortOrder: -1 } as unknown as Parameters<typeof updateTask>[2];
     const updated = await updateTask(student.id, t.id, evil);
-    expect(updated.status).toBe("done");
+    expect(updated.priority).toBe("high");
     expect(updated.projectId).toBe(project.id);  // 未被挪走
     expect(updated.sortOrder).toBe(t.sortOrder); // 未被篡改
   });
@@ -242,13 +243,14 @@ describe("父任务完成级联", () => {
   beforeEach(resetDb);
 
   it("父任务标记完成时把所有未完成子任务一并完成", async () => {
-    const { student, project } = await scene();
+    const { owner, student, project } = await scene();
     const parent = await createTask(student.id, project.id, { title: "父" });
     const c1 = await createSubtask(student.id, parent.id, { title: "子1" });
     const c2 = await createSubtask(student.id, parent.id, { title: "子2" });
     await updateTask(student.id, c2.id, { status: "done" });
 
-    await updateTask(student.id, parent.id, { status: "done" });
+    // 学生完成已被审批流拦截（approval.test.ts 专测）；级联由 admin 完成来验证
+    await updateTask(owner.id, parent.id, { status: "done" });
 
     const subs = await listSubtasks(student.id, parent.id);
     expect(subs.map((s) => [s.id, s.status])).toEqual([
@@ -258,14 +260,15 @@ describe("父任务完成级联", () => {
   });
 
   it("移动到进行中不会改动子任务状态，且再次完成不重复级联", async () => {
-    const { student, project } = await scene();
+    const { owner, student, project } = await scene();
     const parent = await createTask(student.id, project.id, { title: "父" });
     const child = await createSubtask(student.id, parent.id, { title: "子" });
 
     await updateTask(student.id, parent.id, { status: "doing" });
     expect((await listSubtasks(student.id, parent.id))[0].status).toBe("todo");
 
-    await updateTask(student.id, parent.id, { status: "done" });
+    // 学生完成已被审批流拦截（approval.test.ts 专测）；级联由 admin 完成来验证
+    await updateTask(owner.id, parent.id, { status: "done" });
     expect((await listSubtasks(student.id, parent.id))[0].status).toBe("done");
 
     // 已经是 done 的父任务再次提交 done：没有状态变化，也不再走级联
@@ -275,12 +278,13 @@ describe("父任务完成级联", () => {
   });
 
   it("孙任务随父链一起完成", async () => {
-    const { student, project } = await scene();
+    const { owner, student, project } = await scene();
     const parent = await createTask(student.id, project.id, { title: "父" });
     const child = await createSubtask(student.id, parent.id, { title: "子" });
     const grandchild = await createSubtask(student.id, child.id, { title: "孙" });
 
-    await updateTask(student.id, parent.id, { status: "done" });
+    // 学生完成已被审批流拦截（approval.test.ts 专测）；级联由 admin 完成来验证
+    await updateTask(owner.id, parent.id, { status: "done" });
 
     expect((await listSubtasks(student.id, parent.id))[0].status).toBe("done");
     expect((await listSubtasks(student.id, child.id))[0].id).toBe(grandchild.id);

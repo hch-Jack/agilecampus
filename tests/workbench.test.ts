@@ -575,7 +575,8 @@ describe("动态流未读", () => {
 
     await markFeedRead(student.id, WORKBENCH_SCOPE);
     expect(await getFeedUnreadCount(student.id, WORKBENCH_SCOPE)).toBe(0);
-    await updateTask(student.id, task.id, { status: "done" });
+    // 学生完成已被审批流拦截（approval.test.ts 专测）；这里只为制造状态动态，由 admin 完成等效
+    await updateTask(owner.id, task.id, { status: "done" });
     expect(await getFeedUnreadCount(student.id, WORKBENCH_SCOPE)).toBe(1);
   });
 
@@ -590,7 +591,8 @@ describe("动态流未读", () => {
     expect(await getFeedUnreadCount(student.id, projectFeedScope(project.id))).toBe(0);
 
     await markFeedRead(student.id, projectFeedScope(project.id));
-    await updateTask(student.id, task.id, { status: "done" });
+    // 学生完成已被审批流拦截（approval.test.ts 专测）；这里只为制造状态动态，由 admin 完成等效
+    await updateTask(owner.id, task.id, { status: "done" });
     // 工作台此后未再读，两条新动态都累计；项目 scope 只累计自己标记后的一条
     expect(await getFeedUnreadCount(student.id, WORKBENCH_SCOPE)).toBe(2);
     expect(await getFeedUnreadCount(student.id, projectFeedScope(project.id))).toBe(1);
@@ -685,7 +687,8 @@ describe("clearFeed（清除记录只清自己视角）", () => {
     await clearFeed(student.id, projectFeedScope(project.id));
     expect(await listProjectActivities(student.id, project.id)).toHaveLength(0);
 
-    await updateTask(student.id, task.id, { status: "done" });
+    // 学生完成已被审批流拦截（approval.test.ts 专测）；这里只为制造状态动态，由 admin 完成等效
+    await updateTask(owner.id, task.id, { status: "done" });
     const feed = await listProjectActivities(student.id, project.id);
     expect(feed).toHaveLength(1);
     expect(feed[0].type).toBe("field");

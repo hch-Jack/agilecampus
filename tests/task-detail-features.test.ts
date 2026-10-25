@@ -196,7 +196,8 @@ describe("动态 lib", () => {
   it("创建/字段变更/子任务增删改均在两条时间线留痕", async () => {
     const { owner, student, parent, project } = await scene();
 
-    await updateTask(student.id, parent.id, { status: "done" });
+    // 学生完成已被审批流拦截（approval.test.ts 专测）；状态动态由 owner 完成制造
+    await updateTask(owner.id, parent.id, { status: "done" });
     const acts = await listTaskActivities(student.id, parent.id);
     // created + 状态变更
     expect(acts.some((a) => a.type === "created" && a.actorName === "student")).toBe(true);

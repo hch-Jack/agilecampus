@@ -47,6 +47,7 @@ import {
   RecentAttachmentsWidget,
   ResourceUsageWidget,
 } from "./widgets/productivity";
+import { ApprovalsWidget } from "./widgets/approvals";
 import "./dashboard.css";
 
 type SaveState = "idle" | "saving" | "saved" | "error";
@@ -388,6 +389,8 @@ export function DashboardGrid({
         return <ResourceUsageWidget usages={data.resourceUsages} tz={data.tz} />;
       case "recent_attachments":
         return <RecentAttachmentsWidget attachments={data.attachments} tz={data.tz} />;
+      case "approvals":
+        return <ApprovalsWidget approvals={data.approvals} tz={data.tz} />;
       case "focus_timer":
         return <FocusTimerWidget instanceId={item.id} />;
       case "note":

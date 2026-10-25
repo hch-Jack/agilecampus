@@ -89,9 +89,10 @@ describe("commitDraft — update_tasks 版本校验", () => {
   });
 
   it("版本过期（updatedAt 不符）→ 冲突、不落库", async () => {
-    const { student, project } = await scene();
+    const { owner, student, project } = await scene();
     const t = await createTask(student.id, project.id, { title: "甲" });
-    await updateTask(student.id, t.id, { status: "done" });
+    // 学生完成已被审批流拦截（approval.test.ts 专测）；这里只为制造版本变化
+    await updateTask(owner.id, t.id, { status: "done" });
     const r = await commitDraft(student.id, project.id, "update_tasks", {
       updates: [
         { taskId: t.id, updatedAt: "2000-01-01T00:00:00.000Z", patch: { status: "doing" } },

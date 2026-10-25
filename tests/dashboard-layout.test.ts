@@ -12,6 +12,7 @@ import {
   addWidget,
   moveWidget,
   normalizeLayoutDoc,
+  defaultDashboardLayoutFor,
   removeWidget,
   resizeWidget,
   sortByCatalog,
@@ -45,9 +46,12 @@ function doc(items: DashboardLayoutItem[]): DashboardLayoutDoc {
 
 describe("卡片目录与默认布局", () => {
   it("默认布局覆盖全部卡片，尺寸合法且互不重叠", () => {
-    expect(DEFAULT_DASHBOARD_LAYOUT.items).toHaveLength(WIDGET_IDS.length);
+    // 待办审批卡不在通用默认里：它面向老师/管理员，由 defaultDashboardLayoutFor(true)
+    // 追加（学生拿了恒为空态，没意义）。这里对通用默认排除它，另测审批人默认。
+    const nonApproverIds = WIDGET_IDS.filter((id) => id !== "approvals");
+    expect(DEFAULT_DASHBOARD_LAYOUT.items).toHaveLength(nonApproverIds.length);
     expect(DEFAULT_DASHBOARD_LAYOUT.items.map((item) => item.type).sort()).toEqual(
-      [...WIDGET_IDS].sort(),
+      [...nonApproverIds].sort(),
     );
     assertNoOverlap(DEFAULT_DASHBOARD_LAYOUT.items);
 
@@ -66,6 +70,15 @@ describe("卡片目录与默认布局", () => {
     expect(new Set(WIDGET_IDS).size).toBe(WIDGET_IDS.length);
     const types = DEFAULT_DASHBOARD_LAYOUT.items.map((item) => item.type);
     expect(new Set(types).size).toBe(types.length);
+  });
+
+  it("审批人默认布局 = 通用默认 + 待办审批卡，且不与任何卡重叠", () => {
+    const approverDoc = defaultDashboardLayoutFor(true);
+    expect(approverDoc.items).toHaveLength(WIDGET_IDS.length);
+    expect(approverDoc.items.map((item) => item.type).sort()).toEqual([...WIDGET_IDS].sort());
+    expect(approverDoc.items.find((item) => item.type === "approvals")).toBeDefined();
+    assertNoOverlap(approverDoc.items);
+    expect(defaultDashboardLayoutFor(false)).toEqual(DEFAULT_DASHBOARD_LAYOUT);
   });
 });
 

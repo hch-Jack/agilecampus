@@ -14,6 +14,9 @@ import {
   type DashboardWidgetId,
 } from "@/lib/dashboard-layout";
 import { saveDashboardLayout } from "@/lib/dashboard-layout-store";
+import { decideApproval, type ApprovalDecision } from "@/lib/approval";
+import { AppError } from "@/lib/errors";
+import { revalidatePath } from "next/cache";
 
 export type SaveDashboardLayoutResult = { ok: true } | { error: string };
 
@@ -91,5 +94,41 @@ export async function saveDashboardLayoutAction(payload: unknown): Promise<SaveD
   };
 
   await saveDashboardLayout(session.user.id, doc);
+  return { ok: true };
+}
+
+// —— 待办审批卡片：通过 / 拒绝 ——
+
+export type DecideApprovalResult = { ok: true } | { error: string };
+
+const decideSchema = z.object({
+  requestId: z.uuid(),
+  decision: z.enum(["approved", "rejected"]),
+});
+
+/**
+ * 审批人（老师/管理员任一）对一条申请给出决定。权限与状态校验在 lib/approval；
+ * 成功后刷新工作台（卡片列表、未读角标随服务端回流）。
+ */
+export async function decideApprovalAction(
+  input: unknown,
+): Promise<DecideApprovalResult> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+
+  const parsed = decideSchema.safeParse(input);
+  if (!parsed.success) return { error: "参数无效" };
+
+  try {
+    await decideApproval(
+      session.user.id,
+      parsed.data.requestId,
+      parsed.data.decision as ApprovalDecision,
+    );
+  } catch (e) {
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
+  revalidatePath("/dashboard");
   return { ok: true };
 }
