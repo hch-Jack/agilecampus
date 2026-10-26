@@ -8,6 +8,7 @@ import { listProjectTasks } from "@/lib/task";
 import { splitBoardTasks } from "@/lib/board-tasks";
 import { getFeedUnreadCount, listProjectActivities, projectFeedScope } from "@/lib/activity";
 import { listTeamLabels } from "@/lib/label";
+import { listPendingTaskDoneTaskIds } from "@/lib/approval";
 import { parseFilters, applyFilters } from "@/lib/board-filters";
 import { todayIn } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
@@ -60,6 +61,8 @@ export default async function ProjectPage({
   // 看板只摆顶层任务：子任务不单独成卡，改为父卡底部的进度条。
   // 进度按项目全量子任务聚合，不受筛选影响（筛选的是父任务卡片）。
   const { topLevel, progress } = splitBoardTasks(projectTasks);
+  // 有未决完成申请的顶层任务进「待审核」列（虚拟列：任务 status 不动，靠申请行划列）
+  const pendingApprovalIds = await listPendingTaskDoneTaskIds(topLevel.map((t) => t.id));
   const visibleTopLevel = visibleTasks.filter((t) => !t.parentTaskId);
 
   const canWrite = role === "admin" || role === "student";
@@ -161,6 +164,7 @@ export default async function ProjectPage({
               milestoneId: t.milestoneId,
               labels: t.labels,
               requireApproval: t.requireApproval,
+              pendingApproval: pendingApprovalIds.has(t.id),
               subTotal: p?.total,
               subDone: p?.done,
             };

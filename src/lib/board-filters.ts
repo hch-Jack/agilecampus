@@ -18,6 +18,8 @@ export type FilterableTask = {
   dueDate: string | null;
   status: string;
   labels: { id: string }[];
+  /** 有未决的完成审批：待审核列的归列依据；非状态分组照真实状态归组 */
+  pendingApproval?: boolean;
 };
 
 const GROUPS: GroupBy[] = ["status", "assignee", "priority", "milestone"];

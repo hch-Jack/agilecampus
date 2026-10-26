@@ -134,12 +134,25 @@ describe("deriveColumns", () => {
     milestones: [{ id: M, name: "一期" }],
   };
 
-  it("按状态分组：三列，patch 改 status", () => {
+  it("按状态分组：待办/进行中/待审核/已完成四列，patch 改 status", () => {
     const cols = deriveColumns("status", ctx);
-    expect(cols.map((c) => c.key)).toEqual(["todo", "doing", "done"]);
+    expect(cols.map((c) => c.key)).toEqual(["todo", "doing", "review", "done"]);
     expect(cols[1].patch).toEqual({ status: "doing" });
     expect(cols[1].matches(task({ status: "doing" }))).toBe(true);
     expect(cols[1].matches(task({ status: "todo" }))).toBe(false);
+  });
+
+  it("待审核是虚拟列：按 pendingApproval 划列，待审的卡不回待办/进行中", () => {
+    const cols = deriveColumns("status", ctx);
+    const review = cols.find((c) => c.key === "review")!;
+    expect(review.patch).toEqual({});
+    expect(review.matches(task({ status: "doing", pendingApproval: true }))).toBe(true);
+    expect(review.matches(task({ status: "doing" }))).toBe(false);
+    for (const key of ["todo", "doing"] as const) {
+      const col = cols.find((c) => c.key === key)!;
+      expect(col.matches(task({ status: key, pendingApproval: true }))).toBe(false);
+      expect(col.matches(task({ status: key }))).toBe(true);
+    }
   });
 
   it("按指派人分组：每成员一列 + 未指派列，patch 改 assigneeId", () => {

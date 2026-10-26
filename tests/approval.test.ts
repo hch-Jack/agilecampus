@@ -172,6 +172,55 @@ describe("任务完成审批：申请与撤回", () => {
     expect(acts.some((a) => a.type === "field" && a.field === "完成情况")).toBe(true);
     expect(acts.some((a) => a.type === "field" && a.field === "状态" && a.newValue === "已完成")).toBe(false);
   });
+
+  it("申请完成不级联子任务：拒绝后子任务保持提交前原状，通过才一并完成", async () => {
+    const { admin, teacher, student, task, pendingRow } = await scene();
+    const subDone = await createSubtask(admin.id, task.id, { title: "已完成子任务", assigneeId: student.id });
+    const subDoing = await createSubtask(admin.id, task.id, { title: "进行中子任务", assigneeId: student.id });
+    await updateTask(student.id, subDone.id, { status: "done" });
+    await updateTask(student.id, subDoing.id, { status: "doing" });
+
+    const statusOf = async (id: string) => {
+      const [row] = await db.select({ s: tasks.status }).from(tasks).where(eq(tasks.id, id));
+      return row?.s;
+    };
+
+    // 学生提交完成申请：父任务与子任务都不动，不提前级联
+    await expect(updateTask(student.id, task.id, { status: "done" })).rejects.toBeInstanceOf(
+      ApprovalRequestedError,
+    );
+    expect(await statusOf(task.id)).toBe("doing");
+    expect(await statusOf(subDone.id)).toBe("done");
+    expect(await statusOf(subDoing.id)).toBe("doing");
+
+    // 拒绝：子任务维持提交前的版本（不被拉成已完成）
+    const pending = (await pendingRow())!;
+    await decideApproval(admin.id, pending.id, "rejected");
+    expect(await statusOf(task.id)).toBe("doing");
+    expect(await statusOf(subDone.id)).toBe("done");
+    expect(await statusOf(subDoing.id)).toBe("doing");
+
+    // 重新申请并通过：此刻才级联，未完成的子任务一并落「已完成」
+    await expect(updateTask(student.id, task.id, { status: "done" })).rejects.toBeInstanceOf(
+      ApprovalRequestedError,
+    );
+    await decideApproval(teacher.id, (await pendingRow())!.id, "approved");
+    expect(await statusOf(task.id)).toBe("done");
+    expect(await statusOf(subDone.id)).toBe("done");
+    expect(await statusOf(subDoing.id)).toBe("done");
+  });
+
+  it("从待审核列拖回原状态列（显式改同状态）也撤回未决申请", async () => {
+    const { student, task, pendingRow } = await scene();
+    await expect(updateTask(student.id, task.id, { status: "done" })).rejects.toBeInstanceOf(
+      ApprovalRequestedError,
+    );
+    expect(await pendingRow()).not.toBeNull();
+
+    // 任务本就是 doing：把卡从「待审核」拖回「进行中」status 新旧值相同，也应撤回
+    await updateTask(student.id, task.id, { status: "doing" });
+    expect(await pendingRow()).toBeNull();
+  });
 });
 
 describe("任务完成审批：决定", () => {

@@ -89,6 +89,11 @@ export function TaskCard({
           <span className={`ac-badge ${PRIORITY_BADGE[task.priority] ?? "bg-low-soft text-low"}`}>
             {task.priority}
           </span>
+          {task.pendingApproval && (
+            <span className="ac-badge border border-medium bg-medium-soft font-medium text-medium">
+              ⏳ 待审核
+            </span>
+          )}
         </p>
         {task.labels.length > 0 && (
           <p className="mt-1 flex flex-wrap items-center gap-1">

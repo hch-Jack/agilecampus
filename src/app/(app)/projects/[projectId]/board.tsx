@@ -36,6 +36,8 @@ export type BoardTask = {
   labels: { id: string; name: string; color: string }[];
   /** 完成是否需要审批：false 时学生拖到「已完成」直接完成，不弹完成申请 */
   requireApproval: boolean;
+  /** 有未决的完成申请：卡进「待审核」虚拟列（任务 status 不变） */
+  pendingApproval?: boolean;
   /** 直接子任务的进度；无子任务时缺省 */
   subTotal?: number;
   subDone?: number;
@@ -96,10 +98,16 @@ export function Board({
   const [optimisticTasks, moveOptimistic] = useOptimistic(
     tasks,
     (current, move: { taskId: string; patch: ColumnPatch }) =>
-      current.map((t) => (t.id === move.taskId ? { ...t, ...move.patch } : t)),
+      current.map((t) =>
+        t.id === move.taskId
+          ? // 改状态即离开待审核列（服务端同步撤回申请），本地一并摘掉 pending 标记
+            { ...t, ...move.patch, ...(move.patch.status ? { pendingApproval: false } : null) }
+          : t,
+      ),
   );
   const [activeTask, setActiveTask] = useState<BoardTask | null>(null);
-  // 学生拖到「已完成」→ 完成申请弹窗（确认 + 完成情况/附件），任务留在原列
+  // 学生落「待审核」列或「已完成」列 → 完成申请弹窗（确认 + 完成情况/附件）；
+  // 受理后卡进「待审核」列，通过才落「已完成」，被拒回到原状态列
   const [completionTask, setCompletionTask] = useState<BoardTask | null>(null);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -119,8 +127,22 @@ export function Board({
     if (!over) return;
     const column = columns.find((c) => c.key === String(over));
     const task = optimisticTasks.find((t) => t.id === taskId);
-    // 已在目标列则无须提交
+    // 已在目标列则无须提交（待审核列按 pendingApproval 归列，status 列不收待审的卡）
     if (!column || !task || column.matches(task)) return;
+
+    // 「待审核」是完成申请的入口：学生落列=发起完成申请（弹窗，受理后进本列）；
+    // 管理员/老师拖入无意义（不经审批），已在待审核的卡会被 matches 拦在前面
+    if (column.key === "review") {
+      if (viewerRole === "student" && task.status !== "done" && task.requireApproval) {
+        setCompletionTask(task);
+      }
+      return;
+    }
+
+    // 待审核的卡：学生拖去「已完成」＝重复发起申请，忽略；管理员拖去「已完成」放行
+    // （= 直接完成、替代申请）。拖去待办/进行中走下面的普通分支＝撤回申请
+    //（服务端清掉 pending 行后卡回目标状态列）
+    if (viewerRole === "student" && task.pendingApproval && column.patch.status === "done") return;
 
     // 学生把任务拖到「已完成」：需要审批的才弹完成申请窗，关掉审批的直接落列完成
     if (

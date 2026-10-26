@@ -78,19 +78,37 @@ export function deriveColumns(group: GroupBy, ctx: ColumnContext): BoardColumn[]
 
     case "status":
     default:
-      return (
-        [
-          { key: "todo", label: "待办", tone: "text-todo" },
-          { key: "doing", label: "进行中", tone: "text-doing" },
-          { key: "done", label: "已完成", tone: "text-done" },
-        ] as const
-      ).map((c) => ({
-        key: c.key,
-        label: c.label,
-        tone: c.tone,
-        patch: { status: c.key } as ColumnPatch,
-        matches: (t: FilterableTask) => t.status === c.key,
-      }));
+      return [
+        ...(
+          [
+            { key: "todo", label: "待办", tone: "text-todo" },
+            { key: "doing", label: "进行中", tone: "text-doing" },
+          ] as const
+        ).map((c) => ({
+          key: c.key,
+          label: c.label,
+          tone: c.tone,
+          patch: { status: c.key } as ColumnPatch,
+          // 有未决完成申请的卡只归「待审核」列，不再按原状态出现在待办/进行中
+          matches: (t: FilterableTask) => t.status === c.key && t.pendingApproval !== true,
+        })),
+        {
+          // 虚拟列：依据 pending 完成申请划列，任务 status 不动。学生落列由看板
+          // 转成完成申请弹窗（不发 moveTaskAction），故 patch 留空
+          key: "review",
+          label: "待审核",
+          tone: "text-medium",
+          patch: {},
+          matches: (t: FilterableTask) => t.pendingApproval === true,
+        },
+        {
+          key: "done",
+          label: "已完成",
+          tone: "text-done",
+          patch: { status: "done" } as ColumnPatch,
+          matches: (t: FilterableTask) => t.status === "done",
+        },
+      ];
   }
 }
 

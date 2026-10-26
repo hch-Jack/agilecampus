@@ -193,13 +193,9 @@ export async function updateTask(
     task.requireApproval &&
     access.role === "student";
 
-  // 状态变化落定前撤掉未决的完成申请：拖回待办/进行中=申请人撤回；管理员直接完成=申请被替代
-  if (
-    patch.status !== undefined &&
-    patch.status !== task.status &&
-    !task.parentTaskId &&
-    !completionNeedsApproval
-  ) {
+  // 状态落定前撤掉未决的完成申请：拖回待办/进行中=申请人撤回；管理员直接完成=申请被替代；
+  // 从待审核列拖回原状态列（如进行中）也算撤回，故只看「显式改了顶层任务状态」不看新旧值是否不同
+  if (patch.status !== undefined && !task.parentTaskId && !completionNeedsApproval) {
     await withdrawTaskApprovals(taskId, exec);
   }
 
@@ -297,9 +293,11 @@ export async function updateTask(
     );
 
   // 父任务完成时级联完成所有未完成子任务（看板把父卡拖进「已完成」也走这里）。
+  // 用 updatePatch 判断：学生提交完成申请被拦截时状态未落定，子任务**不**提前完成，
+  // 各自保持原状——审批通过（此刻 updatePatch.status=done）才级联，被拒即原样退回。
   // 递归沿用同一个 exec / 事务：子级照常写自己的状态动态，并给本任务补 subtask_done。
   // 只单向级联，父任务被拖回待办时不会把子任务重新打开。
-  if (patch.status === "done" && task.status !== "done") {
+  if (updatePatch.status === "done" && task.status !== "done") {
     const openChildren = await exec
       .select({ id: tasks.id })
       .from(tasks)
