@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { listMyTeams } from "@/lib/team";
 import { RoleBadge } from "@/components/badges";
 import { DissolveTeamForm } from "./dissolve-team-form";
+import { ExitTeamForm } from "./exit-team-form";
 import { TeamForms } from "./team-forms";
 
 export default async function TeamsPage() {
@@ -50,9 +51,11 @@ export default async function TeamsPage() {
                   标签
                 </Link>
               </div>
-              {/* 解散是不可逆的硬删除，只在管理员面前渲染，独立于导航链接行以免误触 */}
-              {t.role === "admin" && (
+              {/* 解散/退出按钮统一放在卡片右下角，成员页内不再出现 */}
+              {t.role === "admin" ? (
                 <DissolveTeamForm teamId={t.id} teamName={t.name} counts={t.counts} />
+              ) : (
+                <ExitTeamForm teamId={t.id} teamName={t.name} />
               )}
             </li>
           ))}
