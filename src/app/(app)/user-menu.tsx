@@ -3,11 +3,12 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import type { TimeZoneOption } from "@/lib/time";
-import { markTutorialSeenAction, signOutAction } from "./actions";
+import { deleteAccountAction, markTutorialSeenAction, signOutAction } from "./actions";
 import { FeishuModal } from "./user-menu/feishu-modal";
 import { ProfileModal } from "./user-menu/profile-modal";
 import { TimezoneModal } from "./user-menu/timezone-modal";
 import { TutorialModal } from "./user-menu/tutorial-modal";
+import { ConfirmDangerDialog } from "@/components/confirm-danger-dialog";
 
 type ModalKind = "profile" | "feishu" | "timezone" | "tutorial";
 
@@ -44,6 +45,11 @@ export function UserMenu({
   // 教程自动弹出走 useState 初值而非 effect：初值来自服务端给的 props，effect 里同步
   // setState 会造成级联渲染（react-hooks/set-state-in-effect）。
   const [modal, setModal] = useState<ModalKind | null>(tutorial.autoOpen ? "tutorial" : null);
+  // 注销账号确认弹窗：密码二次确认 + 提交中态。open 由菜单「注销账号」按钮触发。
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deletePending, setDeletePending] = useState(false);
   const mounted = useSyncExternalStore(subscribeNoop, () => true, () => false);
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -73,6 +79,33 @@ export function UserMenu({
     setOpen(false);
     setModal(kind);
   };
+
+  function closeDeleteDialog() {
+    setDeleteOpen(false);
+    setDeletePassword("");
+    setDeleteError(null);
+  }
+
+  // 注销账号：密码校验由 server action 做；成功后账号已匿名化，调 signOutAction 登出回 /login。
+  // 提交中禁关弹窗（onCancel 守门），避免取消时动作仍在飞、稍后仍被登出。
+  async function handleConfirmDelete() {
+    if (!deletePassword || deletePending) return;
+    setDeletePending(true);
+    setDeleteError(null);
+    try {
+      const res = await deleteAccountAction(deletePassword);
+      if ("error" in res) {
+        setDeletePending(false);
+        setDeleteError(res.error);
+        return;
+      }
+      // 账号已匿名化 → 登出回 /login（signOutAction 内部 redirect）
+      await signOutAction();
+    } catch {
+      setDeletePending(false);
+      setDeleteError("注销失败，请稍后再试");
+    }
+  }
 
   return (
     <>
@@ -123,9 +156,22 @@ export function UserMenu({
                 role="menuitem"
                 className="block w-full rounded px-3 py-2 text-left text-sm text-high transition-colors hover:bg-sunken"
               >
-                退出
+                退出登录
               </button>
             </form>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                setDeletePassword("");
+                setDeleteError(null);
+                setDeleteOpen(true);
+              }}
+              className="block w-full rounded px-3 py-2 text-left text-sm text-high transition-colors hover:bg-sunken"
+            >
+              注销账号
+            </button>
           </div>
         )}
       </div>
@@ -164,6 +210,48 @@ export function UserMenu({
         createPortal(
           // firstRun 决定要不要显示「跳过」：从菜单重开时不需要
           <TutorialModal firstRun={tutorial.autoOpen} onClose={() => setModal(null)} />,
+          document.body,
+        )}
+
+      {/* 注销账号确认：portal 到 body——顶栏 backdrop-filter 会把 fixed 后代裁进顶栏盒内 */}
+      {deleteOpen &&
+        createPortal(
+          <ConfirmDangerDialog
+            open={deleteOpen}
+            title="注销账号"
+            confirmLabel={deletePending ? "注销中…" : "确认注销"}
+            confirmDisabled={!deletePassword || deletePending}
+            onConfirm={handleConfirmDelete}
+            onCancel={() => {
+              if (!deletePending) closeDeleteDialog();
+            }}
+          >
+            <p>注销后账号将无法登录，邮箱、用户名、飞书绑定与头像会被清除。</p>
+            <p className="mt-2">
+              你参与过的他人项目里的任务、附件与动态会保留，显示为「已注销用户」。此操作不可撤销。
+            </p>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleConfirmDelete();
+              }}
+              className="mt-3 space-y-1"
+            >
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-ink-soft">输入当前密码以确认</span>
+                <input
+                  type="password"
+                  value={deletePassword}
+                  onChange={(e) => setDeletePassword(e.target.value)}
+                  className="ac-field text-sm"
+                  placeholder="密码"
+                  autoComplete="current-password"
+                  autoFocus
+                />
+              </label>
+            </form>
+            {deleteError && <p className="mt-2 text-sm text-high">{deleteError}</p>}
+          </ConfirmDangerDialog>,
           document.body,
         )}
     </>

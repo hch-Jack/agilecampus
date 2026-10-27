@@ -149,6 +149,7 @@ export function WorkbenchSchedule({
 
   return (
     <section aria-label="任务日程" className="dw-schedule">
+      <h2 className="font-display text-sm font-semibold text-ink">日程表</h2>
       {/* 模块开关：随时关掉不看的部分，比例与开关都按卡片保存 */}
       <div className="dw-schedule-tools" role="group" aria-label="日程表显示模块">
         <ModuleToggle pressed={showGantt} onClick={() => toggleModule("showGantt")}>

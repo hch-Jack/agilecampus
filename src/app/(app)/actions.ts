@@ -12,11 +12,34 @@ import {
 } from "@/lib/activity";
 import { db } from "@/db";
 import { tasks, users } from "@/db/schema";
+import { anonymizeUser } from "@/lib/user";
+import { verifyPassword } from "@/lib/password";
 
 // 顶栏「设置」菜单里的「退出」：抽成共享 server action，
 // 因为菜单是客户端组件，客户端组件里不能内联定义 "use server"。
 export async function signOutAction() {
   await signOut({ redirectTo: "/login" });
+}
+
+// 「设置」菜单里「退出」下方的「注销账号」：经密码二次确认后匿名化当前账号。
+// 匿名化（而非硬删）的原因见 lib/user.ts 的 anonymizeUser：用户在他人项目里的附件/动态
+// 引用了 users.id 且非级联外键，硬删会撞外键；匿名化擦 PII、保外键、历史不丢，账号无法再登录。
+// 成功后由调用方（user-menu 弹窗）调 signOutAction 登出回 /login。
+export async function deleteAccountAction(
+  password: string,
+): Promise<{ ok: true } | { error: string }> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+  const [user] = await db
+    .select({ passwordHash: users.passwordHash })
+    .from(users)
+    .where(eq(users.id, session.user.id));
+  if (!user) return { error: "账号不存在" };
+  if (!(await verifyPassword(password, user.passwordHash))) {
+    return { error: "密码不正确" };
+  }
+  await anonymizeUser(session.user.id);
+  return { ok: true };
 }
 
 // 「新手教程」首次自动弹出时即标记已看过（教程小窗是纯客户端的，看不看完无从也无须判定）。
