@@ -145,16 +145,16 @@ export function MessagesWidget({ messages }: { messages: DashboardMessages }) {
           <Link
             key={item.key}
             href={item.href}
-            className="dw-tile rounded-lg border border-line bg-surface px-2 py-2 text-center transition-colors hover:border-primary/50"
+            className="dw-tile rounded-lg border border-line bg-surface text-center transition-colors hover:border-primary/50"
           >
             <p
-              className={`dw-tile-value font-display text-xl font-semibold tabular-nums ${
+              className={`dw-tile-value font-display font-semibold tabular-nums ${
                 item.value > 0 ? "text-high" : "text-ink"
               }`}
             >
               {item.value}
             </p>
-            <p className="dw-tile-label text-[11px] text-ink-faint">{item.label}</p>
+            <p className="dw-tile-label text-ink-faint">{item.label}</p>
           </Link>
         ))}
       </div>

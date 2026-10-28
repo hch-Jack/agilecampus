@@ -12,6 +12,10 @@ import { ASSISTANT_CONVERSATION_COOKIE } from "@/lib/agent/assistant-panel-share
 import { AUTO_TIMEZONE, DEFAULT_TIMEZONE, formatDateTime, listTimeZones } from "@/lib/time";
 import { getTimeZonePref, resolveUserTimeZone } from "@/lib/time-pref";
 import { userAvatarUrl } from "@/lib/user";
+import { getRailCollapsed, getRailLayout } from "@/lib/dashboard-layout-store";
+import { getApproverStatus, loadDashboardData } from "@/lib/dashboard-data";
+import { DashboardEditProvider } from "./dashboard/dashboard-edit-context";
+import { AppRail } from "./rail/rail";
 import { ProjTheme } from "./proj-theme";
 import { NavLinks } from "./nav-links";
 import { TzSync } from "./tz-sync";
@@ -50,11 +54,23 @@ export default async function AppLayout({
   const preferredConversationId =
     cookieStore.get(ASSISTANT_CONVERSATION_COOKIE)?.value ?? null;
 
-  const [tz, timeZonePref, assistant] = await Promise.all([
+  const [tz, timeZonePref, assistant, isApprover] = await Promise.all([
     resolveUserTimeZone(session.user.id),
     getTimeZonePref(session.user.id),
     getAssistantPanelData(session.user.id, preferredConversationId),
+    getApproverStatus(session.user.id),
   ]);
+
+  // 常驻栏：布局决定要加载哪些卡片的数据；审批人身份只影响「从未自定义」时的默认布局。
+  // 工作台页面稍后读同样这批查询，React `cache()` 会在同一请求内去重。
+  const [railLayout, railCollapsed] = await Promise.all([
+    getRailLayout(session.user.id, { isApprover }),
+    // 收起 / 展开按账号记住：上次退出时是展开的，这次登录也是展开的
+    getRailCollapsed(session.user.id),
+  ]);
+  const railData = await loadDashboardData(session.user.id, {
+    only: [...new Set(railLayout.items.map((item) => item.type))],
+  });
 
   return (
     <ProjTheme>
@@ -123,7 +139,19 @@ export default async function AppLayout({
             />
           </div>
         </header>
-        <div className="mx-auto max-w-5xl p-6">{children}</div>
+        {/* 常驻栏与正文并排；正文仍居中在 max-w-5xl，页面自己的页头宽度不变 */}
+        <div className="flex items-stretch">
+          <DashboardEditProvider>
+            <AppRail
+              initialLayout={railLayout}
+              initialData={railData}
+              initialCollapsed={railCollapsed}
+            />
+            <div className="min-w-0 flex-1">
+              <div className="mx-auto max-w-5xl p-6">{children}</div>
+            </div>
+          </DashboardEditProvider>
+        </div>
       </AssistantShell>
     </ProjTheme>
   );

@@ -2,8 +2,10 @@
    列数 / 行高 / 间距必须与 lib/dashboard-layout.ts 的常量一致。 */
 
 .dashboard-shell {
-  /* 卡片网格是它的容器：打开助手抽屉把正文挤窄时，按容器宽度切换到只读堆叠 */
-  container-type: inline-size;
+  /* 卡片网格是它的容器：打开助手抽屉把正文挤窄时，按容器宽度切换到只读堆叠。
+     必须命名：卡片内容区自己也是容器（widget / size），未命名的窄容器查询会
+     命中「离元素最近的那个容器」—— 也就是每张卡片本身，堆叠规则会误伤桌面网格。 */
+  container: dashboard / inline-size;
 }
 
 .dashboard-grid {
@@ -112,12 +114,19 @@
   margin-top: 8px;
 }
 
+/* 统计卡的字号同时跟卡片的宽、高走：拖宽按宽度系数放大，拖高按高度系数放大，
+   取两者较小值 —— 卡片怎么变都既铺满又不溢出。标签也按同一套轴缩放。 */
 .dw-stat-label {
-  font-size: 0.75rem;
+  font-size: clamp(0.75rem, min(5cqi, 11cqh), 1.25rem);
   line-height: 1.35;
 }
 
-.dw-stat-value,
+.dw-stat-value {
+  font-size: clamp(1.5rem, min(22cqi, 64cqh), 7rem);
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+
 .dw-clock-time,
 .dw-countdown-value,
 .dw-focus-time {
@@ -136,11 +145,30 @@
   font-size: 0.875rem;
 }
 
-/* 私信 / 群聊 / 群邀请 / 系统消息 四个瓦片 */
+/* 私信 / 群聊 / 群邀请 / 系统消息 四个瓦片。
+   瓦片网格撑满正文剩余高度，行高均分 —— 卡片拉高时瓦片跟着长，不留下方空白。 */
 .dw-tile-grid {
   display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
   gap: 8px;
+}
+
+/* 瓦片自己就是尺寸容器：数字与标签直接按瓦片大小缩放，
+   卡片拖多大字就多大，不用再猜「卡高减去表头还剩多少」。 */
+.dw-tile {
+  container: tile / size;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 4px 2px;
+  text-align: center;
 }
 
 /* 快捷入口：铺满正文可用高度，行高均分 —— 卡片再矮也只是瓦片变扁，不会裁掉第 4 个 */
@@ -173,9 +201,26 @@
   line-height: 1.25;
 }
 
+/* 又高又窄的卡（只拉高没拉宽）：4 列瓦片宽度会锁死字号，
+   改 2×2 后瓦片变宽，数字能继续跟着卡片长。 */
+@container widget (min-height: 170px) and (max-width: 400px) {
+  .dw-tile-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 数字按瓦片高度长，同时被瓦片宽度卡住：三位数（128）在最大字号下也要放得下，
+   所以宽度系数取 50cqi（三字约 1.8 个字号宽，仍留得出内边距）。 */
 .dw-tile-value {
-  font-size: clamp(1rem, 5cqi, 1.5rem);
-  line-height: 1.2;
+  font-size: clamp(1.125rem, min(58cqh, 50cqi), 4rem);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 「系统消息」四个字要一行放得下：22cqi 在 4 列瓦片里刚好留出边距 */
+.dw-tile-label {
+  font-size: clamp(0.75rem, min(28cqh, 22cqi), 1.25rem);
+  line-height: 1.15;
 }
 
 /* 宽卡：多给留白，标题略大一档，避免内容缩在左上角 */
@@ -303,16 +348,13 @@
     margin-top: 3px;
   }
 
-  /* 统计卡：标签在左、数字在右，短卡里不再上下占两行 */
+  /* 统计卡：标签在左、数字在右，短卡里不再上下占两行。
+     字号不在这里另设上限 —— 上面的双轴 clamp 已经按高度压过一档。 */
   .dw-stat {
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-  }
-
-  .dw-stat-value {
-    font-size: clamp(1.375rem, 10cqi, 2rem);
   }
 
   /* 消息 / 快捷入口：改成一行小瓦片，隐藏说明文字 */
@@ -326,22 +368,13 @@
     gap: 4px;
   }
 
+  /* 短卡里数字与标签上下排：横向并排时「系统消息」这种四字标签挤不下，
+     只能把字压到 10px；改成竖排后能用满卡片高度，数字和标签都大一档。
+     字号不在这里写死 —— 上面的 clamp 已经按瓦片容器尺寸算好了。 */
   .dw-tile {
-    display: flex;
-    align-items: baseline;
-    justify-content: center;
-    gap: 4px;
+    gap: 0;
     border-radius: 6px;
-    padding: 2px 4px;
-    text-align: center;
-  }
-
-  .dw-tile-value {
-    font-size: 0.9375rem;
-  }
-
-  .dw-tile-label {
-    font-size: 0.625rem;
+    padding: 1px 2px;
   }
 
   .dw-link {
@@ -821,12 +854,14 @@ body.proj-cosmic.dashboard-dragging * {
 /* —— 逾期提醒 ——
    工作台里的「逾期」统计卡与逾期任务卡共用一套橙色语义：
    浅色主题用暖橙底 + 描边；宇宙主题调亮字色、压低底色，避免跟深蓝背景打架。 */
-.dashboard-shell {
+.dashboard-shell,
+.rail-shell {
   --dw-overdue-ink: #c2410c;
   --dw-overdue-soft: #fff4e8;
   --dw-overdue-line: #e9a15c;
 }
-body.proj-cosmic .dashboard-shell {
+body.proj-cosmic .dashboard-shell,
+body.proj-cosmic .rail-shell {
   --dw-overdue-ink: #ffc08a;
   --dw-overdue-soft: rgba(255, 169, 94, 0.12);
   --dw-overdue-line: rgba(255, 169, 94, 0.55);
@@ -912,6 +947,28 @@ body.proj-cosmic .dashboard-widget-alert .dashboard-widget-inner {
   .dashboard-widget-content {
     container-type: inline-size;
   }
+  /* 瓦片同理：退回宽度容器，行高改由内容撑开，字号回到固定档 */
+  .dw-tile {
+    container: tile / inline-size;
+    padding: 8px 4px;
+  }
+  .dw-tile-grid {
+    grid-auto-rows: auto;
+  }
+  .dw-tile-value {
+    font-size: 1.5rem;
+  }
+  .dw-tile-label {
+    font-size: 0.8125rem;
+  }
+  /* 没有高度尺寸容器时 cqh 会回落到视口高度，会把统计数字撑得过大；
+     堆叠态只按宽度缩放，标签回到固定字号。 */
+  .dw-stat-value {
+    font-size: clamp(1.5rem, 9cqi, 2.75rem);
+  }
+  .dw-stat-label {
+    font-size: 0.75rem;
+  }
   .dashboard-edit-frame,
   .dashboard-edit-toggle,
   .dashboard-widget-overlay,
@@ -921,7 +978,217 @@ body.proj-cosmic .dashboard-widget-alert .dashboard-widget-inner {
   }
 }
 
-@container (max-width: 719.98px) {
+/* —— 全域常驻栏 ——
+   每个登录页面左侧一条，复用工作台的网格与卡片样式。
+   关键：常驻栏的 shell **不能**用 `.dashboard-shell`（那是名为 dashboard 的容器，
+   会命中上面 `max-width: 719.98px` 的只读堆叠规则，把常驻栏永远压成单列）。 */
+.app-rail {
+  position: sticky;
+  /* 顶栏高度：sticky top-0 的 app-topbar（py-3 + 40px 头像）约 64px */
+  top: var(--app-topbar-h, 64px);
+  z-index: 10;
+  flex: 0 0 auto;
+  width: 304px;
+  height: calc(100vh - var(--app-topbar-h, 64px));
+  border-right: 1px solid var(--color-line);
+  background: var(--color-canvas);
+  transition: width 180ms ease;
+}
+
+.app-rail.is-collapsed {
+  width: 30px;
+}
+
+/* 滚动放在内层：收起按钮钉在栏的右缘中点，不能随内容滚走。
+   滚动条会与收起按钮撞在一起，这里直接隐藏（滚轮 / 触控板 / 键盘照常滚）。
+   顺带解决抖动：没有滚动条就没有「内容变长 → 滚动条出现 → 栏宽缩 8px → 网格左右抖」，
+   `overflow-anchor: none` 则关掉内容变化时的滚动锚定。 */
+.rail-scroll {
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.rail-scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.rail-shell {
+  /* 命名容器：卡片内的容器查询按常驻栏宽度算，且不会误触发 dashboard 的堆叠规则 */
+  container: rail / inline-size;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 10px 20px;
+}
+
+.rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px;
+}
+
+.rail-title {
+  font-family: var(--font-display, inherit);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--color-ink-soft);
+}
+
+/* 栏头右侧：常驻栏自己的编辑开关（与工作台编辑互不影响） */
+.rail-edit {
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
+  padding: 0 10px;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 20px;
+  transition: color 120ms, background-color 120ms, border-color 120ms;
+}
+
+.rail-edit:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+  color: var(--color-primary);
+}
+
+.rail-edit.is-on {
+  border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+/* 收起按钮：挂在展开栏右缘中线的页边留白里（正文 p-6 的 24px）。
+   绝对定位的参照是栏的 padding box（栏宽 304，含 1px 右边框 → 右缘 303），
+   所以 right: -21px + 宽 20 得到 304..324：左缘齐栏边框外侧（不压黑底），
+   右边距正文 328 还有 4px。 */
+.rail-collapse {
+  position: absolute;
+  top: 50%;
+  right: -21px;
+  z-index: 3;
+  display: grid;
+  width: 20px;
+  height: 72px;
+  place-items: center;
+  transform: translateY(-50%);
+  border: 1px solid var(--color-line);
+  border-left: none;
+  /* 平左缘贴住栏边框、右侧圆角：看起来是挂在栏边上的小把手，而不是压在栏上 */
+  border-radius: 0 12px 12px 0;
+  background: var(--color-surface);
+  box-shadow: 0 6px 18px -10px rgba(0, 0, 0, 0.45);
+  color: var(--color-ink-soft);
+  cursor: pointer;
+  font-size: 17px;
+  line-height: 1;
+  transition: color 120ms, background-color 120ms, border-color 120ms;
+}
+
+.rail-collapse:hover {
+  border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.rail-collapse:focus-visible,
+.rail-strip:focus-visible,
+.rail-edit:focus-visible {
+  outline: 2px solid var(--color-primary-ring);
+  outline-offset: 1px;
+}
+
+/* 收起后的细条：整条都是「展开」按钮，竖排标题 */
+.rail-strip {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--color-ink-faint);
+  cursor: pointer;
+  transition: color 120ms, background-color 120ms;
+}
+
+.rail-strip:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-primary-soft) 55%, transparent);
+  color: var(--color-primary);
+}
+
+.rail-strip:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.rail-strip-label {
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  writing-mode: vertical-rl;
+}
+
+/* 编辑态：与工作台一致的虚线卡框；工具栏收窄成两行 */
+.rail-shell.is-editing .dashboard-widget-inner {
+  outline: 1px dashed color-mix(in srgb, var(--color-primary) 55%, transparent);
+  outline-offset: -1px;
+}
+
+.rail-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px dashed color-mix(in srgb, var(--color-primary) 40%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-primary-soft) 35%, transparent);
+}
+
+/* 卡片库在窄栏里会很长：限高 + 自身滚动，别把下面的网格顶出视野 */
+.rail-library {
+  max-height: 44vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--radius-card);
+  scrollbar-width: thin;
+}
+
+/* 窄栏里「可放置区域」标签会压到工具栏，只保留两侧虚线 */
+.app-rail .dashboard-edit-frame::before {
+  display: none;
+}
+
+/* 窄卡上「移除」会盖住卡头右侧的「查看全部」：常驻栏里用不透明底 */
+.app-rail .dashboard-widget-remove {
+  background: var(--color-surface);
+}
+
+body.proj-cosmic .app-rail .dashboard-widget-remove {
+  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+}
+
+.rail-empty {
+  padding: 6px 2px;
+  color: var(--color-ink-faint);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 手机 / 窄窗口：整条隐藏（常驻栏不做浮层） */
+@media (max-width: 1023.98px) {
+  .app-rail {
+    display: none;
+  }
+}
+
+@container dashboard (max-width: 719.98px) {
   .dashboard-grid {
     display: flex;
     flex-direction: column;
@@ -938,6 +1205,28 @@ body.proj-cosmic .dashboard-widget-alert .dashboard-widget-inner {
   /* 堆叠后卡片高度由内容决定：只保留宽度容器，避免 size containment 把高度压成 0 */
   .dashboard-widget-content {
     container-type: inline-size;
+  }
+  /* 瓦片同理：退回宽度容器，行高改由内容撑开，字号回到固定档 */
+  .dw-tile {
+    container: tile / inline-size;
+    padding: 8px 4px;
+  }
+  .dw-tile-grid {
+    grid-auto-rows: auto;
+  }
+  .dw-tile-value {
+    font-size: 1.5rem;
+  }
+  .dw-tile-label {
+    font-size: 0.8125rem;
+  }
+  /* 没有高度尺寸容器时 cqh 会回落到视口高度，会把统计数字撑得过大；
+     堆叠态只按宽度缩放，标签回到固定字号。 */
+  .dw-stat-value {
+    font-size: clamp(1.5rem, 9cqi, 2.75rem);
+  }
+  .dw-stat-label {
+    font-size: 0.75rem;
   }
   .dashboard-edit-frame,
   .dashboard-edit-toggle,

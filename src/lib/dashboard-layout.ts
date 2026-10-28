@@ -11,6 +11,31 @@ export const GRID_ROW_HEIGHT = 32;
 /** 卡片间距（px），指针换算与 CSS gap 共用 */
 export const GRID_GAP = 12;
 
+/** 缩放范围：70%–150%，步进 10%；1 = 标准，缺省即标准 */
+export const ZOOM_MIN = 0.7;
+export const ZOOM_MAX = 1.5;
+export const ZOOM_STEP = 0.1;
+
+/** 夹取并取整缩放值；1 视为缺省（不写字段），非法值返回 undefined */
+export function normalizeZoom(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const clamped = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, value));
+  const rounded = Math.round(clamped * 10) / 10;
+  return rounded === 1 ? undefined : rounded;
+}
+
+/**
+ * 缩放后的行高与间距。列数恒为 12 —— 缩放只改格子尺寸，
+ * 所以已保存的坐标不受影响，同一块区域能放下更多（或更少）行。
+ */
+export function gridMetrics(zoom?: number): { rowHeight: number; gap: number } {
+  const z = normalizeZoom(zoom) ?? 1;
+  return {
+    rowHeight: Math.max(16, Math.round(GRID_ROW_HEIGHT * z)),
+    gap: Math.max(4, Math.round(GRID_GAP * z)),
+  };
+}
+
 /** 坐标上限，防止坏数据把网格撑到天上去；正常使用远达不到 */
 const MAX_Y = 2000;
 const MAX_H = 100;
@@ -114,8 +139,11 @@ export type DashboardLayoutItem = {
   config?: DashboardWidgetConfig;
 };
 
-/** 带版本的信封：库中 NULL = 从未自定义；items: [] = 用户主动删空 */
-export type DashboardLayoutDoc = { v: 1; items: DashboardLayoutItem[] };
+/**
+ * 带版本的信封：库中 NULL = 从未自定义；items: [] = 用户主动删空。
+ * `zoom` 缺省等价于 1（标准），只有非 1 时才写字段。
+ */
+export type DashboardLayoutDoc = { v: 1; items: DashboardLayoutItem[]; zoom?: number };
 
 export type DashboardWidgetMeta = {
   id: DashboardWidgetId;
@@ -130,7 +158,8 @@ export const DASHBOARD_WIDGETS: Record<DashboardWidgetId, DashboardWidgetMeta> =
     id: "task_board",
     title: "我的任务看板",
     description: "按待办 / 进行中 / 已完成分列，可拖拽换列",
-    defaultSize: { w: 8, h: 6 },
+    // 默认铺满整行、7 行高：三列任务卡有足够高度，不用频繁滚动
+    defaultSize: { w: 12, h: 7 },
     minSize: { w: 6, h: 4 },
   },
   schedule: {
@@ -272,53 +301,82 @@ export const DASHBOARD_WIDGETS: Record<DashboardWidgetId, DashboardWidgetMeta> =
 /**
  * 默认布局：所有卡片都放出来，按「高频 → 辅助」从上到下铺满 12 列。
  *
- * 版式（共 23 行）：
+ * 版式（共 27 行）：
  *   y0-1   四张统计卡
- *   y2-7   看板（8 列）+ 最新记录 / 消息（右 4 列）
- *   y8-16  日程表（8 列 × 9 行）+ 我的项目 / 时钟 / 快捷入口（右 4 列）
- *   y17-19 一排 3 列辅助卡（即将到期、里程碑、资源、附件）
- *   y20-22 一排 3 列辅助卡（团队、便签、倒计时、专注）
+ *   y2-8   看板（整行 12 列 × 7 行）—— 三个任务列同屏，不用横向挤
+ *   y9-17  日程表（8 列 × 9 行）+ 最新记录 / 消息 / 我的项目（右 4 列）
+ *   y18-20 第一排辅助卡：即将到期、里程碑、资源占用（要盯的）
+ *   y21-23 第二排辅助卡：最近附件、我的团队、快捷入口（查资料的）
+ *   y24-26 第三排小工具：时钟、专注、便签、倒计时（随手用的）
  *
- * 时钟与快捷入口从页尾提到日程表右侧：这两张是小工具，常用的不该压在最底下。
- * 辅助卡统一压到 3 列 × 3 行（约 240×120），两排就装完，整页高度反而比之前更短。
+ * 三排辅助卡按使用频率从「要处理」到「随手用」排：截止 / 里程碑 / 资源在最上，
+ * 个人小工具压到最底。看板吃满整行后，原先在右侧的活动流、消息、我的项目
+ * 下移到日程表右侧，仍然贴着首屏。
  */
 const DEFAULT_ITEMS: DashboardLayoutItem[] = [
   { id: "stat_overdue", type: "stat_overdue", x: 0, y: 0, w: 3, h: 2 },
   { id: "stat_today", type: "stat_today", x: 3, y: 0, w: 3, h: 2 },
   { id: "stat_week", type: "stat_week", x: 6, y: 0, w: 3, h: 2 },
   { id: "stat_doing", type: "stat_doing", x: 9, y: 0, w: 3, h: 2 },
-  { id: "task_board", type: "task_board", x: 0, y: 2, w: 8, h: 6 },
-  { id: "activity_feed", type: "activity_feed", x: 8, y: 2, w: 4, h: 4 },
-  { id: "unread_messages", type: "unread_messages", x: 8, y: 6, w: 4, h: 2 },
-  { id: "schedule", type: "schedule", x: 0, y: 8, w: 8, h: 9 },
-  { id: "my_projects", type: "my_projects", x: 8, y: 8, w: 4, h: 3 },
-  { id: "clock", type: "clock", x: 8, y: 11, w: 4, h: 3 },
-  { id: "quick_links", type: "quick_links", x: 8, y: 14, w: 4, h: 3 },
-  { id: "upcoming", type: "upcoming", x: 0, y: 17, w: 3, h: 3 },
-  { id: "milestones", type: "milestones", x: 3, y: 17, w: 3, h: 3 },
-  { id: "resource_usage", type: "resource_usage", x: 6, y: 17, w: 3, h: 3 },
-  { id: "recent_attachments", type: "recent_attachments", x: 9, y: 17, w: 3, h: 3 },
-  { id: "my_teams", type: "my_teams", x: 0, y: 20, w: 3, h: 3 },
-  { id: "note", type: "note", x: 3, y: 20, w: 3, h: 3 },
-  { id: "countdown", type: "countdown", x: 6, y: 20, w: 3, h: 3 },
-  { id: "focus_timer", type: "focus_timer", x: 9, y: 20, w: 3, h: 3 },
+  { id: "task_board", type: "task_board", x: 0, y: 2, w: 12, h: 7 },
+  { id: "schedule", type: "schedule", x: 0, y: 9, w: 8, h: 9 },
+  { id: "activity_feed", type: "activity_feed", x: 8, y: 9, w: 4, h: 3 },
+  // 消息卡跟活动流对调一行高度：2 行高时四个瓦片只剩 41px，数字和标签都挤得看不清
+  { id: "unread_messages", type: "unread_messages", x: 8, y: 12, w: 4, h: 3 },
+  { id: "my_projects", type: "my_projects", x: 8, y: 15, w: 4, h: 3 },
+  { id: "upcoming", type: "upcoming", x: 0, y: 18, w: 4, h: 3 },
+  { id: "milestones", type: "milestones", x: 4, y: 18, w: 4, h: 3 },
+  { id: "resource_usage", type: "resource_usage", x: 8, y: 18, w: 4, h: 3 },
+  { id: "recent_attachments", type: "recent_attachments", x: 0, y: 21, w: 4, h: 3 },
+  { id: "my_teams", type: "my_teams", x: 4, y: 21, w: 4, h: 3 },
+  { id: "quick_links", type: "quick_links", x: 8, y: 21, w: 4, h: 3 },
+  { id: "clock", type: "clock", x: 0, y: 24, w: 3, h: 3 },
+  { id: "focus_timer", type: "focus_timer", x: 3, y: 24, w: 3, h: 3 },
+  { id: "note", type: "note", x: 6, y: 24, w: 3, h: 3 },
+  { id: "countdown", type: "countdown", x: 9, y: 24, w: 3, h: 3 },
 ];
 
 export const DEFAULT_DASHBOARD_LAYOUT: DashboardLayoutDoc = { v: 1, items: DEFAULT_ITEMS };
 
 /**
  * 老师/管理员的默认布局：把「待办审批」卡放进权限内最高频的位置 ——
- * 通用默认里「我的项目」那一格（日程表右侧第一张），尺寸一并沿用；
- * 「我的项目」顺延到页尾单独占一行（y=23），不与时钟、快捷入口等右栏卡片重叠。
+ * 通用默认里「我的项目」那一格（日程表右侧最后一张），尺寸一并沿用；
+ * 「我的项目」顺延到内容下方单独占一行，不与任何卡片重叠。
  *
  * 只有从未自定义过布局的审批人首次进入时用一次，自定义后完全以库中为准。
+ * 顺延坐标按当前默认布局的底边算，改默认版式时不用再手改这个数字。
  */
 export function defaultDashboardLayoutFor(isApprover: boolean): DashboardLayoutDoc {
   if (!isApprover) return DEFAULT_DASHBOARD_LAYOUT;
   const items: DashboardLayoutItem[] = DEFAULT_ITEMS.map((item) =>
     item.type === "my_projects" ? { ...item, id: "approvals", type: "approvals" } : item,
   );
-  items.push({ id: "my_projects", type: "my_projects", x: 0, y: 23, w: 4, h: 4 });
+  const bottom = Math.max(...items.map((item) => item.y + item.h));
+  items.push({ id: "my_projects", type: "my_projects", x: 0, y: bottom, w: 4, h: 4 });
+  return { v: 1, items };
+}
+
+/**
+ * 全域常驻栏的默认布局：栏只有 ~300px 宽，卡片一律满宽（12 列），
+ * 只放「一眼要看」的四张 —— 未读消息、即将到期、快捷入口、时钟。
+ * 坐标与工作台共用同一套 12 列模型，所以拖拽 / 缩放 / 增删的引擎完全复用。
+ */
+const RAIL_DEFAULT_ITEMS: DashboardLayoutItem[] = [
+  { id: "unread_messages", type: "unread_messages", x: 0, y: 0, w: 12, h: 3 },
+  { id: "upcoming", type: "upcoming", x: 0, y: 3, w: 12, h: 4 },
+  { id: "quick_links", type: "quick_links", x: 0, y: 7, w: 12, h: 4 },
+  { id: "clock", type: "clock", x: 0, y: 11, w: 12, h: 3 },
+];
+
+export const DEFAULT_RAIL_LAYOUT: DashboardLayoutDoc = { v: 1, items: RAIL_DEFAULT_ITEMS };
+
+/** 审批人的常驻栏默认：待办审批置顶（占 4 行），其余顺延 */
+export function defaultRailLayoutFor(isApprover: boolean): DashboardLayoutDoc {
+  if (!isApprover) return DEFAULT_RAIL_LAYOUT;
+  const items: DashboardLayoutItem[] = [
+    { id: "approvals", type: "approvals", x: 0, y: 0, w: 12, h: 4 },
+    ...RAIL_DEFAULT_ITEMS.map((item) => ({ ...item, y: item.y + 4 })),
+  ];
   return { v: 1, items };
 }
 
@@ -469,8 +527,9 @@ function resolveOverlaps(items: DashboardLayoutItem[]): DashboardLayoutItem[] {
  * 用户把卡片拖到下方、或在两张卡之间留白，位置就按放下时算；
  * 删卡也不牵动其他卡片（想收拢就手动拖，或「恢复默认」）。
  */
-function layoutFrom(items: DashboardLayoutItem[]): DashboardLayoutDoc {
-  return { v: 1, items: resolveOverlaps(items) };
+function layoutFrom(items: DashboardLayoutItem[], zoom?: number): DashboardLayoutDoc {
+  const z = normalizeZoom(zoom);
+  return { v: 1, items: resolveOverlaps(items), ...(z !== undefined ? { zoom: z } : {}) };
 }
 
 /**
@@ -486,7 +545,10 @@ export function normalizeLayoutDoc(raw: unknown): DashboardLayoutDoc {
   if (!raw || typeof raw !== "object") return defaultDoc();
   const input = raw as Record<string, unknown>;
   if (input.v !== 1 || !Array.isArray(input.items)) return defaultDoc();
-  if (input.items.length === 0) return { v: 1, items: [] };
+  const zoom = normalizeZoom(input.zoom);
+  if (input.items.length === 0) {
+    return { v: 1, items: [], ...(zoom !== undefined ? { zoom } : {}) };
+  }
 
   const seenIds = new Set<string>();
   const seenTypes = new Set<DashboardWidgetId>();
@@ -503,7 +565,7 @@ export function normalizeLayoutDoc(raw: unknown): DashboardLayoutDoc {
   }
 
   if (items.length === 0) return defaultDoc();
-  return layoutFrom(items.sort(byPosition));
+  return layoutFrom(items.sort(byPosition), zoom);
 }
 
 /** 移动：从当前文档出发，把目标放到新坐标并重排 */
@@ -522,7 +584,7 @@ export function moveWidget(
     y: clamp(intOr(y, target.y), 0, MAX_Y),
   };
   const others = doc.items.filter((item) => item.id !== id);
-  return layoutFrom([moved, ...others]);
+  return layoutFrom([moved, ...others], doc.zoom);
 }
 
 /** 缩放：左上角固定，尺寸夹到最小尺寸与 12 列内 */
@@ -540,7 +602,7 @@ export function resizeWidget(
   const nextH = clamp(intOr(h, target.h), meta.minSize.h, MAX_H);
   const resized: DashboardLayoutItem = { ...target, w: nextW, h: nextH };
   const others = doc.items.filter((item) => item.id !== id);
-  return layoutFrom([resized, ...others]);
+  return layoutFrom([resized, ...others], doc.zoom);
 }
 
 /** 新实例 id：首个实例沿用类型名，之后依次 `type-2`、`type-3` */
@@ -566,13 +628,32 @@ export function addWidget(doc: DashboardLayoutDoc, type: DashboardWidgetId): Das
     w: meta.defaultSize.w,
     h: meta.defaultSize.h,
   };
-  return layoutFrom([...doc.items, added]);
+  return layoutFrom([...doc.items, added], doc.zoom);
+}
+
+/**
+ * 常驻栏加卡：新卡默认铺满整栏（12 列），高度沿用目录默认值。
+ * 常驻栏只有 ~300px 宽，按工作台的 defaultSize.w（3–4 列）放会挤成一条。
+ */
+export function addWidgetFullWidth(
+  doc: DashboardLayoutDoc,
+  type: DashboardWidgetId,
+): DashboardLayoutDoc {
+  const added = addWidget(doc, type);
+  if (added === doc) return doc;
+  const before = new Set(doc.items.map((item) => item.id));
+  const created = added.items.find((item) => !before.has(item.id));
+  if (!created) return added;
+  return resizeWidget(added, created.id, GRID_COLUMNS, created.h);
 }
 
 /** 按实例 id 删除（可重复卡只删掉这一张） */
 export function removeWidget(doc: DashboardLayoutDoc, id: string): DashboardLayoutDoc {
   if (!doc.items.some((item) => item.id === id)) return doc;
-  return layoutFrom(doc.items.filter((item) => item.id !== id));
+  return layoutFrom(
+    doc.items.filter((item) => item.id !== id),
+    doc.zoom,
+  );
 }
 
 /** 只改配置，不动位置（按实例 id 定位，同一类型的多张卡互不影响） */
@@ -587,6 +668,7 @@ export function updateWidgetConfig(
   const config = sanitizeConfig(target.type, { ...target.config, ...patch });
   return {
     v: 1,
+    ...(doc.zoom !== undefined ? { zoom: doc.zoom } : {}),
     items: doc.items.map((item) => {
       if (item.id !== id) return item;
       if (config) return { ...item, config };

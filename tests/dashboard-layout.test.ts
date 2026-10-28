@@ -4,15 +4,24 @@ import {
   COUNTDOWN_TITLE_MAX_LENGTH,
   DASHBOARD_WIDGETS,
   DEFAULT_DASHBOARD_LAYOUT,
+  DEFAULT_RAIL_LAYOUT,
   GRID_COLUMNS,
+  GRID_GAP,
+  GRID_ROW_HEIGHT,
   NOTE_MAX_LENGTH,
   SCHEDULE_GANTT_RATIO_MAX,
   SCHEDULE_POOL_RATIO_MIN,
   WIDGET_IDS,
+  ZOOM_MAX,
+  ZOOM_MIN,
   addWidget,
+  addWidgetFullWidth,
   moveWidget,
   normalizeLayoutDoc,
+  normalizeZoom,
   defaultDashboardLayoutFor,
+  defaultRailLayoutFor,
+  gridMetrics,
   removeWidget,
   resizeWidget,
   sortByCatalog,
@@ -64,6 +73,24 @@ describe("卡片目录与默认布局", () => {
       expect(item.x + item.w).toBeLessThanOrEqual(GRID_COLUMNS);
       expect(item.y).toBeGreaterThanOrEqual(0);
     }
+  });
+
+  it("看板默认铺满整行、比初版高一格，辅助卡按使用频率分三排", () => {
+    expect(find(DEFAULT_DASHBOARD_LAYOUT, "task_board")).toMatchObject({
+      x: 0,
+      y: 2,
+      w: GRID_COLUMNS,
+      h: 7,
+    });
+    // 消息卡的四个瓦片要放得下大号数字：给到 3 行高，与活动流对调一行
+    expect(find(DEFAULT_DASHBOARD_LAYOUT, "unread_messages")).toMatchObject({ y: 12, h: 3 });
+    expect(find(DEFAULT_DASHBOARD_LAYOUT, "activity_feed")).toMatchObject({ y: 9, h: 3 });
+    // 要盯的卡片在第一排，随手用的小工具压在最底
+    expect(find(DEFAULT_DASHBOARD_LAYOUT, "upcoming")).toMatchObject({ y: 18 });
+    expect(find(DEFAULT_DASHBOARD_LAYOUT, "milestones")).toMatchObject({ y: 18 });
+    expect(find(DEFAULT_DASHBOARD_LAYOUT, "resource_usage")).toMatchObject({ y: 18 });
+    expect(find(DEFAULT_DASHBOARD_LAYOUT, "clock")).toMatchObject({ y: 24 });
+    expect(find(DEFAULT_DASHBOARD_LAYOUT, "countdown")).toMatchObject({ y: 24 });
   });
 
   it("目录 id 唯一，默认布局里只有单例卡", () => {
@@ -473,9 +500,11 @@ describe("配置与顺序", () => {
   });
 
   it("给不支持配置的卡片写 config 会被丢弃", () => {
+    const before = find(DEFAULT_DASHBOARD_LAYOUT, "clock")!;
     const updated = updateWidgetConfig(DEFAULT_DASHBOARD_LAYOUT, "clock", { text: "x" });
     expect(find(updated, "clock")!.config).toBeUndefined();
-    expect(find(updated, "clock")).toMatchObject({ x: 8, y: 11, w: 4, h: 3 });
+    // 位置与尺寸原样保留（默认版式会调整，这里只验证 config 不牵动几何）
+    expect(find(updated, "clock")).toMatchObject(before);
   });
 
   it("widgetOrder 与 sortByCatalog", () => {
@@ -513,5 +542,104 @@ describe("新增卡片在目录内", () => {
 
   it("「任务概览（四合一）」已下线", () => {
     expect(WIDGET_IDS as readonly string[]).not.toContain("task_summary");
+  });
+});
+
+describe("缩放", () => {
+  it("normalizeZoom：非法值丢弃、越界夹取、按 0.1 取整、1 视为缺省", () => {
+    expect(normalizeZoom(undefined)).toBeUndefined();
+    expect(normalizeZoom("1.2")).toBeUndefined();
+    expect(normalizeZoom(Number.NaN)).toBeUndefined();
+    expect(normalizeZoom(1)).toBeUndefined();
+    expect(normalizeZoom(0.99)).toBeUndefined(); // 取整后是 1
+    expect(normalizeZoom(0.2)).toBe(ZOOM_MIN);
+    expect(normalizeZoom(9)).toBe(ZOOM_MAX);
+    expect(normalizeZoom(1.24)).toBe(1.2);
+    expect(normalizeZoom(0.74)).toBe(0.7); // 舍入到一位小数
+  });
+
+  it("gridMetrics：缩放只改行高与间距，列数恒为 12", () => {
+    expect(gridMetrics(undefined)).toEqual({ rowHeight: GRID_ROW_HEIGHT, gap: GRID_GAP });
+    expect(gridMetrics(1)).toEqual({ rowHeight: GRID_ROW_HEIGHT, gap: GRID_GAP });
+    expect(gridMetrics(0.7)).toEqual({
+      rowHeight: Math.round(GRID_ROW_HEIGHT * 0.7),
+      gap: Math.round(GRID_GAP * 0.7),
+    });
+    expect(gridMetrics(1.5)).toEqual({
+      rowHeight: Math.round(GRID_ROW_HEIGHT * 1.5),
+      gap: Math.round(GRID_GAP * 1.5),
+    });
+    // 底部兜底：再小的缩放也不会把格子压成 0/负
+    expect(gridMetrics(ZOOM_MIN).rowHeight).toBeGreaterThanOrEqual(16);
+    expect(gridMetrics(ZOOM_MIN).gap).toBeGreaterThanOrEqual(4);
+  });
+
+  it("normalizeLayoutDoc 保留 zoom，缺省与非法值都不带字段", () => {
+    const base = { v: 1, items: [{ id: "clock", x: 0, y: 0, w: 3, h: 2 }] };
+    expect(normalizeLayoutDoc({ ...base, zoom: 1.3 }).zoom).toBe(1.3);
+    expect(normalizeLayoutDoc({ ...base, zoom: 0.4 }).zoom).toBe(ZOOM_MIN);
+    expect(normalizeLayoutDoc({ ...base, zoom: 9 }).zoom).toBe(ZOOM_MAX);
+    expect(normalizeLayoutDoc({ ...base, zoom: 1 })).not.toHaveProperty("zoom");
+    expect(normalizeLayoutDoc(base)).not.toHaveProperty("zoom");
+    expect(normalizeLayoutDoc({ ...base, zoom: "1.2" })).not.toHaveProperty("zoom");
+    expect(normalizeLayoutDoc({ v: 1, items: [], zoom: 1.2 })).toEqual({
+      v: 1,
+      items: [],
+      zoom: 1.2,
+    });
+  });
+
+  it("所有布局变更都保留 zoom", () => {
+    const doc = { ...DEFAULT_DASHBOARD_LAYOUT, zoom: 1.2 };
+    expect(moveWidget(doc, "activity_feed", 0, 30).zoom).toBe(1.2);
+    expect(resizeWidget(doc, "task_board", 12, 8).zoom).toBe(1.2);
+    expect(addWidget(doc, "note").zoom).toBe(1.2);
+    expect(removeWidget(doc, "clock").zoom).toBe(1.2);
+    expect(updateWidgetConfig(doc, "note", { text: "x" }).zoom).toBe(1.2);
+    expect(addWidgetFullWidth(doc, "note").zoom).toBe(1.2);
+  });
+});
+
+describe("常驻栏默认布局", () => {
+  it("卡片都在 12 列内、满宽、满足最小尺寸且互不重叠", () => {
+    expect(DEFAULT_RAIL_LAYOUT.items.length).toBeGreaterThan(0);
+    assertNoOverlap(DEFAULT_RAIL_LAYOUT.items);
+    for (const item of DEFAULT_RAIL_LAYOUT.items) {
+      const meta = DASHBOARD_WIDGETS[item.type];
+      expect(item.x).toBe(0);
+      expect(item.w).toBe(GRID_COLUMNS);
+      expect(item.h).toBeGreaterThanOrEqual(meta.minSize.h);
+    }
+  });
+
+  it("归一化不改动默认常驻栏（顺序按位置排）", () => {
+    expect(normalizeLayoutDoc(DEFAULT_RAIL_LAYOUT)).toEqual(DEFAULT_RAIL_LAYOUT);
+  });
+
+  it("审批人默认在顶部多一张待办审批，其余整体下移且不重叠", () => {
+    const approver = defaultRailLayoutFor(true);
+    const first = approver.items[0];
+    expect(first).toMatchObject({ id: "approvals", type: "approvals", x: 0, w: GRID_COLUMNS });
+    expect(approver.items).toHaveLength(DEFAULT_RAIL_LAYOUT.items.length + 1);
+    assertNoOverlap(approver.items);
+    expect(normalizeLayoutDoc(approver)).toEqual(approver);
+    expect(defaultRailLayoutFor(false)).toEqual(DEFAULT_RAIL_LAYOUT);
+  });
+});
+
+describe("addWidgetFullWidth", () => {
+  it("新卡追加到内容下方并拉满整行", () => {
+    const bottom = Math.max(...DEFAULT_DASHBOARD_LAYOUT.items.map((item) => item.y + item.h));
+    const added = addWidgetFullWidth(DEFAULT_DASHBOARD_LAYOUT, "note");
+    const note = find(added, "note-2")!;
+    expect(note).toMatchObject({ type: "note", x: 0, y: bottom, w: GRID_COLUMNS });
+    expect(note.h).toBe(DASHBOARD_WIDGETS.note.defaultSize.h);
+    assertNoOverlap(added.items);
+  });
+
+  it("单例卡已存在时原样返回（不重复添加）", () => {
+    expect(addWidgetFullWidth(DEFAULT_DASHBOARD_LAYOUT, "task_board")).toBe(
+      DEFAULT_DASHBOARD_LAYOUT,
+    );
   });
 });

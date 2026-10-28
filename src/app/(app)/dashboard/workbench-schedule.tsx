@@ -69,12 +69,14 @@ export function WorkbenchSchedule({
   const ganttRatio = ganttPreview ?? config?.ganttRatio ?? DEFAULT_GANTT_RATIO;
   const poolRatio = poolPreview ?? config?.poolRatio ?? DEFAULT_POOL_RATIO;
 
-  const showGantt = config?.showGantt !== false;
+  // 甘特默认收起：打开工作台先看月历与任务池，需要看整体跨度时再点开。
+  // 任务池 / 月历仍默认展开；三者状态都随卡片 config 落库，用户的显式选择优先。
+  const showGantt = config?.showGantt === true;
   const showPool = config?.showPool !== false;
   const showCalendar = config?.showCalendar !== false;
 
   function toggleModule(key: "showGantt" | "showPool" | "showCalendar") {
-    const current = config?.[key] !== false;
+    const current = key === "showGantt" ? config?.showGantt === true : config?.[key] !== false;
     onConfigChange?.({ [key]: !current }, true);
   }
 
