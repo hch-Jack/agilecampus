@@ -5,6 +5,7 @@ import Link from "next/link";
 import { IdentityBadge } from "@/components/badges";
 import { FilePreviewModal } from "@/components/file-preview";
 import { RejectReasonDialog } from "@/components/reject-reason-dialog";
+import { useMessagesPanel } from "@/components/messages-panel-context";
 import { detectPreviewKind } from "@/lib/file-preview";
 import { approvalDetailHref, approvalSubject } from "@/lib/approval-view";
 // 类型从 lib 走 `import type`（编译期擦除），不经 "use server" 的 actions 文件中转
@@ -338,16 +339,58 @@ const NET_FAIL = (): { ok: false; error: string } => ({ ok: false, error: "网�
 // 距底部多少像素内算「贴着底」：轮询整表替换后只有贴底的人才继续跟到底
 const STICK_BOTTOM_PX = 48;
 
+// —— 模式切换的会话接力（整页 ⇄ 右侧浮窗） ——
+// 两种模式各是一份 MessagesClient 实例，切换时旧实例卸载、新实例挂载。
+// 切换前把「正在看的会话」写进 sessionStorage，新实例挂载后恢复，用户感知是同一个消息系统换了个壳。
+// key 用完即删：普通进页/开浮窗没有 key，落在会话列表空态。
+
+const MODE_HANDOFF_KEY = "ac_messages_mode_handoff";
+
+type ModeHandoff = { kind: "dm" | "group"; id: string } | { kind: "system" };
+
+function writeModeHandoff(selection: Selection) {
+  try {
+    if (!selection) {
+      sessionStorage.removeItem(MODE_HANDOFF_KEY);
+      return;
+    }
+    const payload: ModeHandoff =
+      selection.kind === "system"
+        ? { kind: "system" }
+        : { kind: selection.kind, id: selection.id };
+    sessionStorage.setItem(MODE_HANDOFF_KEY, JSON.stringify(payload));
+  } catch {
+    // 隐私模式等存不了就算了，切过去落在会话列表而已
+  }
+}
+
+function readModeHandoff(): ModeHandoff | null {
+  try {
+    const raw = sessionStorage.getItem(MODE_HANDOFF_KEY);
+    if (!raw) return null;
+    sessionStorage.removeItem(MODE_HANDOFF_KEY);
+    const v = JSON.parse(raw) as ModeHandoff;
+    if (v.kind === "system") return v;
+    if ((v.kind === "dm" || v.kind === "group") && typeof v.id === "string") return v;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function MessagesClient({
   timeZone,
   initialTarget = null,
   initialSystem = false,
+  variant = "page",
 }: {
   timeZone: string;
   /** 助手「跳到某条消息」的深链目标；为空则按普通打开处理 */
   initialTarget?: MessageJumpTarget | null;
   /** 工作台「系统消息」瓦片的深链：首屏直接打开系统消息会话 */
   initialSystem?: boolean;
+  /** page=整页消息（默认）；panel=右侧浮窗里的同一套界面（高度撑满抽屉、左栏收窄） */
+  variant?: "page" | "panel";
 }) {
   // 统一会话列表（私信 + 群聊混排）与群邀请
   const [convs, setConvs] = useState<UnifiedConversation[]>([]);
@@ -528,6 +571,38 @@ export function MessagesClient({
     if (initialSystem) openSystem();
     // 只在 URL 开关变化时触发一次
   }, [initialSystem]);
+
+  // —— 模式切换接力：从另一半（整页/浮窗）接回「刚才打开的会话」 ——
+  // 挂载读一次即删；深链在场时让位给深链。system 无需等数据，dm/group 等会话列表首到再落点。
+  const handoffRef = useRef<ModeHandoff | null>(null);
+  useEffect(() => {
+    if (initialTarget || initialSystem) return;
+    const h = readModeHandoff();
+    if (!h) return;
+    handoffRef.current = h;
+    if (h.kind === "system") {
+      openSystem();
+      handoffRef.current = null;
+    }
+    // 挂载只跑一次；openSystem 声明提升，本组件内可用
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const h = handoffRef.current;
+    if (!h || h.kind === "system" || convs.length === 0 || selection) return;
+    // 找不到也放弃：会话可能已被对方删了，别在每轮轮询里反复找
+    handoffRef.current = null;
+    if (h.kind === "dm") {
+      const hit = convs.find((c) => c.kind === "dm" && c.peerId === h.id);
+      if (hit && hit.kind === "dm") selectDm(hit);
+    } else {
+      const hit = convs.find((c) => c.kind === "group" && c.groupId === h.id);
+      if (hit && hit.kind === "group") selectGroup(hit);
+    }
+    // selectDm/selectGroup 每轮渲染重建，不能进依赖数组
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [convs, selection]);
 
   // 消息变化 / 换会话：深链目标优先定位；否则只有贴底的人继续跟到底
   useEffect(() => {
@@ -847,6 +922,59 @@ export function MessagesClient({
 
   // —— 渲染 ——
 
+  // 模式切换按钮（消息界面右上角；两种模式里按钮位置相同）：
+  // 整页点它 → 收进右侧浮窗并回到进消息前的页面；浮窗点它 → 展开回整页。
+  const panel = useMessagesPanel();
+  const modeToggle = panel ? (
+    <button
+      type="button"
+      onClick={() => {
+        writeModeHandoff(selection);
+        if (variant === "page") panel.openAndLeave();
+        else panel.expandToPage();
+      }}
+      className="ac-btn-ghost inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs"
+      title={
+        variant === "page"
+          ? "收进右侧浮窗，回到进消息前的页面（没有来路则回工作台）"
+          : "展开为整页消息"
+      }
+    >
+      {variant === "page" ? (
+        <svg
+          viewBox="0 0 24 24"
+          className="h-3.5 w-3.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <rect x="3" y="4" width="18" height="16" rx="2" />
+          <path d="M15 4v16" />
+        </svg>
+      ) : (
+        <svg
+          viewBox="0 0 24 24"
+          className="h-3.5 w-3.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+          <path d="M16 3h3a2 2 0 0 1 2 2v3" />
+          <path d="M8 21H5a2 2 0 0 1-2-2v-3" />
+          <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+        </svg>
+      )}
+      {variant === "page" ? "切换为浮窗" : "切换为整页"}
+    </button>
+  ) : null;
+
   const dmRows = convs.filter((c): c is DmConversation & { kind: "dm" } => c.kind === "dm");
   const dmPeers: DmPeer[] = dmRows.map((c) => ({
     id: c.peerId,
@@ -932,7 +1060,7 @@ export function MessagesClient({
   );
 
   return (
-    <div className="proj-page-enter">
+    <div className={variant === "panel" ? "flex min-h-0 flex-1 flex-col" : "proj-page-enter"}>
       {detailRow && (
         <SystemApprovalModal
           approvalId={detailRow.approvalId}
@@ -958,7 +1086,15 @@ export function MessagesClient({
           </button>
         </div>
       )}
-      <div className="grid h-[72vh] min-h-[480px] grid-cols-1 overflow-hidden rounded-field border border-line bg-surface sm:grid-cols-[280px_1fr]">
+      {modeToggle && <div className="mb-2 flex justify-end">{modeToggle}</div>}
+      <div
+        className={
+          variant === "panel"
+            ? // 浮窗里撑满抽屉、不要外框（抽屉自带边框与底色），左栏收窄给聊天区腾地方
+              "grid min-h-0 flex-1 grid-cols-1 overflow-hidden sm:grid-cols-[220px_1fr]"
+            : "grid h-[72vh] min-h-[480px] grid-cols-1 overflow-hidden rounded-field border border-line bg-surface sm:grid-cols-[280px_1fr]"
+        }
+      >
         {/* 左栏：搜索 + 建群 + 邀请 + 统一消息列表 */}
         <aside className={`flex-col border-r border-line ${selection ? "hidden sm:flex" : "flex"}`}>
           <form onSubmit={handleSearch} className="border-b border-line p-3">
