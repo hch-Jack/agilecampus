@@ -6,10 +6,34 @@ import {
   createSubtask,
   createTask,
   deleteTask,
+  getTaskDetail,
   getTaskDetailBundle,
   listProjectTasks,
   updateTask,
 } from "@/lib/task";
+import {
+  addTaskPlanSegment,
+  clearTaskPlan,
+  removeTaskPlanSegment,
+} from "@/lib/task-plan";
+import {
+  defaultDashboardLayoutFor,
+  defaultRailLayoutFor,
+  normalizeLayoutDoc,
+  type DashboardLayoutDoc,
+} from "@/lib/dashboard-layout";
+import {
+  getDashboardLayout,
+  getRailLayout,
+  saveDashboardLayout,
+  saveRailLayout,
+} from "@/lib/dashboard-layout-store";
+import { isApproverAnywhere } from "@/lib/approval";
+import {
+  applyWidgetOps,
+  widgetOpsDraftSchema,
+  type WidgetSurface,
+} from "./widget-ops";
 import { copyMessageAttachmentToTask, deleteAttachment } from "@/lib/attachment";
 import { createPersonalContext } from "@/lib/personal-context";
 import { createTeam, joinTeam } from "@/lib/team";
@@ -39,10 +63,13 @@ import {
   FORWARD_MESSAGE_TOOL,
   INVITE_GROUP_TOOL,
   labelColorSchema,
+  MANAGE_TASK_PLANS_TOOL,
+  MANAGE_WIDGETS_TOOL,
   personalContextDraftSchema,
   RESPOND_INVITE_TOOL,
   SAVE_CONTEXT_TOOL,
   SEND_MESSAGE_TOOL,
+  taskPlanDraftSchema,
   UPDATE_LABEL_TOOL,
   type CommitToolName,
   type WriteToolName,
@@ -186,7 +213,16 @@ function chatTargetOf(d: { targetType: "user" | "group"; targetId: string }) {
     : ({ kind: "group", id: d.targetId } as const);
 }
 
-export type CommitResult = { committed: number; conflicts: string[] };
+export type CommitResult = {
+  committed: number;
+  conflicts: string[];
+  /**
+   * 卡片布局草案落库后带回落库结果：工作台 / 常驻栏是客户端常驻状态，
+   * 光靠 router.refresh() 不会重新播种（共享 layout 也不重渲染），
+   * 面板据此派发事件让对应的网格立即换成新布局。
+   */
+  layout?: { surface: WidgetSurface; doc: DashboardLayoutDoc };
+};
 
 // 落库：绝不信 Agent 输出——入口重校访问权，每类先施 Zod，再走图二 lib（lib 内建权限/归属校验）
 export async function commitDraft(
@@ -550,6 +586,71 @@ export async function commitEditTaskLabels(
   return { committed: 1, conflicts: [] };
 }
 
+// ------------------------------------------------- 工作台 / 常驻栏卡片（个人 scope）
+
+/**
+ * 落库时**重读最新布局再执行一遍 ops**，而不是照草案里的结果覆盖：
+ * 拟稿到确认之间用户可能自己拖过卡片，按最新状态执行才不会把那些改动冲掉。
+ * 重读后 id 若已不存在，applyWidgetOps 会抛出说得清的错（提示先 list_dashboard_widgets）。
+ */
+async function commitManageWidgets(actorId: string, draft: unknown): Promise<CommitResult> {
+  const d = widgetOpsDraftSchema.parse(draft);
+  const isApprover = await isApproverAnywhere(actorId);
+  const doc =
+    d.surface === "rail"
+      ? await getRailLayout(actorId, { isApprover })
+      : await getDashboardLayout(actorId, { isApprover });
+  const resetDoc = normalizeLayoutDoc(
+    d.surface === "rail"
+      ? defaultRailLayoutFor(isApprover)
+      : defaultDashboardLayoutFor(isApprover),
+  );
+
+  const next = applyWidgetOps(doc, d.ops, {
+    fullWidthAdd: d.surface === "rail",
+    resetDoc,
+  }).doc;
+  const saved =
+    d.surface === "rail"
+      ? await saveRailLayout(actorId, next)
+      : await saveDashboardLayout(actorId, next);
+
+  return {
+    committed: d.ops.length,
+    conflicts: [],
+    layout: { surface: d.surface, doc: saved },
+  };
+}
+
+// ------------------------------------------------- 日程表个人计划（个人 scope）
+
+/**
+ * 逐条执行「排计划日 / 删一段 / 清空」。
+ *
+ * 权限与任务归属由 `requireTaskWrite`（在 lib/task-plan 内）按任务实际所属项目重校 ——
+ * 草案里的 taskId 不可信，老师（只读）也会在这里被拒。同一条任务被加了两次同一段
+ * 由唯一索引去重，不会报错。
+ */
+async function commitManageTaskPlans(actorId: string, draft: unknown): Promise<CommitResult> {
+  const d = taskPlanDraftSchema.parse(draft);
+  let committed = 0;
+  for (const op of d.ops) {
+    const detail = await getTaskDetail(actorId, op.taskId);
+    if (op.action === "clear") {
+      await clearTaskPlan(actorId, op.taskId, detail.projectId);
+    } else {
+      const end = op.end ?? op.start;
+      if (op.action === "add") {
+        await addTaskPlanSegment(actorId, op.taskId, detail.projectId, op.start, end);
+      } else {
+        await removeTaskPlanSegment(actorId, op.taskId, detail.projectId, op.start, end);
+      }
+    }
+    committed += 1;
+  }
+  return { committed, conflicts: [] };
+}
+
 // 与项目版的 createProjectSchema 共用字段定义：个人版只是多一个团队 id，
 // 免得两处各写一份、日后加字段时只改一边
 const personalCreateProjectSchema = createProjectSchema.extend({ teamId: z.uuid() });
@@ -589,6 +690,9 @@ export async function commitPersonalDraft(
   if (tool === UPDATE_LABEL_TOOL) return commitUpdateLabel(actorId, draft);
   if (tool === DELETE_LABEL_TOOL) return commitDeleteLabel(actorId, draft);
   if (tool === EDIT_TASK_LABELS_TOOL) return commitEditTaskLabels(actorId, draft);
+  // 卡片布局与日程表计划：草案里没有 projectId，同样在拆 projectId 之前分派
+  if (tool === MANAGE_WIDGETS_TOOL) return commitManageWidgets(actorId, draft);
+  if (tool === MANAGE_TASK_PLANS_TOOL) return commitManageTaskPlans(actorId, draft);
 
   if (tool === "create_project") {
     // teamId 是 uuid 形状，与下面那四类同理：缺了/填成了团队名就说清楚，别甩一句「草案格式无效」

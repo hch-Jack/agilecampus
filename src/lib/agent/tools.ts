@@ -2,6 +2,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import { getProjectForUser, listMyProjects, listProjectMilestones } from "@/lib/project";
 import {
+  getTaskDetail,
   getTaskDetailBundle,
   listProjectDependenciesDetailed,
   listProjectTasks,
@@ -55,6 +56,20 @@ import {
   searchMessages,
 } from "@/lib/message-search";
 import { listProjectChatHistoryForTool } from "./conversation";
+import { isApproverAnywhere } from "@/lib/approval";
+import {
+  defaultDashboardLayoutFor,
+  defaultRailLayoutFor,
+  normalizeLayoutDoc,
+} from "@/lib/dashboard-layout";
+import { getDashboardLayout, getRailLayout } from "@/lib/dashboard-layout-store";
+import {
+  applyWidgetOps,
+  readUserWidgets,
+  widgetOpSchema,
+  widgetSurfaceSchema,
+  WIDGET_OPS_MAX,
+} from "./widget-ops";
 import type { TaskStatus } from "@/db/schema";
 
 // 读工具纯函数：权限经底层 lib（listProjectMilestones/listProjectTasks 内部各调 getProjectForUser）
@@ -505,6 +520,64 @@ export function buildTools(actorId: string, projectId: string) {
  *
  * 导出入口见文件末尾的 `buildPersonalTools`：用户在项目页面时，它会在这一份之上再挂六件项目专属工具。
  */
+// ---------------------------------------------------------- 日程表：个人计划日
+
+/** YYYY-MM-DD，且必须是真实存在的日子（2026-02-30 这类在拟稿就拦下） */
+const planDateSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "日期用 YYYY-MM-DD")
+  .refine((value) => {
+    const date = new Date(`${value}T00:00:00Z`);
+    return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+  }, "日期不存在");
+
+export const taskPlanOpSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("add"),
+    taskId: z.uuid().describe("任务 id，取自 list_tasks / 快照「我的待办」/ get_task_detail"),
+    start: planDateSchema.describe("计划起始日"),
+    end: planDateSchema.optional().describe("计划结束日（含）；省略 = 只排 start 当天"),
+  }),
+  z.object({
+    action: z.literal("remove"),
+    taskId: z.uuid(),
+    start: planDateSchema,
+    end: planDateSchema.optional(),
+  }),
+  z.object({ action: z.literal("clear"), taskId: z.uuid() }),
+]);
+
+export const taskPlanDraftSchema = z.object({
+  ops: z.array(taskPlanOpSchema).min(1).max(20),
+});
+
+type TaskPlanOp = z.infer<typeof taskPlanOpSchema>;
+
+/**
+ * 个人计划草案：顺带把任务标题查出来（确认卡上要看得懂是哪条任务），
+ * 同时借 `getTaskDetail` 在拟稿阶段就校验任务存在、当前用户能看得到它。
+ * 写权限（老师只读）由落库口的 requireTaskWrite 再收一次。
+ */
+async function planTaskDaysDraft(actorId: string, ops: TaskPlanOp[]) {
+  const ids = [...new Set(ops.map((op) => op.taskId))];
+  const entries = await Promise.all(
+    ids.map(async (id) => [id, await getTaskDetail(actorId, id)] as const),
+  );
+  const titles = new Map(entries.map(([id, detail]) => [id, detail.title]));
+
+  const summary = ops.map((op) => {
+    const title = titles.get(op.taskId) ?? "任务";
+    if (op.action === "clear") return `清空「${title}」的全部计划日`;
+    const range =
+      op.end && op.end !== op.start ? `${op.start} → ${op.end}` : op.start;
+    return op.action === "add"
+      ? `「${title}」排到 ${range}`
+      : `删掉「${title}」的计划 ${range}`;
+  });
+
+  return draftEnvelope(MANAGE_TASK_PLANS_TOOL, { ops, summary });
+}
+
 function buildBasePersonalTools(actorId: string) {
   return {
     list_projects: tool({
@@ -1356,6 +1429,52 @@ function buildBasePersonalTools(actorId: string) {
         });
       },
     }),
+    list_dashboard_widgets: tool({
+      description:
+        "查看我的工作台（surface=dashboard）与左侧常驻栏（surface=rail）上现有的卡片：" +
+        "instanceId、类型、标题、位置尺寸与各卡片配置（便签正文、倒计时目标、时钟时区、日程表分区）。" +
+        "任何增删 / 移动 / 缩放 / 改配置之前先用它取 instanceId。无需参数。",
+      inputSchema: z.object({}),
+      execute: async () => readUserWidgets(actorId),
+    }),
+    manage_dashboard_widgets: tool({
+      description:
+        "拟一份工作台 / 常驻栏卡片管理草案：新增卡片（add）、删除（remove）、移动（move）、" +
+        "缩放（resize）、改卡片设置（update_config：便签正文、倒计时、时钟、日程表分区）、" +
+        "改网格缩放（set_zoom 0.7–1.5）、恢复默认（reset）。一次可给多条，按顺序执行。" +
+        "instanceId 只能取自 list_dashboard_widgets，禁止臆造。仅产草案，需人工确认后落库。",
+      inputSchema: z.object({
+        surface: widgetSurfaceSchema.describe("dashboard=工作台，rail=左侧常驻栏（两块布局独立）"),
+        ops: z.array(widgetOpSchema).min(1).max(WIDGET_OPS_MAX).describe("按顺序执行的操作"),
+      }),
+      execute: async ({ surface, ops }) => {
+        // 拟稿就按最新布局试跑一遍：id 不对、单例卡重复加都会在这里报清楚，
+        // 而不是等用户点「确认落库」才失败
+        const isApprover = await isApproverAnywhere(actorId);
+        const doc =
+          surface === "rail"
+            ? await getRailLayout(actorId, { isApprover })
+            : await getDashboardLayout(actorId, { isApprover });
+        const resetDoc = normalizeLayoutDoc(
+          surface === "rail"
+            ? defaultRailLayoutFor(isApprover)
+            : defaultDashboardLayoutFor(isApprover),
+        );
+        const { summary } = applyWidgetOps(doc, ops, {
+          // 常驻栏窄：新卡默认满宽，与界面上「添加卡片」一致
+          fullWidthAdd: surface === "rail",
+          resetDoc,
+        });
+        return draftEnvelope(MANAGE_WIDGETS_TOOL, { surface, ops, summary });
+      },
+    }),
+    manage_task_plans: tool({
+      description:
+        "拟一份「日程表」个人计划草案：把任务排到具体日期（我打算哪天做）、删掉某一段或清空某任务的全部计划日。" +
+        "只动我自己的计划日，不改任务官方起止日（那用 update_tasks）。taskId 取自 list_tasks / 快照 / get_task_detail。仅产草案，需确认。",
+      inputSchema: taskPlanDraftSchema,
+      execute: async ({ ops }) => planTaskDaysDraft(actorId, ops),
+    }),
     save_personal_context: tool({
       description:
         "把用户自述的背景、偏好、近况记成「个人上下文」草案（如「我每周三下午有课」）。" +
@@ -1463,6 +1582,12 @@ export const UPDATE_LABEL_TOOL = "update_label" as const;
 export const DELETE_LABEL_TOOL = "delete_label" as const;
 export const EDIT_TASK_LABELS_TOOL = "edit_task_labels" as const;
 
+// 工作台 / 常驻栏卡片与日程表个人计划：只挂在工作台助手（个人 scope）。
+// 它们改的是用户自己的布局与个人计划，不动任何项目内容，故不进 WRITE_TOOL_NAMES；
+// 项目页的落库口（只认 WRITE_TOOL_NAMES）便天然拒收。
+export const MANAGE_WIDGETS_TOOL = "manage_dashboard_widgets" as const;
+export const MANAGE_TASK_PLANS_TOOL = "manage_task_plans" as const;
+
 /** 需要人工确认才落库的工具全集 —— 两个 scope 的草案都走同一张确认卡 */
 export const COMMIT_TOOL_NAMES = [
   ...WRITE_TOOL_NAMES,
@@ -1481,6 +1606,8 @@ export const COMMIT_TOOL_NAMES = [
   UPDATE_LABEL_TOOL,
   DELETE_LABEL_TOOL,
   EDIT_TASK_LABELS_TOOL,
+  MANAGE_WIDGETS_TOOL,
+  MANAGE_TASK_PLANS_TOOL,
 ] as const;
 
 export type CommitToolName = (typeof COMMIT_TOOL_NAMES)[number];
