@@ -50,3 +50,4 @@ next-env.d.ts
 
 # 本地 compose 覆盖文件（端口改 5433 等），不入库
 docker-compose.override.yml
+.dev-server.log

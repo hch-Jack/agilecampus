@@ -6,7 +6,7 @@ import { IdentityBadge } from "@/components/badges";
 import { FilePreviewModal } from "@/components/file-preview";
 import { RejectReasonDialog } from "@/components/reject-reason-dialog";
 import { detectPreviewKind } from "@/lib/file-preview";
-import { approvalDetailHref } from "@/lib/approval-view";
+import { approvalDetailHref, approvalSubject } from "@/lib/approval-view";
 // 类型从 lib 走 `import type`（编译期擦除），不经 "use server" 的 actions 文件中转
 import type { DmConversation, DmMessageView, DmPeer } from "@/lib/dm";
 import type {
@@ -194,13 +194,21 @@ function SystemMessageItem({
   const [busy, startTransition] = useTransition();
   const [error, setError] = useState("");
   const [rejecting, setRejecting] = useState(false);
-  const subject = (m.approvalType === "task_done" ? m.taskTitle : m.resourceName) ?? "该申请";
+  const subject = approvalSubject({
+    type: m.approvalType,
+    taskTitle: m.taskTitle,
+    resourceName: m.resourceName,
+    projectName: m.projectName,
+  });
   const jumpHref = approvalDetailHref({
     type: m.approvalType,
     taskId: m.taskId,
     projectId: m.projectId,
     teamId: m.teamId,
   });
+  // 跳转目标随类型而变：任务→任务页，资源→团队资源页，结题→项目页
+  const jumpText =
+    m.approvalType === "task_done" ? "跳转到任务" : m.approvalType === "project_acceptance" ? "跳转到项目" : "跳转到资源";
 
   function decide(decision: "approved" | "rejected", note?: string) {
     startTransition(async () => {
@@ -237,9 +245,9 @@ function SystemMessageItem({
           <Link
             href={jumpHref}
             className="text-[11px] text-primary underline underline-offset-2"
-            title={m.approvalType === "task_done" ? "打开任务详情" : "打开团队资源页"}
+            title={subject}
           >
-            {m.approvalType === "task_done" ? "跳转到任务" : "跳转到资源"}
+            {jumpText}
           </Link>
         )}
         {m.canDecide && (

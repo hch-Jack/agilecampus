@@ -10,6 +10,7 @@ import {
 } from "@/db/schema";
 import { createUser } from "@/lib/user";
 import { createTeam, joinTeam } from "@/lib/team";
+import { setMemberPermission } from "@/lib/team-permissions";
 import { createProject } from "@/lib/project";
 import { createTask, createSubtask, updateTask } from "@/lib/task";
 import { createResourceUsage } from "@/lib/resource";
@@ -41,12 +42,15 @@ async function makeUser(email: string, identity?: "teacher" | "student") {
 }
 
 // 常用布景：admin 建团，teacher（教师身份加入即 teacher 角色）与学生各就位，项目与任务就绪。
+// 审批权改为按人勾选后，teacher 在布景里显式获得两项审核权（任务完成/资源占用）。
 // 任务默认拖到「进行中」——完成审批只发生在 doing→done 这一步。
 async function scene() {
   const admin = await makeUser("admin@example.com");
   const team = await createTeam(admin.id, "东吴实验室");
   const teacher = await makeUser("teacher@example.com", "teacher");
   await joinTeam(teacher.id, team.inviteCode);
+  await setMemberPermission(admin.id, team.id, teacher.id, "task_done", true);
+  await setMemberPermission(admin.id, team.id, teacher.id, "resource", true);
   const student = await makeUser("student@example.com", "student");
   await joinTeam(student.id, team.inviteCode);
 

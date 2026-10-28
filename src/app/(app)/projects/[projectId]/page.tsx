@@ -8,6 +8,9 @@ import { listProjectTasks } from "@/lib/task";
 import { splitBoardTasks } from "@/lib/board-tasks";
 import { getFeedUnreadCount, listProjectActivities, projectFeedScope } from "@/lib/activity";
 import { listTeamLabels } from "@/lib/label";
+import { listPendingAcceptanceProjectIds } from "@/lib/approval";
+import { getMyPermissions } from "@/lib/team-permissions";
+import { AcceptanceControl } from "./acceptance-control";
 import { parseFilters, applyFilters } from "@/lib/board-filters";
 import { todayIn } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
@@ -64,6 +67,14 @@ export default async function ProjectPage({
 
   const canWrite = role === "admin" || role === "student";
   const isAdmin = role === "admin";
+
+  // 结题验收：有无待审申请（徽章 + 挡掉重复发起）、我是否有验收权（直接结题 vs 发起申请）
+  const [acceptancePending, myPerms] = await Promise.all([
+    listPendingAcceptanceProjectIds([projectId]),
+    getMyPermissions(session.user.id, project.teamId),
+  ]);
+  const pendingAcceptance = acceptancePending.has(projectId);
+  const canAccept = myPerms?.project ?? false;
 
   return (
     <main className="mx-auto max-w-5xl space-y-8 py-8">
@@ -122,10 +133,35 @@ export default async function ProjectPage({
         {project.description && (
           <p className="mt-1 text-sm text-ink-soft">{project.description}</p>
         )}
-        <p className="mt-1 text-xs text-ink-faint">
-          {project.startDate ?? "?"} ~ {project.endDate ?? "?"} · {project.status}
+        <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-ink-faint">
+          {project.startDate ?? "?"} ~ {project.endDate ?? "?"} ·{" "}
+          {project.status === "active" ? (
+            <span className="ac-badge bg-doing/10 text-doing">进行中</span>
+          ) : project.status === "completed" ? (
+            <span className="ac-badge bg-done/10 text-done">已结题</span>
+          ) : (
+            <span className="ac-badge bg-sunken text-ink-soft">已归档</span>
+          )}
+          {pendingAcceptance && (
+            <span className="ac-badge border border-medium bg-medium-soft font-medium text-medium">
+              ⏳ 结题审批中
+            </span>
+          )}
         </p>
       </header>
+      {/* 结题入口：有验收权=直接结题；无权=发起申请（全部任务完成后可提交） */}
+      <AcceptanceControl
+        projectId={projectId}
+        projectName={project.name}
+        status={project.status}
+        pendingAcceptance={pendingAcceptance}
+        canAccept={canAccept}
+      />
+      {project.status !== "active" && (
+        <p className="text-xs text-ink-faint">
+          项目已{project.status === "completed" ? "结题" : "归档"}，工作台不再统计其任务。
+        </p>
+      )}
 
       <MilestoneSection
         projectId={projectId}

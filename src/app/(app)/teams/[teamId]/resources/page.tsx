@@ -6,6 +6,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { teams } from "@/db/schema";
 import { getTeamMembership } from "@/lib/team";
+import { hasPermission } from "@/lib/team-permissions";
 import { listTeamResourceUsages } from "@/lib/resource";
 import { listMyResourceRequests } from "@/lib/approval";
 import { formatShortDateTime } from "@/lib/time";
@@ -38,10 +39,12 @@ export default async function ResourcesPage({
 
   const tz = await resolveUserTimeZone(session.user.id);
   const { usages, byUser, byResource } = await listTeamResourceUsages(session.user.id, teamId);
-  // 我的占用申请（学生提交待老师/管理员审批的那份），与任务完成审批同款的状态可见性
+  // 我的占用申请（无审核权成员提交待审批的那份），与任务完成审批同款的状态可见性
   const myRequests = await listMyResourceRequests(session.user.id, teamId);
   const active = usages.filter((u) => u.active);
   const canEnd = (userId: string) => userId === session.user.id || me.role === "admin";
+  // 有资源审核权（admin 或被勾选者）登记直接生效；其余成员登记转审批
+  const needsApproval = !hasPermission(me.role, me, "resource");
 
   return (
     <main className="mx-auto max-w-3xl space-y-8 py-8">
@@ -56,7 +59,7 @@ export default async function ResourcesPage({
         </p>
       </header>
 
-      <ResourceForm teamId={teamId} timeZone={tz} needsApproval={me.role === "student"} />
+      <ResourceForm teamId={teamId} timeZone={tz} needsApproval={needsApproval} />
 
       {myRequests.length > 0 && (
         <section className="ac-card p-5">

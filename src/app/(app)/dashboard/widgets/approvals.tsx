@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import type { DashboardApproval } from "../dashboard-types";
 import { WidgetEmpty, WidgetShell } from "./shell";
 import { decideApprovalAction } from "../actions";
-import { approvalDetailHref } from "@/lib/approval-view";
+import { APPROVAL_TYPE_LABEL, approvalDetailHref, approvalSubject } from "@/lib/approval-view";
 import { RejectReasonDialog } from "@/components/reject-reason-dialog";
 import { formatDateTime } from "@/lib/time";
 
@@ -16,7 +16,7 @@ function ApprovalRow({ row, tz }: { row: DashboardApproval; tz: string }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState("");
   const [rejecting, setRejecting] = useState(false);
-  const subject = (row.type === "task_done" ? row.taskTitle : row.resourceName) ?? "";
+  const subject = approvalSubject(row);
 
   function decide(decision: "approved" | "rejected", note?: string) {
     startTransition(async () => {
@@ -50,17 +50,23 @@ function ApprovalRow({ row, tz }: { row: DashboardApproval; tz: string }) {
         )}
         <span
           className={`ac-badge shrink-0 ${
-            row.type === "task_done" ? "bg-doing/10 text-doing" : "bg-accent-soft text-accent"
+            row.type === "task_done"
+              ? "bg-doing/10 text-doing"
+              : row.type === "project_acceptance"
+                ? "bg-done/10 text-done"
+                : "bg-accent-soft text-accent"
           }`}
         >
-          {row.type === "task_done" ? "任务完成" : "资源占用"}
+          {APPROVAL_TYPE_LABEL[row.type]}
         </span>
       </div>
       <p className="mt-0.5 truncate text-[11px] text-ink-faint">
         {row.requesterName} · {row.teamName} · {formatDateTime(tz, row.createdAt)}
       </p>
-      {row.type === "resource_usage" && row.purpose && (
-        <p className="truncate text-[11px] text-ink-soft">用途：{row.purpose}</p>
+      {row.type !== "task_done" && row.purpose && (
+        <p className="truncate text-[11px] text-ink-soft">
+          {row.type === "project_acceptance" ? "说明" : "用途"}：{row.purpose}
+        </p>
       )}
       {error && <p className="mt-1 text-xs text-high">{error}</p>}
       <div className="mt-1.5 flex gap-1.5">

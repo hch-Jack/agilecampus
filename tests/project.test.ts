@@ -158,6 +158,17 @@ describe("updateProject 起止日期校验", () => {
       updateProject(student.id, p.id, { name: "越权改名" }),
     ).rejects.toThrow("没有权限");
   });
+
+  it("admin 也不能从编辑口直接标结题——结题只能走验收流", async () => {
+    const { owner, team } = await scene();
+    const p = await createProject(owner.id, team.id, { name: "甲计划" });
+    await expect(
+      updateProject(owner.id, p.id, { status: "completed" }),
+    ).rejects.toThrow("结题须任务全部完成后走验收流程");
+    // 归档不受影响
+    const archived = await updateProject(owner.id, p.id, { status: "archived" });
+    expect(archived.status).toBe("archived");
+  });
 });
 
 describe("listTeamProjects", () => {
