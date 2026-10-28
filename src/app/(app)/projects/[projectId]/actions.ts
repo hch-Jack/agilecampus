@@ -13,6 +13,7 @@ import { setTaskLabels } from "@/lib/label";
 import { createMilestone } from "@/lib/project";
 import { AppError, ApprovalRequestedError, ForbiddenError } from "@/lib/errors";
 import { ATTACHMENT_MAX_SIZE, uploadAttachment } from "@/lib/attachment";
+import { completeProjectDirectly, reopenProject, requestProjectAcceptance } from "@/lib/approval";
 
 export type FormState = { error: string } | null;
 // 更新任务专用：成功回 { ok: true }，供编辑弹窗据以自闭
@@ -347,4 +348,72 @@ export async function submitCompletionAction(
     if (e instanceof AppError) return { error: e.message };
     throw e;
   }
+}
+
+// —— 项目结题验收 ——
+
+const acceptanceRequestSchema = z.object({
+  projectId: z.uuid(),
+  note: z.string().trim().max(2000, "结题说明最长 2000 字").optional(),
+});
+
+export async function requestProjectAcceptanceAction(input: {
+  projectId: string;
+  note?: string;
+}): Promise<{ ok: true } | { error: string }> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+  const parsed = acceptanceRequestSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  try {
+    await requestProjectAcceptance(session.user.id, parsed.data.projectId, parsed.data.note);
+  } catch (e) {
+    if (e instanceof ForbiddenError) return { error: "只有团队成员可申请结题" };
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
+  revalidatePath(`/projects/${parsed.data.projectId}`);
+  return { ok: true };
+}
+
+const acceptanceCompleteSchema = z.object({ projectId: z.uuid() });
+
+export async function completeProjectAction(input: {
+  projectId: string;
+}): Promise<{ ok: true } | { error: string }> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+  const parsed = acceptanceCompleteSchema.safeParse(input);
+  if (!parsed.success) return { error: "参数无效" };
+
+  try {
+    await completeProjectDirectly(session.user.id, parsed.data.projectId);
+  } catch (e) {
+    if (e instanceof ForbiddenError) return { error: "没有项目结题验收权限" };
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
+  revalidatePath(`/projects/${parsed.data.projectId}`);
+  return { ok: true };
+}
+
+/** 已结题 → 进行中：任务按结题快照回放（须有结题验收权限） */
+export async function reopenProjectAction(input: {
+  projectId: string;
+}): Promise<{ ok: true } | { error: string }> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+  const parsed = acceptanceCompleteSchema.safeParse(input);
+  if (!parsed.success) return { error: "参数无效" };
+
+  try {
+    await reopenProject(session.user.id, parsed.data.projectId);
+  } catch (e) {
+    if (e instanceof ForbiddenError) return { error: "没有项目结题验收权限" };
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
+  revalidatePath(`/projects/${parsed.data.projectId}`);
+  return { ok: true };
 }

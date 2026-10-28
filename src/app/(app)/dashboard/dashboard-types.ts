@@ -73,16 +73,18 @@ export type DashboardAttachment = {
   projectName: string;
 };
 
-/** 我的团队里待我审批的申请（老师/管理员视角；学生恒为空数组） */
+/** 我的团队里待我审批的申请（有对应审核权限的成员视角；无权限者恒为空数组） */
 export type DashboardApproval = {
   id: string;
-  type: "task_done" | "resource_usage";
+  type: "task_done" | "resource_usage" | "project_acceptance";
   teamId: string;
   teamName: string;
   requesterName: string;
   taskId: string | null;
   taskTitle: string | null;
   projectId: string | null;
+  /** type=project_acceptance 时的项目名 */
+  projectName: string | null;
   resourceName: string | null;
   purpose: string | null;
   startTime: Date | null;

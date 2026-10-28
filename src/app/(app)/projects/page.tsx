@@ -13,6 +13,14 @@ function progressColors(pct: number): { deep: string; light: string } {
   };
 }
 
+// 与团队项目页同款的状态徽章
+const STATUS_BADGE = {
+  active: "bg-doing/10 text-doing",
+  completed: "bg-done/10 text-done",
+  archived: "bg-sunken text-ink-soft",
+} as const;
+const STATUS_LABEL = { active: "进行中", completed: "已结题", archived: "已归档" } as const;
+
 export default async function AllProjectsPage() {
   const session = await auth();
   if (!session?.user) redirect("/login");
@@ -44,11 +52,9 @@ export default async function AllProjectsPage() {
                     <span className="min-w-0 truncate font-display text-base font-semibold text-ink group-hover:text-primary">
                       {p.name}
                     </span>
-                    {p.status === "archived" ? (
-                      <span className="ac-badge bg-low-soft text-low">已归档</span>
-                    ) : (
-                      <span className="ac-badge bg-done/12 text-done">进行中</span>
-                    )}
+                    <span className={`ac-badge ${STATUS_BADGE[p.status]}`}>
+                      {STATUS_LABEL[p.status]}
+                    </span>
                   </div>
                   <p className="mt-0.5 text-xs text-ink-faint">{p.teamName}</p>
 

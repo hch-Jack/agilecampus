@@ -5,6 +5,7 @@ import { FilePreviewModal } from "@/components/file-preview";
 import { RejectReasonDialog } from "@/components/reject-reason-dialog";
 import { decideApprovalAction } from "@/app/(app)/dashboard/actions";
 import type { ApprovalDetail } from "@/lib/approval";
+import { approvalSubject } from "@/lib/approval-view";
 import { formatDateTime } from "@/lib/time";
 import { getApprovalDetailAction } from "./actions";
 
@@ -67,8 +68,14 @@ export function SystemApprovalModal({
   }
 
   /** 拒绝原因对话框的抬头：优先用已加载的详情，未加载完再退回通用文案 */
-  const rejectSubject =
-    (detail?.type === "task_done" ? detail.taskTitle : detail?.resourceName) ?? "该申请";
+  const rejectSubject = detail
+    ? approvalSubject({
+        type: detail.type,
+        taskTitle: detail.taskTitle,
+        resourceName: detail.resourceName,
+        projectName: detail.projectName,
+      }) || "该申请"
+    : "该申请";
 
   const statusBadge =
     detail?.status === "approved" ? (
@@ -128,7 +135,20 @@ export function SystemApprovalModal({
                 </div>
               )}
 
-              {detail.type === "task_done" ? (
+              {detail.type === "project_acceptance" ? (
+                <div className="space-y-1.5 text-ink-soft">
+                  <p>
+                    项目：<span className="font-medium text-ink">{detail.projectName}</span>
+                  </p>
+                  <div>
+                    <p className="text-xs font-medium text-ink-soft">结题说明（申请人填写）</p>
+                    <pre className="mt-1 whitespace-pre-wrap break-words rounded-field border border-line bg-sunken p-3 font-sans text-xs leading-relaxed text-ink">
+                      {detail.purpose || "（未填写）"}
+                    </pre>
+                  </div>
+                  <p className="text-xs text-ink-faint">通过后项目将标记为「已结题」并退出工作台统计。</p>
+                </div>
+              ) : detail.type === "task_done" ? (
                 <>
                   <p className="text-ink-soft">
                     任务：<span className="font-medium text-ink">{detail.taskTitle}</span>

@@ -3,14 +3,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { ApprovalHistoryRow } from "@/lib/approval";
-import { approvalDetailHref } from "@/lib/approval-view";
+import { APPROVAL_TYPE_LABEL, approvalDetailHref, approvalSubject } from "@/lib/approval-view";
 import { formatDateTime } from "@/lib/time";
 import { listMyApprovalHistoryAction } from "./actions";
-
-const TYPE_LABEL: Record<ApprovalHistoryRow["type"], string> = {
-  task_done: "任务完成",
-  resource_usage: "资源占用",
-};
 
 const STATUS_BADGE: Record<
   ApprovalHistoryRow["status"],
@@ -23,10 +18,7 @@ const STATUS_BADGE: Record<
 
 function HistoryItem({ row, tz }: { row: ApprovalHistoryRow; tz: string }) {
   const href = approvalDetailHref(row);
-  const title =
-    row.type === "task_done"
-      ? row.taskTitle ?? "（任务已删除）"
-      : row.resourceName ?? "（未命名资源）";
+  const title = approvalSubject(row) || "（对象已删除）";
   const status = STATUS_BADGE[row.status];
 
   return (
@@ -48,10 +40,14 @@ function HistoryItem({ row, tz }: { row: ApprovalHistoryRow; tz: string }) {
         <span className={`ac-badge shrink-0 ${status.cls}`}>{status.text}</span>
       </div>
       <p className="mt-0.5 truncate text-[11px] text-ink-faint">
-        {TYPE_LABEL[row.type]} · {row.teamName} · {row.requesterName} 申请 ·{" "}
+        {APPROVAL_TYPE_LABEL[row.type]} · {row.teamName} · {row.requesterName} 申请 ·{" "}
         {formatDateTime(tz, row.createdAt)}
       </p>
-      {row.purpose && <p className="truncate text-[11px] text-ink-soft">用途：{row.purpose}</p>}
+      {row.type !== "task_done" && row.purpose && (
+        <p className="truncate text-[11px] text-ink-soft">
+          {row.type === "project_acceptance" ? "说明" : "用途"}：{row.purpose}
+        </p>
+      )}
       {row.decisionNote && (
         <p className="mt-1 whitespace-pre-wrap break-words rounded-field bg-sunken px-2 py-1 text-[11px] leading-relaxed text-ink-soft">
           审批回复：{row.decisionNote}

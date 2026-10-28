@@ -1,17 +1,21 @@
 /**
- * 审批流：学生发起、老师/团队管理员审批（任一通过即生效）。
+ * 审批流：成员发起、**拥有对应审核权限**的成员审批（任一通过即生效）。
  *
- * 两类申请：
+ * 三类申请：
  * - task_done：学生把任务标成完成（含待办直跳）时由 lib/task.ts 拦截转申请，
  *   任务保持未完成直至通过；同任务同时最多一条 pending（partial unique index 兜底）。
- * - resource_usage：学生登记资源占用转为申请，**通过时才建占用行**；老师/
- *   管理员登记沿用原直登路径，不经审批。
+ * - resource_usage：无资源审核权的成员登记占用转为申请，**通过时才建占用行**；
+ *   有权者登记沿用原直登路径，不经审批。
+ * - project_acceptance：成员为项目申请结题验收，项目保持 active 直至通过；
+ *   有验收权者可在项目页直接结题（completeProjectDirectly，不经申请）。
+ *   结题前任务必须全部完成（申请时与通过时双重校验）；恢复进行中
+ * （reopenProject）只把项目置回 active，任务保持已完成。
  *
- * 审批人口径：团队角色 admin 或 teacher（team_members.role 单值，学生角色的
- * 老师身份不越权审批；建团者恒为 admin）。通知走站内**系统消息**：申请时提醒
- * 审批人、决定后回执申请人（拒绝原因随回执带给申请人）。
+ * 审批人口径（lib/team-permissions.ts）：admin 天然拥有全部三项权限，其余成员
+ * 由团队管理员在权限页按人勾选。通知走站内**系统消息**：申请时提醒有对应权限
+ * 的人、决定后回执申请人（拒绝原因随回执带给申请人）。
  */
-import { and, asc, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db, type DbTx } from "@/db";
 import {
@@ -26,21 +30,33 @@ import {
   users,
   type ApprovalStatus,
   type ApprovalType,
-  type TeamRole,
 } from "@/db/schema";
 import { AppError, ForbiddenError, isUniqueViolation } from "./errors";
 import { DECISION_NOTE_MAX_LENGTH } from "./approval-view";
 import { getTeamMembership } from "./team";
+import {
+  hasPermission,
+  listPermissionHolders,
+  type TeamPermission,
+} from "./team-permissions";
 import { recordTaskActivity } from "./activity";
 import { notifyTaskCompleted } from "./notify";
 
 export type ApprovalDecision = "approved" | "rejected";
 
-/** 可审批的团队角色：老师或管理员 */
-const APPROVER_ROLES: TeamRole[] = ["admin", "teacher"];
+/** 申请类型 → 所需审核权限 */
+const PERMISSION_BY_TYPE: Record<ApprovalType, TeamPermission> = {
+  task_done: "task_done",
+  resource_usage: "resource",
+  project_acceptance: "project",
+};
 
-export function isApproverRole(role: TeamRole): boolean {
-  return APPROVER_ROLES.includes(role);
+/** 成员能决定这类申请吗（admin 恒可；其余按勾选） */
+export function canDecideType(
+  membership: { role: "admin" | "teacher" | "student"; canApproveTaskDone: boolean; canApproveResource: boolean; canAcceptProject: boolean },
+  type: ApprovalType,
+): boolean {
+  return hasPermission(membership.role, membership, PERMISSION_BY_TYPE[type]);
 }
 
 // 系统消息写入失败不阻断主流程（与 notify.ts 的 fire-and-forget 同口径）
@@ -59,27 +75,27 @@ async function notifySystemSafe(
 
 // —— 查询 ——
 
-/** 我在任一团队是老师/管理员吗（工作台默认布局与资源表单文案据此分流） */
+/** 我在任一团队拥有任一审核权限吗（工作台默认布局与资源表单文案据此分流） */
 export async function isApproverAnywhere(actorId: string): Promise<boolean> {
-  const [row] = await db
-    .select({ one: sql`1` })
+  const rows = await db
+    .select({
+      role: teamMembers.role,
+      canApproveTaskDone: teamMembers.canApproveTaskDone,
+      canApproveResource: teamMembers.canApproveResource,
+      canAcceptProject: teamMembers.canAcceptProject,
+    })
     .from(teamMembers)
-    .where(and(eq(teamMembers.userId, actorId), inArray(teamMembers.role, APPROVER_ROLES)))
-    .limit(1);
-  return row != null;
-}
-
-/** 团队里所有可审批人的 id（老师 + 管理员） */
-async function listTeamApproverIds(teamId: string, exec: typeof db | DbTx = db) {
-  return exec
-    .select({ userId: teamMembers.userId })
-    .from(teamMembers)
-    .where(and(eq(teamMembers.teamId, teamId), inArray(teamMembers.role, APPROVER_ROLES)));
+    .where(eq(teamMembers.userId, actorId));
+  return rows.some(
+    (r) =>
+      r.role === "admin" || r.canApproveTaskDone || r.canApproveResource || r.canAcceptProject,
+  );
 }
 
 /**
- * 工作台「待办审批」卡片：我在哪些团队是老师/管理员，就列那些团队的 pending 申请。
- * 最先提交的最先处理（createdAt 升序），上限 20 条。
+ * 工作台「待办审批」卡片：我在哪些团队对哪类申请有审核权，就列那些团队里
+ * 对应类型的 pending 申请（admin 所在团队三类全列）。最先提交的最先处理
+ * （createdAt 升序），上限 20 条。
  */
 export type PendingApprovalRow = {
   id: string;
@@ -91,6 +107,8 @@ export type PendingApprovalRow = {
   taskId: string | null;
   taskTitle: string | null;
   projectId: string | null;
+  /** type=project_acceptance 时的项目名（task_done 用任务名，资源用资源名） */
+  projectName: string | null;
   resourceName: string | null;
   purpose: string | null;
   startTime: Date | null;
@@ -102,13 +120,42 @@ export async function listPendingApprovalsForApprover(
   actorId: string,
   limit = 20,
 ): Promise<PendingApprovalRow[]> {
-  const myTeams = await db
-    .select({ teamId: teamMembers.teamId })
+  const memberships = await db
+    .select({
+      teamId: teamMembers.teamId,
+      role: teamMembers.role,
+      canApproveTaskDone: teamMembers.canApproveTaskDone,
+      canApproveResource: teamMembers.canApproveResource,
+      canAcceptProject: teamMembers.canAcceptProject,
+    })
     .from(teamMembers)
-    .where(and(eq(teamMembers.userId, actorId), inArray(teamMembers.role, APPROVER_ROLES)));
-  if (myTeams.length === 0) return [];
+    .where(eq(teamMembers.userId, actorId));
+  if (memberships.length === 0) return [];
 
-  return db
+  // 每类申请我有权处理的团队集合；admin 所在团队三类全收
+  const teamsFor = (perm: TeamPermission) =>
+    memberships
+      .filter((m) => hasPermission(m.role, m, perm))
+      .map((m) => m.teamId);
+  const taskTeams = teamsFor("task_done");
+  const resourceTeams = teamsFor("resource");
+  const projectTeams = teamsFor("project");
+  const scope = or(
+    (taskTeams.length && and(inArray(approvalRequests.teamId, taskTeams), eq(approvalRequests.type, "task_done"))) ||
+      undefined,
+    (resourceTeams.length &&
+      and(inArray(approvalRequests.teamId, resourceTeams), eq(approvalRequests.type, "resource_usage"))) ||
+      undefined,
+    (projectTeams.length &&
+      and(
+        inArray(approvalRequests.teamId, projectTeams),
+        eq(approvalRequests.type, "project_acceptance"),
+      )) ||
+      undefined,
+  );
+  if (!scope) return [];
+
+  const rows = await db
     .select({
       id: approvalRequests.id,
       type: approvalRequests.type,
@@ -118,7 +165,9 @@ export async function listPendingApprovalsForApprover(
       requesterName: users.name,
       taskId: approvalRequests.taskId,
       taskTitle: tasks.title,
-      projectId: tasks.projectId,
+      taskProjectId: tasks.projectId,
+      projectId: approvalRequests.projectId,
+      projectName: projects.name,
       resourceName: approvalRequests.resourceName,
       purpose: approvalRequests.purpose,
       startTime: approvalRequests.startTime,
@@ -129,17 +178,16 @@ export async function listPendingApprovalsForApprover(
     .innerJoin(teams, eq(approvalRequests.teamId, teams.id))
     .innerJoin(users, eq(approvalRequests.requesterId, users.id))
     .leftJoin(tasks, eq(approvalRequests.taskId, tasks.id))
-    .where(
-      and(
-        eq(approvalRequests.status, "pending"),
-        inArray(
-          approvalRequests.teamId,
-          myTeams.map((t) => t.teamId),
-        ),
-      ),
-    )
+    .leftJoin(projects, eq(approvalRequests.projectId, projects.id))
+    .where(and(eq(approvalRequests.status, "pending"), scope))
     .orderBy(asc(approvalRequests.createdAt))
     .limit(limit);
+
+  return rows.map(({ taskProjectId, ...r }) => ({
+    ...r,
+    // task_done 的项目来自任务行；project_acceptance 的项目在申请行自己身上
+    projectId: r.projectId ?? taskProjectId,
+  }));
 }
 
 /** 给定任务里还有 pending 完成申请的那些 id（看板「待审批」角标用） */
@@ -198,10 +246,10 @@ export async function requestTaskCompletion(
 
   const [requester] = await exec.select({ name: users.name }).from(users).where(eq(users.id, actorId));
   const content = `【完成审批】${requester?.name ?? "有成员"} 申请完成任务「${task.title}」（${task.projectName}）`;
-  const approverIds = (await listTeamApproverIds(task.teamId, exec)).map((r) => r.userId);
-  for (const approverId of approverIds) {
-    if (approverId === actorId) continue;
-    await notifySystemSafe(approverId, requestId!, content, exec);
+  const holderIds = await listPermissionHolders(task.teamId, "task_done", exec);
+  for (const holderId of holderIds) {
+    if (holderId === actorId) continue;
+    await notifySystemSafe(holderId, requestId!, content, exec);
   }
 }
 
@@ -222,8 +270,8 @@ export async function withdrawTaskApprovals(
 }
 
 /**
- * 学生登记资源占用 → 转为审批申请（通过时才建占用行）。
- * 老师/管理员不走这里：resources 的 action 层按角色分流到 createResourceUsage 直登。
+ * 无资源审核权的成员登记资源占用 → 转为审批申请（通过时才建占用行）。
+ * 有权者不走这里：resources 的 action 层按权限分流到 createResourceUsage 直登。
  */
 export async function requestResourceUsage(
   actorId: string,
@@ -252,23 +300,156 @@ export async function requestResourceUsage(
   const [team] = await db.select({ name: teams.name }).from(teams).where(eq(teams.id, teamId));
   const [requester] = await db.select({ name: users.name }).from(users).where(eq(users.id, actorId));
   const content = `【资源审批】${requester?.name ?? "有成员"} 申请占用「${name}」（${team?.name ?? "团队"}）`;
-  const approverIds = (await listTeamApproverIds(teamId)).map((r) => r.userId);
-  for (const approverId of approverIds) {
-    if (approverId === actorId) continue;
-    await notifySystemSafe(approverId, requestId, content);
+  const holderIds = await listPermissionHolders(teamId, "resource");
+  for (const holderId of holderIds) {
+    if (holderId === actorId) continue;
+    await notifySystemSafe(holderId, requestId, content);
   }
+}
+
+/**
+ * 成员为项目申请结题验收：项目保持 active 直至有验收权者通过。
+ * 有未完成的任务时不予受理（先把活干完）；同一项目同时最多一条 pending
+ * （partial unique index 兜底）。结题说明复用 purpose 列（资源用途同款快照位）。
+ */
+export async function requestProjectAcceptance(
+  actorId: string,
+  projectId: string,
+  note?: string | null,
+): Promise<void> {
+  const [project] = await db
+    .select({ id: projects.id, name: projects.name, status: projects.status, teamId: projects.teamId })
+    .from(projects)
+    .where(eq(projects.id, projectId));
+  if (!project) throw new AppError("项目不存在");
+  const membership = await getTeamMembership(actorId, project.teamId);
+  if (!membership) throw new ForbiddenError();
+  if (project.status !== "active") throw new AppError("项目不在进行中，无须申请结题");
+
+  const [open] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(tasks)
+    .where(and(eq(tasks.projectId, projectId), ne(tasks.status, "done")));
+  if (open && open.count > 0)
+    throw new AppError(`还有 ${open.count} 个任务未完成，全部完成后再申请结题`);
+
+  let requestId: string;
+  try {
+    const [row] = await db
+      .insert(approvalRequests)
+      .values({
+        teamId: project.teamId,
+        requesterId: actorId,
+        type: "project_acceptance",
+        projectId,
+        purpose: note?.trim() || null,
+      })
+      .returning({ id: approvalRequests.id });
+    requestId = row.id;
+  } catch (e) {
+    if (isUniqueViolation(e)) throw new AppError("该项目已有待审批的结题申请");
+    throw e;
+  }
+
+  const [requester] = await db.select({ name: users.name }).from(users).where(eq(users.id, actorId));
+  const content = `【结题验收】${requester?.name ?? "有成员"} 申请为项目「${project.name}」结题验收`;
+  const holderIds = await listPermissionHolders(project.teamId, "project");
+  for (const holderId of holderIds) {
+    if (holderId === actorId) continue;
+    await notifySystemSafe(holderId, requestId, content);
+  }
+}
+
+/**
+ * 结题前置校验：任务必须全部完成。审批通过时在事务里再查一次——
+ * 申请未决期间任务可能被挪回未完成，届时拒绝通过（回滚决定）。
+ */
+async function assertProjectTasksDone(tx: DbTx, projectId: string): Promise<void> {
+  const [open] = await tx
+    .select({ count: sql<number>`count(*)::int` })
+    .from(tasks)
+    .where(and(eq(tasks.projectId, projectId), ne(tasks.status, "done")));
+  if (open && open.count > 0)
+    throw new AppError(`还有 ${open.count} 个任务未完成，无法结题`);
+}
+
+/**
+ * 有验收权者（admin 或被勾选者）直接把项目标为已结题，不经申请。
+ * 未决的结题申请随之作废（与任务完成的「管理员直接完成=申请被替代」同口径）。
+ */
+export async function completeProjectDirectly(actorId: string, projectId: string): Promise<void> {
+  const [project] = await db
+    .select({ id: projects.id, status: projects.status, teamId: projects.teamId })
+    .from(projects)
+    .where(eq(projects.id, projectId));
+  if (!project) throw new AppError("项目不存在");
+  const membership = await getTeamMembership(actorId, project.teamId);
+  if (!membership || !hasPermission(membership.role, membership, "project"))
+    throw new ForbiddenError("没有项目结题验收权限");
+  if (project.status !== "active") throw new AppError("项目不在进行中，无法结题");
+
+  await db.transaction(async (tx) => {
+    await assertProjectTasksDone(tx, projectId);
+    await tx
+      .delete(approvalRequests)
+      .where(
+        and(
+          eq(approvalRequests.projectId, projectId),
+          eq(approvalRequests.status, "pending"),
+          eq(approvalRequests.type, "project_acceptance"),
+        ),
+      );
+    await tx.update(projects).set({ status: "completed" }).where(eq(projects.id, projectId));
+  });
+}
+
+/**
+ * 有验收权者把已结题项目恢复为进行中。任务保持已完成状态
+ * （结题前任务本就全部完成，无可回溯），只是项目重新回到 active。
+ */
+export async function reopenProject(actorId: string, projectId: string): Promise<void> {
+  const [project] = await db
+    .select({ status: projects.status, teamId: projects.teamId })
+    .from(projects)
+    .where(eq(projects.id, projectId));
+  if (!project) throw new AppError("项目不存在");
+  const membership = await getTeamMembership(actorId, project.teamId);
+  if (!membership || !hasPermission(membership.role, membership, "project"))
+    throw new ForbiddenError("没有项目结题验收权限");
+  if (project.status !== "completed") throw new AppError("项目不在已结题状态，无法恢复");
+
+  await db.update(projects).set({ status: "active" }).where(eq(projects.id, projectId));
+}
+
+/** 这些项目有未决的结题申请（团队项目页/项目页的「结题审批中」徽章用） */
+export async function listPendingAcceptanceProjectIds(
+  projectIds: string[],
+): Promise<Set<string>> {
+  if (projectIds.length === 0) return new Set();
+  const rows = await db
+    .select({ projectId: approvalRequests.projectId })
+    .from(approvalRequests)
+    .where(
+      and(
+        eq(approvalRequests.status, "pending"),
+        eq(approvalRequests.type, "project_acceptance"),
+        inArray(approvalRequests.projectId, projectIds),
+      ),
+    );
+  return new Set(rows.map((r) => r.projectId).filter((id): id is string => id != null));
 }
 
 // —— 决定 ——
 
 /**
- * 审批决定：老师/管理员任一人对 pending 申请给出通过或拒绝。
+ * 审批决定：对 pending 申请，**拥有对应审核权限且非申请人本人**的成员给出通过或拒绝。
  *
  * 决定与业务写入同事务；两个审批人并发点同一条时靠「带 pending 条件的 UPDATE」
  * 原子抢占，后到者收到「该审批已被处理」。私信回执在事务提交后发（失败不回滚决定）。
  *
- * 通过 task_done：任务补成 done（须仍是 doing，状态已漂移则报错）+ 动态 + 完成通知；
- * 通过 resource_usage：按快照建占用行（占用人 = 申请人）。
+ * 通过 task_done：任务补成 done（须仍未完成，状态已漂移则报错）+ 动态 + 完成通知；
+ * 通过 resource_usage：按快照建占用行（占用人 = 申请人）；
+ * 通过 project_acceptance：项目置为 completed（须仍是 active 且任务全部完成）。
  */
 export async function decideApproval(
   actorId: string,
@@ -286,7 +467,9 @@ export async function decideApproval(
   if (!request) throw new AppError("审批不存在");
 
   const membership = await getTeamMembership(actorId, request.teamId);
-  if (!membership || !isApproverRole(membership.role)) throw new ForbiddenError();
+  if (!membership || !canDecideType(membership, request.type)) throw new ForbiddenError();
+  // 自己发起的申请自己批等于没审（权限可授予学生，此门必须关）
+  if (request.requesterId === actorId) throw new AppError("不能审批自己发起的申请");
 
   // 通过的任务行：审批事务内更新成功后补发既有完成通知
   type TaskDoneRow = {
@@ -330,6 +513,19 @@ export async function decideApproval(
         taskRow = await updateTask(actorId, decided.taskId!, { status: "done" }, { tx, approvedBy: true });
       } else {
         await recordTaskActivity(tx, [{ taskId: task.id, actorId, type: "approval_rejected" }]);
+      }
+    } else if (decided.type === "project_acceptance") {
+      const [project] = await tx
+        .select({ id: projects.id, name: projects.name, status: projects.status })
+        .from(projects)
+        .where(eq(projects.id, decided.projectId!));
+      if (!project) throw new AppError("项目已不存在");
+      objectText = `结题验收的项目「${project.name}」`;
+      if (decision === "approved") {
+        // 申请未决期间项目可能被直接结题/归档、任务可能被挪回未完成，漂移则拒绝通过（回滚决定）
+        if (project.status !== "active") throw new AppError("项目状态已变化，无法通过该审批");
+        await assertProjectTasksDone(tx, project.id);
+        await tx.update(projects).set({ status: "completed" }).where(eq(projects.id, project.id));
       }
     } else {
       objectText = `占用的资源「${decided.resourceName ?? ""}」`;
@@ -393,6 +589,8 @@ export type SystemMessageRow = {
   taskId: string | null;
   projectId: string | null;
   taskTitle: string | null;
+  /** type=project_acceptance 时的项目名 */
+  projectName: string | null;
   resourceName: string | null;
   purpose: string | null;
   startTime: Date | null;
@@ -414,8 +612,11 @@ export async function listMySystemMessages(userId: string, limit = 30): Promise<
       approvalType: approvalRequests.type,
       approvalStatus: approvalRequests.status,
       teamId: approvalRequests.teamId,
+      requesterId: approvalRequests.requesterId,
       taskId: approvalRequests.taskId,
-      projectId: tasks.projectId,
+      taskProjectId: tasks.projectId,
+      projectId: approvalRequests.projectId,
+      projectName: projects.name,
       taskTitle: tasks.title,
       resourceName: approvalRequests.resourceName,
       purpose: approvalRequests.purpose,
@@ -428,19 +629,33 @@ export async function listMySystemMessages(userId: string, limit = 30): Promise<
     .innerJoin(approvalRequests, eq(systemMessages.approvalId, approvalRequests.id))
     .innerJoin(users, eq(approvalRequests.requesterId, users.id))
     .leftJoin(tasks, eq(approvalRequests.taskId, tasks.id))
+    .leftJoin(projects, eq(approvalRequests.projectId, projects.id))
     .where(eq(systemMessages.userId, userId))
     .orderBy(desc(systemMessages.createdAt))
     .limit(limit);
 
   if (rows.length === 0) return [];
 
-  // canDecide：批量取我在涉及团队里的角色（每个 teamId 只进一次集合再在内存判）
+  // canDecide：批量取我在涉及团队里的完整成员行（含权限勾选），按申请类型逐行判
+  //（admin 恒可，其余按勾选；申请人本人恒不可——自己不能批自己的申请）
   const teamIds = [...new Set(rows.map((r) => r.teamId))];
-  const myRoles = await db
-    .select({ teamId: teamMembers.teamId, role: teamMembers.role })
+  const myMemberships = await db
+    .select({
+      teamId: teamMembers.teamId,
+      role: teamMembers.role,
+      canApproveTaskDone: teamMembers.canApproveTaskDone,
+      canApproveResource: teamMembers.canApproveResource,
+      canAcceptProject: teamMembers.canAcceptProject,
+    })
     .from(teamMembers)
     .where(and(eq(teamMembers.userId, userId), inArray(teamMembers.teamId, teamIds)));
-  const roleByTeam = new Map(myRoles.map((r) => [r.teamId, r.role]));
+  const membershipByTeam = new Map(myMemberships.map((r) => [r.teamId, r]));
+  const noMembership = {
+    role: "student" as const,
+    canApproveTaskDone: false,
+    canApproveResource: false,
+    canAcceptProject: false,
+  };
 
   return rows.map((r) => ({
     id: r.id,
@@ -452,15 +667,18 @@ export async function listMySystemMessages(userId: string, limit = 30): Promise<
     approvalStatus: r.approvalStatus,
     teamId: r.teamId,
     taskId: r.taskId,
-    projectId: r.projectId,
+    projectId: r.projectId ?? r.taskProjectId,
     taskTitle: r.taskTitle,
+    projectName: r.projectName,
     resourceName: r.resourceName,
     purpose: r.purpose,
     startTime: r.startTime,
     endTime: r.endTime,
     requesterName: r.requesterName,
     canDecide:
-      r.approvalStatus === "pending" && isApproverRole(roleByTeam.get(r.teamId) ?? "student"),
+      r.approvalStatus === "pending" &&
+      r.requesterId !== userId &&
+      canDecideType(membershipByTeam.get(r.teamId) ?? noMembership, r.approvalType),
     decisionNote: r.decisionNote,
   }));
 }
@@ -482,8 +700,8 @@ export async function markSystemMessagesRead(userId: string): Promise<void> {
 }
 
 /**
- * 审批详情：审批人弹小窗查看申请内容（任务完成说明+附件 / 资源申请快照），
- * 学生本人也可回看结果。权限：该审批所在团队的老师/管理员，或申请人本人。
+ * 审批详情：审批人弹小窗查看申请内容（任务完成说明+附件 / 资源申请快照 / 结题说明），
+ * 申请人本人也可回看结果。权限：该审批所在团队里**拥有对应审核权限**的成员，或申请人本人。
  */
 export type ApprovalDetail = {
   approvalId: string;
@@ -493,6 +711,8 @@ export type ApprovalDetail = {
   taskId: string | null;
   projectId: string | null;
   taskTitle: string | null;
+  /** type=project_acceptance 时的项目名 */
+  projectName: string | null;
   resourceName: string | null;
   purpose: string | null;
   // 资源申请快照的起止时间（任务完成申请为 null）
@@ -519,7 +739,9 @@ export async function getApprovalDetail(
       type: approvalRequests.type,
       status: approvalRequests.status,
       taskId: approvalRequests.taskId,
-      projectId: tasks.projectId,
+      taskProjectId: tasks.projectId,
+      projectId: approvalRequests.projectId,
+      projectName: projects.name,
       taskTitle: tasks.title,
       completionNote: tasks.completionNote,
       resourceName: approvalRequests.resourceName,
@@ -532,12 +754,13 @@ export async function getApprovalDetail(
     .from(approvalRequests)
     .innerJoin(users, eq(approvalRequests.requesterId, users.id))
     .leftJoin(tasks, eq(approvalRequests.taskId, tasks.id))
+    .leftJoin(projects, eq(approvalRequests.projectId, projects.id))
     .where(eq(approvalRequests.id, approvalId));
   if (!row) throw new AppError("审批不存在");
 
   if (row.requesterId !== actorId) {
     const membership = await getTeamMembership(actorId, row.teamId);
-    if (!membership || !isApproverRole(membership.role)) throw new ForbiddenError();
+    if (!membership || !canDecideType(membership, row.type)) throw new ForbiddenError();
   }
 
   let approverName: string | null = null;
@@ -571,8 +794,10 @@ export async function getApprovalDetail(
     status: row.status,
     requesterName: row.requesterName,
     taskId: row.taskId,
-    projectId: row.projectId,
+    // task_done 的项目来自任务行；project_acceptance 的项目在申请行自己身上
+    projectId: row.projectId ?? row.taskProjectId,
     taskTitle: row.taskTitle,
+    projectName: row.projectName,
     resourceName: row.resourceName,
     purpose: row.purpose,
     startTime: row.startTime,
@@ -697,6 +922,8 @@ export type ApprovalHistoryRow = {
   taskId: string | null;
   projectId: string | null;
   taskTitle: string | null;
+  /** type=project_acceptance 时的项目名 */
+  projectName: string | null;
   resourceName: string | null;
   purpose: string | null;
   createdAt: Date;
@@ -722,7 +949,9 @@ export async function listMyApprovalHistory(
       requesterName: requester.name,
       approverName: approver.name,
       taskId: approvalRequests.taskId,
-      projectId: tasks.projectId,
+      taskProjectId: tasks.projectId,
+      projectId: approvalRequests.projectId,
+      projectName: projects.name,
       taskTitle: tasks.title,
       resourceName: approvalRequests.resourceName,
       purpose: approvalRequests.purpose,
@@ -735,6 +964,7 @@ export async function listMyApprovalHistory(
     .innerJoin(requester, eq(approvalRequests.requesterId, requester.id))
     .leftJoin(approver, eq(approvalRequests.approverId, approver.id))
     .leftJoin(tasks, eq(approvalRequests.taskId, tasks.id))
+    .leftJoin(projects, eq(approvalRequests.projectId, projects.id))
     .where(
       or(
         eq(approvalRequests.requesterId, userId),
@@ -744,8 +974,9 @@ export async function listMyApprovalHistory(
     .orderBy(desc(approvalRequests.createdAt))
     .limit(limit);
 
-  return rows.map(({ requesterId, ...r }) => ({
+  return rows.map(({ requesterId, taskProjectId, ...r }) => ({
     ...r,
+    projectId: r.projectId ?? taskProjectId,
     direction: requesterId === userId ? "requested" : "decided",
   }));
 }

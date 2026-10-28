@@ -183,15 +183,17 @@ export async function updateTask(
 
   // —— 完成审批拦截 ——
   // 学生把**顶层任务**标成 done（含待办直跳完成，堵住绕过审批的口子）：不直接改
-  // 状态，转成完成审批申请（老师/管理员任一通过才算完成）。子任务不拦（进度颗粒
-  // 太细，审批只看父任务）；teacher 只读本就改不了；管理员/老师操作即审批者本人。
-  // requireApproval=false 的任务是创建时明确勾掉审批的，学生可直接完成。
+  // 状态，转成完成审批申请（有审核权的成员任一通过才算完成）。子任务不拦（进度
+  // 颗粒太细，审批只看父任务）；requireApproval=false 的任务是创建时明确勾掉审批
+  // 的，学生可直接完成。approvedBy=true 是审批流在落地「通过」决定——这一步如果
+  // 再拦，审批人（可能恰是拥有审核权的学生）会把刚批完的任务又变回一条新申请。
   const completionNeedsApproval =
     patch.status === "done" &&
     task.status !== "done" &&
     !task.parentTaskId &&
     task.requireApproval &&
-    access.role === "student";
+    access.role === "student" &&
+    !opts?.approvedBy;
 
   // 状态变化落定前撤掉未决的完成申请：拖回待办/进行中=申请人撤回；管理员直接完成=申请被替代
   if (
