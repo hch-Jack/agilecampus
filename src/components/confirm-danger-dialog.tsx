@@ -12,6 +12,7 @@ export function ConfirmDangerDialog({
   title,
   children,
   confirmLabel = "确认",
+  confirmDisabled,
   onConfirm,
   onCancel,
 }: {
@@ -19,6 +20,8 @@ export function ConfirmDangerDialog({
   title: string;
   children: React.ReactNode;
   confirmLabel?: string;
+  /** 确认按钮禁用（如未输密码 / 提交中），避免误触与重复提交 */
+  confirmDisabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -87,10 +90,12 @@ export function ConfirmDangerDialog({
           <button
             type="button"
             onClick={onConfirm}
+            disabled={confirmDisabled}
             className="rounded-md px-3 py-1.5 text-sm font-medium text-white
                        bg-danger transition-all
                        hover:bg-danger/85
-                       hover:shadow-[0_0_12px_rgba(250,81,81,0.35)]"
+                       hover:shadow-[0_0_12px_rgba(250,81,81,0.35)]
+                       disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:shadow-none"
           >
             {confirmLabel}
           </button>
