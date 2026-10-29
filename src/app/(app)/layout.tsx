@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { users } from "@/db/schema";
 import { IdentityBadge } from "@/components/badges";
 import { AssistantShell, AssistantToggle } from "@/components/assistant-shell";
+import { MessagesPanelShell, MessagesToggle } from "@/components/messages-panel";
 import { getAssistantPanelData } from "@/lib/agent/conversation";
 import { ASSISTANT_CONVERSATION_COOKIE } from "@/lib/agent/assistant-panel-shared";
 import { AUTO_TIMEZONE, DEFAULT_TIMEZONE, formatDateTime, listTimeZones } from "@/lib/time";
@@ -79,79 +80,85 @@ export default async function AppLayout({
         initialActiveId={assistant.activeId}
         initialMessages={assistant.messages}
       >
-        <TzSync auto={timeZonePref === AUTO_TIMEZONE} />
-        {/* app-topbar 只给宇宙主题的「顶栏深色玻璃」认（project.css）；页面里的 <header>
-            是各自的标题区，别被那条规则顺带刷成黑框。 */}
-        <header className="app-topbar sticky top-0 z-20 flex items-center justify-between border-b border-line bg-surface/85 px-6 py-3 backdrop-blur">
-          <div className="flex items-center gap-6">
-            {/* 徽标回欢迎页（整屏的时钟页），不是工作台 */}
-            <Link href="/welcome" className="flex items-center gap-2">
-              <span
-                aria-hidden
-                className="grid h-7 w-7 place-items-center rounded-md bg-primary font-display text-sm font-bold text-white shadow-sm"
-              >
-                A
-              </span>
-              <span className="font-display text-lg font-semibold text-ink">AgileCampus</span>
-            </Link>
-            <NavLinks />
-          </div>
-          <div className="flex items-center gap-3">
-            <AssistantToggle />
-            <IdentityBadge identity={identity} className="hidden sm:inline-flex" />
-            {avatarUrl ? (
-              // 有头像显图片；proj-avatar 类只在宇宙主题里有样式（描边光晕），图片沿用同一圈。
-              // 头像是 <2MB 的本地小图且按版本号寻址长缓存，next/image 优化器帮不上忙。
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={avatarUrl}
-                alt=""
-                className="proj-avatar hidden h-10 w-10 rounded-full border border-line object-cover sm:block"
-              />
-            ) : (
-              <span
-                aria-hidden
-                className="proj-avatar hidden h-10 w-10 place-items-center rounded-full text-base font-bold text-white sm:grid"
-              >
-                {session.user.name?.charAt(0) || "?"}
-              </span>
-            )}
-            <span className="hidden text-sm text-ink-soft sm:inline">{session.user.name}</span>
-            <UserMenu
-              // 教程从未看过（NULL）→ 顶栏首次加载自动弹出一次
-              tutorial={{ autoOpen: row?.tutorialSeenAt == null }}
-              profile={{
-                name: row?.name ?? "",
-                identity: row?.identity ?? null,
-                // 飞书自动建号的账号是随机占位密码、本人无从得知，改密码免验旧密码
-                feishuOnly: row?.email.endsWith("@feishu.local") ?? false,
-                avatarUrl,
-              }}
-              feishu={{
-                boundName: row?.feishuName ?? null,
-                boundAtLabel: row?.feishuBoundAt ? formatDateTime(tz, row.feishuBoundAt) : null,
-              }}
-              timezone={{
-                pref: row?.timezone ?? DEFAULT_TIMEZONE,
-                // 选项在服务端生成后整份传给客户端：两边各算一次会因 ICU 版本不同而不一致
-                options: listTimeZones(),
-              }}
-            />
-          </div>
-        </header>
-        {/* 常驻栏与正文并排；正文仍居中在 max-w-5xl，页面自己的页头宽度不变 */}
-        <div className="flex items-stretch">
-          <DashboardEditProvider>
-            <AppRail
-              initialLayout={railLayout}
-              initialData={railData}
-              initialCollapsed={railCollapsed}
-            />
-            <div className="min-w-0 flex-1">
-              <div className="mx-auto max-w-5xl p-6">{children}</div>
+        {/* 消息系统的第二种形态：右侧浮窗（与助手同宽、互不共存）。
+            tz 本来就为顶栏菜单算好了，浮窗里的消息沿用同一时区口径。 */}
+        <MessagesPanelShell timeZone={tz}>
+          <TzSync auto={timeZonePref === AUTO_TIMEZONE} />
+          {/* app-topbar 只给宇宙主题的「顶栏深色玻璃」认（project.css）；页面里的 <header>
+              是各自的标题区，别被那条规则顺带刷成黑框。 */}
+          <header className="app-topbar sticky top-0 z-20 flex items-center justify-between border-b border-line bg-surface/85 px-6 py-3 backdrop-blur">
+            <div className="flex items-center gap-6">
+              {/* 徽标回欢迎页（整屏的时钟页），不是工作台 */}
+              <Link href="/welcome" className="flex items-center gap-2">
+                <span
+                  aria-hidden
+                  className="grid h-7 w-7 place-items-center rounded-md bg-primary font-display text-sm font-bold text-white shadow-sm"
+                >
+                  A
+                </span>
+                <span className="font-display text-lg font-semibold text-ink">AgileCampus</span>
+              </Link>
+              <NavLinks />
             </div>
-          </DashboardEditProvider>
-        </div>
+            <div className="flex items-center gap-3">
+              <AssistantToggle />
+              {/* 消息入口与 AI 助手并排：page 模式跳整页，drawer 模式开/关右侧浮窗 */}
+              <MessagesToggle />
+              <IdentityBadge identity={identity} className="hidden sm:inline-flex" />
+              {avatarUrl ? (
+                // 有头像显图片；proj-avatar 类只在宇宙主题里有样式（描边光晕），图片沿用同一圈。
+                // 头像是 <2MB 的本地小图且按版本号寻址长缓存，next/image 优化器帮不上忙。
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={avatarUrl}
+                  alt=""
+                  className="proj-avatar hidden h-10 w-10 rounded-full border border-line object-cover sm:block"
+                />
+              ) : (
+                <span
+                  aria-hidden
+                  className="proj-avatar hidden h-10 w-10 place-items-center rounded-full text-base font-bold text-white sm:grid"
+                >
+                  {session.user.name?.charAt(0) || "?"}
+                </span>
+              )}
+              <span className="hidden text-sm text-ink-soft sm:inline">{session.user.name}</span>
+              <UserMenu
+                // 教程从未看过（NULL）→ 顶栏首次加载自动弹出一次
+                tutorial={{ autoOpen: row?.tutorialSeenAt == null }}
+                profile={{
+                  name: row?.name ?? "",
+                  identity: row?.identity ?? null,
+                  // 飞书自动建号的账号是随机占位密码、本人无从得知，改密码免验旧密码
+                  feishuOnly: row?.email.endsWith("@feishu.local") ?? false,
+                  avatarUrl,
+                }}
+                feishu={{
+                  boundName: row?.feishuName ?? null,
+                  boundAtLabel: row?.feishuBoundAt ? formatDateTime(tz, row.feishuBoundAt) : null,
+                }}
+                timezone={{
+                  pref: row?.timezone ?? DEFAULT_TIMEZONE,
+                  // 选项在服务端生成后整份传给客户端：两边各算一次会因 ICU 版本不同而不一致
+                  options: listTimeZones(),
+                }}
+              />
+            </div>
+          </header>
+          {/* 常驻栏与正文并排；正文仍居中在 max-w-5xl，页面自己的页头宽度不变 */}
+          <div className="flex items-stretch">
+            <DashboardEditProvider>
+              <AppRail
+                initialLayout={railLayout}
+                initialData={railData}
+                initialCollapsed={railCollapsed}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="mx-auto max-w-5xl p-6">{children}</div>
+              </div>
+            </DashboardEditProvider>
+          </div>
+        </MessagesPanelShell>
       </AssistantShell>
     </ProjTheme>
   );

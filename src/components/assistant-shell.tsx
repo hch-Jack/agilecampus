@@ -18,6 +18,10 @@ import {
   type AssistantConversationSummary,
 } from "@/lib/agent/assistant-panel-shared";
 import { projectIdFromPathname } from "@/lib/project-path";
+import {
+  ASSISTANT_PANEL_OPEN_EVENT,
+  MESSAGES_PANEL_OPEN_EVENT,
+} from "@/lib/right-panels";
 
 /**
  * 主界面右侧的 AI 助手面板。
@@ -153,6 +157,16 @@ export function AssistantShell({
     };
     window.addEventListener(ASSISTANT_RESET_EVENT, onReset);
     return () => window.removeEventListener(ASSISTANT_RESET_EVENT, onReset);
+  }, []);
+
+  // —— 与消息浮窗互斥（不共存，见 lib/right-panels.ts）：我开你收，你开我收 ——
+  useEffect(() => {
+    if (open) window.dispatchEvent(new Event(ASSISTANT_PANEL_OPEN_EVENT));
+  }, [open]);
+  useEffect(() => {
+    const close = () => setOpen(false);
+    window.addEventListener(MESSAGES_PANEL_OPEN_EVENT, close);
+    return () => window.removeEventListener(MESSAGES_PANEL_OPEN_EVENT, close);
   }, []);
 
   /** 把一条会话的内容装进 AgentChat（只由显式切换/新建/删除当前会话调用） */
