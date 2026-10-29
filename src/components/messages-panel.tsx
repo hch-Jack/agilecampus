@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { MessagesClient } from "@/app/(app)/messages/messages-client";
+import { getUnreadCountAction } from "@/app/(app)/messages/actions";
 import { handoffFromMessagesSearch, writeMessagesHandoff } from "@/lib/messages-handoff";
 import {
   ASSISTANT_PANEL_OPEN_EVENT,
@@ -240,10 +241,32 @@ export function MessagesPanelShell({
   );
 }
 
-/** 顶栏里的消息开关（AI 助手按钮旁）：page 模式跳整页，drawer 模式开/关浮窗 */
+/**
+ * 顶栏里的消息开关（AI 助手旁，消息系统的唯一导航入口）：
+ * page 模式跳整页，drawer 模式开/关浮窗。未读角标随按钮（原导航项已并入这里）。
+ */
 export function MessagesToggle() {
   const panel = useMessagesPanel();
   const pathname = usePathname();
+  const [unread, setUnread] = useState(0);
+
+  // 未读角标：进站、每次路由切换、浮窗开/关时拉一次（打开会话即置读，数字随开关回落）；
+  // 另有 15s 轮询兜在线收信
+  const open = panel?.open ?? false;
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      const r = await getUnreadCountAction();
+      if (!cancelled && r.ok) setUnread(r.data);
+    };
+    tick();
+    const timer = setInterval(tick, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [pathname, open]);
+
   if (!panel) return null;
 
   const active = panel.mode === "drawer" ? panel.open : pathname.startsWith("/messages");
@@ -253,7 +276,7 @@ export function MessagesToggle() {
       aria-label="消息"
       aria-expanded={panel.mode === "drawer" ? panel.open : undefined}
       onClick={() => (panel.mode === "drawer" ? panel.toggleDrawer() : panel.openMessages())}
-      className={`ac-btn-ghost inline-flex items-center gap-1.5 ${
+      className={`ac-btn-ghost relative inline-flex items-center gap-1.5 ${
         active ? "border-primary bg-primary-soft text-primary" : ""
       }`}
     >
@@ -270,6 +293,15 @@ export function MessagesToggle() {
         <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 8.9 8.9 0 0 1-3.8-.9L3 21l1.9-5.4a8.5 8.5 0 1 1 16.1-4.1Z" />
       </svg>
       <span className="hidden sm:inline">消息</span>
+      {unread > 0 && (
+        // key=unread：数字变化时重挂载，弹出动画重放一遍（微信/QQ 式）
+        <span
+          key={unread}
+          className="nav-unread-badge absolute -right-1 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-danger px-1 text-[10px] font-bold leading-none text-white"
+        >
+          {unread > 99 ? "99+" : unread}
+        </span>
+      )}
     </button>
   );
 }
