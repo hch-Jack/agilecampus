@@ -8,6 +8,11 @@ import { RejectReasonDialog } from "@/components/reject-reason-dialog";
 import { useMessagesPanel } from "@/components/messages-panel-context";
 import { detectPreviewKind } from "@/lib/file-preview";
 import { approvalDetailHref, approvalSubject } from "@/lib/approval-view";
+import {
+  readMessagesHandoff,
+  writeMessagesHandoff,
+  type MessagesModeHandoff,
+} from "@/lib/messages-handoff";
 // 类型从 lib 走 `import type`（编译期擦除），不经 "use server" 的 actions 文件中转
 import type { DmConversation, DmMessageView, DmPeer } from "@/lib/dm";
 import type {
@@ -339,43 +344,20 @@ const NET_FAIL = (): { ok: false; error: string } => ({ ok: false, error: "网�
 // 距底部多少像素内算「贴着底」：轮询整表替换后只有贴底的人才继续跟到底
 const STICK_BOTTOM_PX = 48;
 
-// —— 模式切换的会话接力（整页 ⇄ 右侧浮窗） ——
-// 两种模式各是一份 MessagesClient 实例，切换时旧实例卸载、新实例挂载。
+// —— 模式切换/深链的会话接力（整页 ⇄ 右侧浮窗） ——
+// 两种模式各是一份 MessagesClient 实例，切换时旧实例卸载、新实例挂载：
 // 切换前把「正在看的会话」写进 sessionStorage，新实例挂载后恢复，用户感知是同一个消息系统换了个壳。
-// key 用完即删：普通进页/开浮窗没有 key，落在会话列表空态。
+// key/读写都在 lib/messages-handoff.ts（浮窗侧的深链转移也要写同一份接力）。
 
-const MODE_HANDOFF_KEY = "ac_messages_mode_handoff";
-
-type ModeHandoff = { kind: "dm" | "group"; id: string } | { kind: "system" };
-
-function writeModeHandoff(selection: Selection) {
-  try {
-    if (!selection) {
-      sessionStorage.removeItem(MODE_HANDOFF_KEY);
-      return;
-    }
-    const payload: ModeHandoff =
-      selection.kind === "system"
+/** 把内部 Selection 状态写成接力载荷；没开会话就清掉，对面落在会话列表 */
+function writeHandoffFromSelection(selection: Selection) {
+  writeMessagesHandoff(
+    !selection
+      ? null
+      : selection.kind === "system"
         ? { kind: "system" }
-        : { kind: selection.kind, id: selection.id };
-    sessionStorage.setItem(MODE_HANDOFF_KEY, JSON.stringify(payload));
-  } catch {
-    // 隐私模式等存不了就算了，切过去落在会话列表而已
-  }
-}
-
-function readModeHandoff(): ModeHandoff | null {
-  try {
-    const raw = sessionStorage.getItem(MODE_HANDOFF_KEY);
-    if (!raw) return null;
-    sessionStorage.removeItem(MODE_HANDOFF_KEY);
-    const v = JSON.parse(raw) as ModeHandoff;
-    if (v.kind === "system") return v;
-    if ((v.kind === "dm" || v.kind === "group") && typeof v.id === "string") return v;
-    return null;
-  } catch {
-    return null;
-  }
+        : { kind: selection.kind, id: selection.id },
+  );
 }
 
 export function MessagesClient({
@@ -574,10 +556,10 @@ export function MessagesClient({
 
   // —— 模式切换接力：从另一半（整页/浮窗）接回「刚才打开的会话」 ——
   // 挂载读一次即删；深链在场时让位给深链。system 无需等数据，dm/group 等会话列表首到再落点。
-  const handoffRef = useRef<ModeHandoff | null>(null);
+  const handoffRef = useRef<MessagesModeHandoff | null>(null);
   useEffect(() => {
     if (initialTarget || initialSystem) return;
-    const h = readModeHandoff();
+    const h = readMessagesHandoff();
     if (!h) return;
     handoffRef.current = h;
     if (h.kind === "system") {
@@ -595,10 +577,10 @@ export function MessagesClient({
     handoffRef.current = null;
     if (h.kind === "dm") {
       const hit = convs.find((c) => c.kind === "dm" && c.peerId === h.id);
-      if (hit && hit.kind === "dm") selectDm(hit);
+      if (hit && hit.kind === "dm") selectDm(hit, h.messageId);
     } else {
       const hit = convs.find((c) => c.kind === "group" && c.groupId === h.id);
-      if (hit && hit.kind === "group") selectGroup(hit);
+      if (hit && hit.kind === "group") selectGroup(hit, h.messageId);
     }
     // selectDm/selectGroup 每轮渲染重建，不能进依赖数组
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -691,13 +673,13 @@ export function MessagesClient({
     setMembersOpen(false);
   }
 
-  function selectDm(c: DmConversation) {
+  function selectDm(c: DmConversation, jumpTo?: string) {
     openDm(c.peerId, {
       id: c.peerId,
       name: c.peerName,
       identity: c.identity,
       avatarUrl: c.peerAvatarUrl,
-    });
+    }, jumpTo);
     // 打开即清掉本地角标；服务端已由 refreshDmMsgs 的置读兜底
     setConvs((prev) =>
       prev.map((v) => (v.kind === "dm" && v.peerId === c.peerId ? { ...v, unread: 0 } : v)),
@@ -705,8 +687,8 @@ export function MessagesClient({
     refreshConvs();
   }
 
-  function selectGroup(c: GroupConversation) {
-    openGroup(c.groupId);
+  function selectGroup(c: GroupConversation, jumpTo?: string) {
+    openGroup(c.groupId, jumpTo);
     setConvs((prev) =>
       prev.map((v) => (v.kind === "group" && v.groupId === c.groupId ? { ...v, unread: 0 } : v)),
     );
@@ -923,21 +905,21 @@ export function MessagesClient({
   // —— 渲染 ——
 
   // 模式切换按钮（消息界面右上角；两种模式里按钮位置相同）：
-  // 整页点它 → 收进右侧浮窗并回到进消息前的页面；浮窗点它 → 展开回整页。
+  // 整页点它 → 固定为浮窗模式并弹回上一页；浮窗点它 → 固定为整页模式回到整页。
+  // 模式是持久的，切换后所有入口（顶栏按钮/导航/网址）都按新模式走。
   const panel = useMessagesPanel();
   const modeToggle = panel ? (
     <button
       type="button"
       onClick={() => {
-        writeModeHandoff(selection);
-        if (variant === "page") panel.openAndLeave();
-        else panel.expandToPage();
+        writeHandoffFromSelection(selection);
+        panel.switchMode();
       }}
       className="ac-btn-ghost inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs"
       title={
         variant === "page"
-          ? "收进右侧浮窗，回到进消息前的页面（没有来路则回工作台）"
-          : "展开为整页消息"
+          ? "收进右侧浮窗并固定为浮窗模式，回到进消息前的页面"
+          : "展开为整页消息并固定为整页模式"
       }
     >
       {variant === "page" ? (

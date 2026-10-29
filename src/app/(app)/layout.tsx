@@ -7,7 +7,7 @@ import { db } from "@/db";
 import { users } from "@/db/schema";
 import { IdentityBadge } from "@/components/badges";
 import { AssistantShell, AssistantToggle } from "@/components/assistant-shell";
-import { MessagesPanelShell } from "@/components/messages-panel";
+import { MessagesPanelShell, MessagesToggle } from "@/components/messages-panel";
 import { getAssistantPanelData } from "@/lib/agent/conversation";
 import { ASSISTANT_CONVERSATION_COOKIE } from "@/lib/agent/assistant-panel-shared";
 import { AUTO_TIMEZONE, DEFAULT_TIMEZONE, formatDateTime, listTimeZones } from "@/lib/time";
@@ -102,6 +102,8 @@ export default async function AppLayout({
             </div>
             <div className="flex items-center gap-3">
               <AssistantToggle />
+              {/* 消息入口与 AI 助手并排：page 模式跳整页，drawer 模式开/关右侧浮窗 */}
+              <MessagesToggle />
               <IdentityBadge identity={identity} className="hidden sm:inline-flex" />
               {avatarUrl ? (
                 // 有头像显图片；proj-avatar 类只在宇宙主题里有样式（描边光晕），图片沿用同一圈。

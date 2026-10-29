@@ -2,20 +2,27 @@
 
 import { createContext, useContext } from "react";
 
+/** 消息系统的固定形态：整页 or 右侧浮窗。选定后保持，直到在消息界面右上角显式切换 */
+export type MessagesMode = "page" | "drawer";
+
 /**
- * 消息浮窗的 UI 状态。
+ * 消息浮窗/模式的 UI 状态。
  *
  * context 单独拆一个中立文件：MessagesPanelShell（浮窗本体，import 了 MessagesClient）
- * 与 MessagesClient（消息页/浮窗内容）要互相引用，直接 import 会成环，
- * 双方都只依赖这里。
+ * 与 MessagesClient、NavLinks（顶栏消息入口）要互相引用，直接 import 会成环，
+ * 三方都只依赖这里。
  */
 export type MessagesPanelUi = {
-  /** 浮窗当前是否意图打开（路由在 /messages 上时浮窗会让位给整页，见 MessagesPanelShell） */
+  /** 当前固定模式；挂载后从 localStorage 恢复（默认整页） */
+  mode: MessagesMode;
+  /** 浮窗是否意图打开（仅 drawer 模式下有意义） */
   open: boolean;
-  /** 整页 → 浮窗：打开浮窗并离开消息页（回到进消息页前的页面，兜底工作台） */
-  openAndLeave: () => void;
-  /** 浮窗 → 整页：收起浮窗并打开整页消息 */
-  expandToPage: () => void;
+  /** 按当前模式打开消息系统：page → 跳整页；drawer → 开浮窗 */
+  openMessages: () => void;
+  /** drawer 模式下开/关浮窗（page 模式无操作） */
+  toggleDrawer: () => void;
+  /** 切到另一种模式（消息界面右上角按钮）：page→drawer 或 drawer→page */
+  switchMode: () => void;
 };
 
 export const MessagesPanelContext = createContext<MessagesPanelUi | null>(null);

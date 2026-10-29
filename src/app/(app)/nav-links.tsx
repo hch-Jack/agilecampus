@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { getUnreadCountAction } from "./messages/actions";
+import { useMessagesPanel } from "@/components/messages-panel-context";
 
 // key 是分区前缀（用于判定当前页），href 是点击跳转目标
 const ITEMS = [
@@ -28,6 +29,7 @@ export function NavLinks() {
   const itemRefs = useRef<Record<string, HTMLAnchorElement | null>>({});
   const [pill, setPill] = useState<{ left: number; width: number } | null>(null);
   const [unread, setUnread] = useState(0);
+  const panel = useMessagesPanel();
 
   // 未读角标：进站与每次路由切换时拉一次，消息页打开会话清零后由这里反映出来；
   // 另有 15s 轮询兜在线收信
@@ -68,6 +70,24 @@ export function NavLinks() {
             href={item.href}
             ref={(el) => {
               itemRefs.current[item.key] = el;
+            }}
+            onClick={(e) => {
+              // 消息系统固定为浮窗模式时，「消息」不再跳整页——普通左击改为开/关浮窗；
+              // 修饰键/中键（新标签页打开）照常放行
+              if (
+                item.key !== "/messages" ||
+                !panel ||
+                panel.mode !== "drawer" ||
+                e.button !== 0 ||
+                e.metaKey ||
+                e.ctrlKey ||
+                e.shiftKey ||
+                e.altKey
+              ) {
+                return;
+              }
+              e.preventDefault();
+              panel.toggleDrawer();
             }}
             className={`relative z-10 rounded-field px-2.5 py-1.5 text-sm transition-colors ${
               isActive
