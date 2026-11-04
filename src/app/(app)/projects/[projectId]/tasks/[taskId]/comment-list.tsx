@@ -161,8 +161,16 @@ function AddCommentForm({
         {/* 左下角：@ 提醒选择器 + 同步私信通知（默认勾选，取消则不发私信） */}
         <div className="flex items-center gap-2">
           <MentionPicker members={members} />
-          <label className="flex items-center gap-1 text-xs text-ink-soft">
-            <input type="checkbox" name="notify" defaultChecked />
+          <label
+            className="flex items-center gap-1.5 text-sm text-ink-faint"
+            title="不勾选时，仅发表留言，不会向被 @ 的人发私信通知"
+          >
+            <input
+              type="checkbox"
+              name="notify"
+              defaultChecked
+              className="accent-primary"
+            />
             发私信通知
           </label>
         </div>
