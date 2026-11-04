@@ -139,6 +139,7 @@ export default async function TaskDetailPage({
     createdAt: c.createdAt,
     authorId: c.authorId,
     authorName: c.authorName,
+    mentionedUserIds: c.mentionedUserIds,
   }));
 
   return (
@@ -238,6 +239,7 @@ export default async function TaskDetailPage({
           currentUserId={session.user.id}
           canComment={true}
           timeZone={tz}
+          members={members}
         />
       </section>
 

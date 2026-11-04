@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { formatShortDateTime } from "@/lib/time";
+import { MentionPicker, type MentionMember } from "@/components/mention-picker";
 import { addCommentAction, deleteCommentAction, type FormState } from "./actions";
 
 export type CommentRowData = {
@@ -10,6 +11,8 @@ export type CommentRowData = {
   createdAt: Date;
   authorId: string;
   authorName: string | null;
+  /** 被 @ 的用户 id（选择器模型，非正文内联 @ 文本） */
+  mentionedUserIds: string[];
 };
 
 export function CommentList({
@@ -19,6 +22,7 @@ export function CommentList({
   currentUserId,
   canComment,
   timeZone,
+  members,
 }: {
   projectId: string;
   taskId: string;
@@ -26,11 +30,15 @@ export function CommentList({
   currentUserId: string;
   canComment: boolean;
   timeZone: string;
+  members: MentionMember[];
 }) {
+  // id → 展示名：留言渲染 @ 人名时查表（找不到则不显示该条 @）
+  const nameById = new Map(members.map((m) => [m.id, m.name]));
+
   return (
     <div>
       <h2 className="font-display text-lg font-semibold text-ink">
-        留言板 <span className="text-sm font-normal text-ink-faint">（{comments.length}）</span>
+        任务留言板 <span className="text-sm font-normal text-ink-faint">（{comments.length}）</span>
       </h2>
 
       {comments.length === 0 ? (
@@ -47,12 +55,15 @@ export function CommentList({
               comment={c}
               currentUserId={currentUserId}
               timeZone={timeZone}
+              nameById={nameById}
             />
           ))}
         </ul>
       )}
 
-      {canComment && <AddCommentForm projectId={projectId} taskId={taskId} />}
+      {canComment && (
+        <AddCommentForm projectId={projectId} taskId={taskId} members={members} />
+      )}
     </div>
   );
 }
@@ -63,18 +74,23 @@ function CommentItem({
   comment,
   currentUserId,
   timeZone,
+  nameById,
 }: {
   projectId: string;
   taskId: string;
   comment: CommentRowData;
   currentUserId: string;
   timeZone: string;
+  nameById: Map<string, string>;
 }) {
   const [deleteState, deleteAction, deleting] = useActionState<FormState, FormData>(
     deleteCommentAction,
     null,
   );
   const isAuthor = comment.authorId === currentUserId;
+  const mentionNames = comment.mentionedUserIds
+    .map((id) => nameById.get(id))
+    .filter((n): n is string => Boolean(n));
 
   return (
     <li className="rounded border border-line bg-sunken p-3 text-sm">
@@ -83,6 +99,10 @@ function CommentItem({
         <span>{formatShortDateTime(timeZone, comment.createdAt)}</span>
       </div>
       <p className="mt-1.5 whitespace-pre-wrap text-ink">{comment.content}</p>
+
+      {mentionNames.length > 0 && (
+        <p className="mt-1 text-xs text-primary">@{mentionNames.join(" @")}</p>
+      )}
 
       {deleteState?.error && <p className="mt-1 text-xs text-high">{deleteState.error}</p>}
 
@@ -110,7 +130,15 @@ function CommentItem({
   );
 }
 
-function AddCommentForm({ projectId, taskId }: { projectId: string; taskId: string }) {
+function AddCommentForm({
+  projectId,
+  taskId,
+  members,
+}: {
+  projectId: string;
+  taskId: string;
+  members: MentionMember[];
+}) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(
     addCommentAction,
     null,
@@ -129,7 +157,15 @@ function AddCommentForm({ projectId, taskId }: { projectId: string; taskId: stri
         className="ac-field w-full text-sm"
       />
       {state?.error && <p className="text-xs text-high">{state.error}</p>}
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between gap-2">
+        {/* 左下角：@ 提醒选择器 + 同步私信通知（默认勾选，取消则不发私信） */}
+        <div className="flex items-center gap-2">
+          <MentionPicker members={members} />
+          <label className="flex items-center gap-1 text-xs text-ink-soft">
+            <input type="checkbox" name="notify" defaultChecked />
+            发私信通知
+          </label>
+        </div>
         <button disabled={pending} className="ac-btn px-3 py-1.5 text-sm">
           {pending ? "发送中…" : "发表留言"}
         </button>
