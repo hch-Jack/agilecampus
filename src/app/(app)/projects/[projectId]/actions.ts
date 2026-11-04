@@ -14,6 +14,8 @@ import { createMilestone } from "@/lib/project";
 import { AppError, ApprovalRequestedError, ForbiddenError } from "@/lib/errors";
 import { ATTACHMENT_MAX_SIZE, uploadAttachment } from "@/lib/attachment";
 import { completeProjectDirectly, reopenProject, requestProjectAcceptance } from "@/lib/approval";
+import { createProjectComment, deleteProjectComment } from "@/lib/comment";
+import { notifyMentionedUsers } from "@/lib/mention";
 
 export type FormState = { error: string } | null;
 // 更新任务专用：成功回 { ok: true }，供编辑弹窗据以自闭
@@ -416,4 +418,83 @@ export async function reopenProjectAction(input: {
   }
   revalidatePath(`/projects/${parsed.data.projectId}`);
   return { ok: true };
+}
+
+// —— 项目留言板 ——（与任务留言板同构：@ 提醒 + 私信通知）
+
+const addProjectCommentSchema = z.object({
+  projectId: z.uuid(),
+  content: z.string().trim().min(1, "留言内容不能为空").max(2000, "留言内容不能超过 2000 字符"),
+});
+
+export async function addProjectCommentAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+
+  const parsed = addProjectCommentSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+  const { projectId, content } = parsed.data;
+  // @ 多选：表单里以重复字段 mentions 递交，逐个校验 uuid
+  const mentions = formData
+    .getAll("mentions")
+    .map(String)
+    .filter((s) => /^[0-9a-f-]{36}$/i.test(s));
+  // 「同时发私信通知」默认勾选；取消勾选则不递交该字段
+  const notify = formData.get("notify") === "on";
+
+  try {
+    await createProjectComment(session.user.id, projectId, content, mentions);
+  } catch (e) {
+    if (e instanceof ForbiddenError) return { error: "没有权限发表留言" };
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
+
+  // 通知与落库解耦：独立 try-catch，失败仅记日志，绝不阻塞留言发表（工程补丁①）
+  if (notify && mentions.length > 0) {
+    try {
+      await notifyMentionedUsers({
+        actorId: session.user.id,
+        mentionedUserIds: mentions,
+        scope: "project",
+        projectId,
+        content,
+      });
+    } catch (e) {
+      console.error("[mention] project comment notification failed:", e);
+    }
+  }
+
+  revalidatePath(`/projects/${projectId}`);
+  return null;
+}
+
+const deleteProjectCommentSchema = z.object({
+  projectId: z.uuid(),
+  commentId: z.uuid(),
+});
+
+export async function deleteProjectCommentAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+
+  const parsed = deleteProjectCommentSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+  const { projectId, commentId } = parsed.data;
+
+  try {
+    await deleteProjectComment(session.user.id, commentId);
+  } catch (e) {
+    if (e instanceof ForbiddenError) return { error: "没有权限删除此留言" };
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
+  revalidatePath(`/projects/${projectId}`);
+  return null;
 }

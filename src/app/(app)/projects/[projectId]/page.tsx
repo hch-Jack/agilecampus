@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { getProjectForUser, listProjectMilestones } from "@/lib/project";
 import { listTeamMembers } from "@/lib/team";
 import { listProjectTasks } from "@/lib/task";
+import { listProjectBoardComments } from "@/lib/comment";
 import { splitBoardTasks } from "@/lib/board-tasks";
 import { getFeedUnreadCount, listProjectActivities, projectFeedScope } from "@/lib/activity";
 import { listTeamLabels } from "@/lib/label";
@@ -19,6 +20,7 @@ import { MilestoneSection } from "./milestone-section";
 import { NewTaskForm } from "./new-task-form";
 import { Board } from "./board";
 import { FilterBar } from "./filter-bar";
+import { ProjectCommentList } from "./project-comment-list";
 
 export default async function ProjectPage({
   params,
@@ -37,15 +39,23 @@ export default async function ProjectPage({
   if (!access) notFound();
   const { project, role } = access;
 
-  const [projectMilestones, projectTasks, projectActivities, projectFeedUnread, members, teamLabels] =
-    await Promise.all([
-      listProjectMilestones(session.user.id, projectId),
-      listProjectTasks(session.user.id, projectId),
-      listProjectActivities(session.user.id, projectId),
-      getFeedUnreadCount(session.user.id, projectFeedScope(projectId)),
-      listTeamMembers(project.teamId),
-      listTeamLabels(session.user.id, project.teamId),
-    ]);
+  const [
+    projectMilestones,
+    projectTasks,
+    projectActivities,
+    projectFeedUnread,
+    members,
+    teamLabels,
+    projectBoardComments,
+  ] = await Promise.all([
+    listProjectMilestones(session.user.id, projectId),
+    listProjectTasks(session.user.id, projectId),
+    listProjectActivities(session.user.id, projectId),
+    getFeedUnreadCount(session.user.id, projectFeedScope(projectId)),
+    listTeamMembers(project.teamId),
+    listTeamLabels(session.user.id, project.teamId),
+    listProjectBoardComments(session.user.id, projectId),
+  ]);
 
   const filters = parseFilters(
     new URLSearchParams(
@@ -217,6 +227,18 @@ export default async function ProjectPage({
           projectEnd={project.endDate}
         />
       )}
+
+      {/* 项目留言板：对标任务留言板，挂在新任务与最新记录之间 */}
+      <section className="ac-card p-5">
+        <ProjectCommentList
+          projectId={projectId}
+          comments={projectBoardComments}
+          currentUserId={session.user.id}
+          canComment={true}
+          timeZone={tz}
+          members={members}
+        />
+      </section>
 
       {/* 本项目专属口径：只统计该项目的记录（不限「分配给我」）；「清除记录」只清自己视角 */}
       <ActivityFeed

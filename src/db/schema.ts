@@ -673,9 +673,32 @@ export const taskComments = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     content: text("content").notNull(),
+    // @ 提醒：被 @ 的用户 id 数组（选择器模型，非正文内联 @ 文本）。NULL = 无 @。
+    // $type<string[]> 给 Drizzle 精确 TS 类型；jsonb 直存，读取按 string[] 还原。
+    mentions: jsonb("mentions").$type<string[]>(),
     createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [index("task_comments_task_idx").on(t.taskId)],
+);
+
+// 项目留言板：与 task_comments 同构，但挂项目级——项目整体讨论，不归属某个任务。
+// 项目删除时留言级联消失；@ 提醒同 task_comments.mentions。
+export const projectComments = pgTable(
+  "project_comments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    authorId: uuid("author_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    // @ 提醒：被 @ 的用户 id 数组。NULL = 无 @；$type<string[]> 给精确 TS 类型。
+    mentions: jsonb("mentions").$type<string[]>(),
+    createdAt: dbTimestampNow("created_at").notNull(),
+  },
+  (t) => [index("project_comments_project_idx").on(t.projectId)],
 );
 
 // ------------------------------------------------------- 审批（任务完成 / 资源占用）

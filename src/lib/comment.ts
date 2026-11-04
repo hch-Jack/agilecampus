@@ -1,6 +1,6 @@
 import { and, asc, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { taskComments, tasks, users } from "@/db/schema";
+import { projectComments, taskComments, tasks, users } from "@/db/schema";
 import { AppError, ForbiddenError } from "./errors";
 import { getProjectForUser } from "./project";
 
@@ -21,13 +21,22 @@ export async function listTaskComments(userId: string, taskId: string) {
       createdAt: taskComments.createdAt,
       authorId: taskComments.authorId,
       authorName: users.name,
+      mentions: taskComments.mentions,
     })
     .from(taskComments)
     .innerJoin(users, eq(taskComments.authorId, users.id))
     .where(eq(taskComments.taskId, taskId))
     .orderBy(asc(taskComments.createdAt));
 
-  return rows;
+  // mentions: jsonb string[] | null → 归一成 mentionedUserIds（null 视作空数组）
+  return rows.map((r) => ({
+    id: r.id,
+    content: r.content,
+    createdAt: r.createdAt,
+    authorId: r.authorId,
+    authorName: r.authorName,
+    mentionedUserIds: r.mentions ?? [],
+  }));
 }
 
 export type ProjectCommentRow = {
@@ -84,7 +93,12 @@ export async function listProjectComments(
     .limit(limit);
 }
 
-export async function createTaskComment(userId: string, taskId: string, content: string) {
+export async function createTaskComment(
+  userId: string,
+  taskId: string,
+  content: string,
+  mentions: string[] = [],
+) {
   const trimmed = content.trim();
   if (!trimmed) throw new AppError("留言内容不能为空");
   if (trimmed.length > 2000) throw new AppError("留言内容不能超过 2000 字符");
@@ -104,6 +118,8 @@ export async function createTaskComment(userId: string, taskId: string, content:
       taskId,
       authorId: userId,
       content: trimmed,
+      // 空 @ 落 null（与「无 @」语义一致）；非空才存数组
+      mentions: mentions.length > 0 ? mentions : null,
     })
     .returning();
 
@@ -132,4 +148,96 @@ export async function deleteTaskComment(userId: string, commentId: string) {
   }
 
   await db.delete(taskComments).where(eq(taskComments.id, commentId));
+}
+
+// -------------------------------------------------- 项目留言板（projectComments）
+// 与 taskComments 同构的独立表：项目级讨论，不归属某个任务。
+// 注意：上面的 listProjectComments 是「跨任务聚合、给 AI 助手读」的视图，语义不同，勿混。
+
+export type ProjectBoardCommentRow = {
+  id: string;
+  content: string;
+  createdAt: Date;
+  authorId: string;
+  authorName: string | null;
+  mentionedUserIds: string[];
+};
+
+export async function listProjectBoardComments(
+  actorId: string,
+  projectId: string,
+): Promise<ProjectBoardCommentRow[]> {
+  const access = await getProjectForUser(actorId, projectId);
+  if (!access) throw new ForbiddenError();
+
+  const rows = await db
+    .select({
+      id: projectComments.id,
+      content: projectComments.content,
+      createdAt: projectComments.createdAt,
+      authorId: projectComments.authorId,
+      authorName: users.name,
+      mentions: projectComments.mentions,
+    })
+    .from(projectComments)
+    .innerJoin(users, eq(projectComments.authorId, users.id))
+    .where(eq(projectComments.projectId, projectId))
+    .orderBy(asc(projectComments.createdAt));
+
+  return rows.map((r) => ({
+    id: r.id,
+    content: r.content,
+    createdAt: r.createdAt,
+    authorId: r.authorId,
+    authorName: r.authorName,
+    mentionedUserIds: r.mentions ?? [],
+  }));
+}
+
+export async function createProjectComment(
+  userId: string,
+  projectId: string,
+  content: string,
+  mentions: string[] = [],
+) {
+  const trimmed = content.trim();
+  if (!trimmed) throw new AppError("留言内容不能为空");
+  if (trimmed.length > 2000) throw new AppError("留言内容不能超过 2000 字符");
+
+  const access = await getProjectForUser(userId, projectId);
+  if (!access) throw new ForbiddenError();
+
+  const [comment] = await db
+    .insert(projectComments)
+    .values({
+      projectId,
+      authorId: userId,
+      content: trimmed,
+      mentions: mentions.length > 0 ? mentions : null,
+    })
+    .returning();
+
+  return comment;
+}
+
+export async function deleteProjectComment(userId: string, commentId: string) {
+  const [comment] = await db
+    .select({
+      id: projectComments.id,
+      authorId: projectComments.authorId,
+      projectId: projectComments.projectId,
+    })
+    .from(projectComments)
+    .where(eq(projectComments.id, commentId));
+
+  if (!comment) throw new AppError("留言不存在");
+
+  const access = await getProjectForUser(userId, comment.projectId);
+  if (!access) throw new ForbiddenError();
+
+  if (comment.authorId !== userId && access.role !== "admin") {
+    throw new ForbiddenError("没有权限删除此留言");
+  }
+
+  await db.delete(projectComments).where(eq(projectComments.id, commentId));
 }
