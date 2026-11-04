@@ -123,6 +123,29 @@ export async function unbindFeishu(userId: string) {
     .where(eq(users.id, userId));
 }
 
+// 注销账号（匿名化，不删行）：用户在他人项目里传过的附件（task_attachments.uploader_id）、
+// 留过的动态（task_activities.actor_id）都引用 users.id，且这两处是非级联外键（RESTRICT + NOT NULL），
+// 硬删会撞外键失败；匿名化则擦掉 PII、把行留作「已注销用户」墓碑——历史动态与附件仍指向有效用户、
+// 显示为「已注销用户」，外键全保住、他人数据不丢，账号也无法再登录。
+// 邮箱与用户名都带 userId 短尾避开唯一索引（users.email 唯一、users_name_unique），多次注销不撞车；
+// 密码置随机哈希 → 旧密码无法登录；原邮箱随之释放，可重新注册。
+export async function anonymizeUser(userId: string): Promise<void> {
+  await db
+    .update(users)
+    .set({
+      email: `deleted-${userId}@anon.local`,
+      passwordHash: await hashPassword(randomBytes(32).toString("hex")),
+      name: `已注销用户-${userId.slice(0, 8)}`,
+      feishuOpenId: null,
+      feishuName: null,
+      feishuBoundAt: null,
+      avatarData: null,
+      avatarMime: null,
+      avatarUpdatedAt: null,
+    })
+    .where(eq(users.id, userId));
+}
+
 /**
  * 改时区偏好。入参已由调用方（settings/actions.ts）用 `isValidTimeZone` / `AUTO_TIMEZONE` 校验过；
  * 这里再兜一道底 —— 非法值一律落回默认的中国时间，绝不让一个坏值进库后把每页渲染都炸掉。

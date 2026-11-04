@@ -130,8 +130,9 @@ describe("时间列的物理 schema 没有变（db:push 不该产生 ALTER）", 
     // 审批表又加了 approval_requests 的四个（资源快照起止 + 决定时刻 + 行创建），
     // 工作台日程表又加了 task_plans 的 created_at/updated_at，
     // 系统消息又加了 system_messages 的 created_at/read_at ——
+    // 项目留言板又加了 project_comments 的 created_at ——
     // 加表/加时间列就得同步这个数）
-    expect(columns).toHaveLength(46);
+    expect(columns).toHaveLength(47);
     for (const c of columns) expect(c.sqlType).toBe("timestamp");
 
     // createdAt / updatedAt 由 dbTimestampNow 声明，默认值必须在；
@@ -170,5 +171,7 @@ describe("时间列的物理 schema 没有变（db:push 不该产生 ALTER）", 
     // 系统消息：行创建由库写（有默认值）；已读时刻由应用写（可空，不能有默认值）
     expect(getTableColumns(schema.systemMessages).createdAt.hasDefault).toBe(true);
     expect(getTableColumns(schema.systemMessages).readAt.hasDefault).toBe(false);
+    // 项目留言板：行创建由库写（dbTimestampNow，默认值必须在）
+    expect(getTableColumns(schema.projectComments).createdAt.hasDefault).toBe(true);
   });
 });

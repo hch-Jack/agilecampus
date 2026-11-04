@@ -13,6 +13,9 @@ import { setTaskLabels } from "@/lib/label";
 import { createMilestone } from "@/lib/project";
 import { AppError, ApprovalRequestedError, ForbiddenError } from "@/lib/errors";
 import { ATTACHMENT_MAX_SIZE, uploadAttachment } from "@/lib/attachment";
+import { completeProjectDirectly, reopenProject, requestProjectAcceptance } from "@/lib/approval";
+import { createProjectComment, deleteProjectComment } from "@/lib/comment";
+import { notifyMentionedUsers } from "@/lib/mention";
 
 export type FormState = { error: string } | null;
 // 更新任务专用：成功回 { ok: true }，供编辑弹窗据以自闭
@@ -27,6 +30,8 @@ const createTaskSchema = z.object({
   dueDate: z.iso.date("日期格式不正确").optional(),
   milestoneId: z.uuid().optional(),
   priority: z.enum(["low", "medium", "high"]).optional(),
+  /** 完成是否需要审批：页面默认勾选，取消勾选时表单不提交该字段 */
+  requireApproval: z.boolean().optional(),
 });
 
 export async function createTaskAction(
@@ -44,6 +49,8 @@ export async function createTaskAction(
     dueDate: raw.dueDate || undefined,
     milestoneId: raw.milestoneId || undefined,
     priority: raw.priority || undefined,
+    // 复选框只会在勾选时提交 "on"
+    requireApproval: raw.requireApproval === "on",
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
@@ -343,4 +350,151 @@ export async function submitCompletionAction(
     if (e instanceof AppError) return { error: e.message };
     throw e;
   }
+}
+
+// —— 项目结题验收 ——
+
+const acceptanceRequestSchema = z.object({
+  projectId: z.uuid(),
+  note: z.string().trim().max(2000, "结题说明最长 2000 字").optional(),
+});
+
+export async function requestProjectAcceptanceAction(input: {
+  projectId: string;
+  note?: string;
+}): Promise<{ ok: true } | { error: string }> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+  const parsed = acceptanceRequestSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  try {
+    await requestProjectAcceptance(session.user.id, parsed.data.projectId, parsed.data.note);
+  } catch (e) {
+    if (e instanceof ForbiddenError) return { error: "只有团队成员可申请结题" };
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
+  revalidatePath(`/projects/${parsed.data.projectId}`);
+  return { ok: true };
+}
+
+const acceptanceCompleteSchema = z.object({ projectId: z.uuid() });
+
+export async function completeProjectAction(input: {
+  projectId: string;
+}): Promise<{ ok: true } | { error: string }> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+  const parsed = acceptanceCompleteSchema.safeParse(input);
+  if (!parsed.success) return { error: "参数无效" };
+
+  try {
+    await completeProjectDirectly(session.user.id, parsed.data.projectId);
+  } catch (e) {
+    if (e instanceof ForbiddenError) return { error: "没有项目结题验收权限" };
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
+  revalidatePath(`/projects/${parsed.data.projectId}`);
+  return { ok: true };
+}
+
+/** 已结题 → 进行中：任务按结题快照回放（须有结题验收权限） */
+export async function reopenProjectAction(input: {
+  projectId: string;
+}): Promise<{ ok: true } | { error: string }> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+  const parsed = acceptanceCompleteSchema.safeParse(input);
+  if (!parsed.success) return { error: "参数无效" };
+
+  try {
+    await reopenProject(session.user.id, parsed.data.projectId);
+  } catch (e) {
+    if (e instanceof ForbiddenError) return { error: "没有项目结题验收权限" };
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
+  revalidatePath(`/projects/${parsed.data.projectId}`);
+  return { ok: true };
+}
+
+// —— 项目留言板 ——（与任务留言板同构：@ 提醒 + 私信通知）
+
+const addProjectCommentSchema = z.object({
+  projectId: z.uuid(),
+  content: z.string().trim().min(1, "留言内容不能为空").max(2000, "留言内容不能超过 2000 字符"),
+});
+
+export async function addProjectCommentAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+
+  const parsed = addProjectCommentSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+  const { projectId, content } = parsed.data;
+  // @ 多选：表单里以重复字段 mentions 递交，逐个校验 uuid
+  const mentions = formData
+    .getAll("mentions")
+    .map(String)
+    .filter((s) => /^[0-9a-f-]{36}$/i.test(s));
+  // 「同时发私信通知」默认勾选；取消勾选则不递交该字段
+  const notify = formData.get("notify") === "on";
+
+  try {
+    await createProjectComment(session.user.id, projectId, content, mentions);
+  } catch (e) {
+    if (e instanceof ForbiddenError) return { error: "没有权限发表留言" };
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
+
+  // 通知与落库解耦：独立 try-catch，失败仅记日志，绝不阻塞留言发表（工程补丁①）
+  if (notify && mentions.length > 0) {
+    try {
+      await notifyMentionedUsers({
+        actorId: session.user.id,
+        mentionedUserIds: mentions,
+        scope: "project",
+        projectId,
+        content,
+      });
+    } catch (e) {
+      console.error("[mention] project comment notification failed:", e);
+    }
+  }
+
+  revalidatePath(`/projects/${projectId}`);
+  return null;
+}
+
+const deleteProjectCommentSchema = z.object({
+  projectId: z.uuid(),
+  commentId: z.uuid(),
+});
+
+export async function deleteProjectCommentAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+
+  const parsed = deleteProjectCommentSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+  const { projectId, commentId } = parsed.data;
+
+  try {
+    await deleteProjectComment(session.user.id, commentId);
+  } catch (e) {
+    if (e instanceof ForbiddenError) return { error: "没有权限删除此留言" };
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
+  revalidatePath(`/projects/${projectId}`);
+  return null;
 }

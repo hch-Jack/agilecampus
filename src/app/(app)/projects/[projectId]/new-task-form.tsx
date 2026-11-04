@@ -62,6 +62,19 @@ export function NewTaskForm({
           止
           <input type="date" name="dueDate" {...dateBounds} className="ac-field w-auto text-sm" />
         </label>
+        {/* 默认勾选：沿用审批流上线后的口径；关掉后学生拖到「已完成」即直接完成 */}
+        <label
+          className="flex items-center gap-1.5 text-sm text-ink-faint"
+          title="不勾选时，学生把任务拖到「已完成」即直接完成，不会生成审批申请"
+        >
+          <input
+            type="checkbox"
+            name="requireApproval"
+            defaultChecked
+            className="accent-primary"
+          />
+          完成后需要审批
+        </label>
       </div>
       {state?.error && <p className="text-sm text-high">{state.error}</p>}
       <button disabled={pending} className="ac-btn px-3 py-2 text-sm">

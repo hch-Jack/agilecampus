@@ -4,6 +4,10 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { buildContinuationText, isContinuableTool } from "@/lib/agent/continuation";
 import { LABEL_COLORS, LABEL_COLOR_CLASS } from "@/lib/board-columns";
+import {
+  isLayoutSavedDetail,
+  LAYOUT_SAVED_EVENT,
+} from "@/lib/dashboard-layout-events";
 
 /**
  * 草案卡片：助手拟的一切改动都先落在这些卡片上，用户改完点「确认落库」才生效。
@@ -34,7 +38,7 @@ async function commit(
   defaultProjectId: string | undefined,
   tool: string,
   draft: unknown,
-): Promise<string | null> {
+): Promise<{ error: string | null; data: Record<string, unknown> | null }> {
   const res = await fetch("/api/chat/commit", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -45,10 +49,13 @@ async function commit(
     ),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) return data.error ?? "落库失败";
+  if (!res.ok) return { error: data.error ?? "落库失败", data: null };
   if (Array.isArray(data.conflicts) && data.conflicts.length > 0)
-    return `有 ${data.conflicts.length} 项因他人改动未落库，请刷新后重试`;
-  return null;
+    return {
+      error: `有 ${data.conflicts.length} 项因他人改动未落库，请刷新后重试`,
+      data: null,
+    };
+  return { error: null, data };
 }
 
 function CardShell({
@@ -381,10 +388,17 @@ function DraftCard({
   const pid = typeof data.projectId === "string" ? data.projectId : defaultProjectId;
   const opts = (pid ? options[pid] : undefined) ?? NO_OPTIONS;
   const save = async (tool: string, payload: unknown) => {
-    const err = await commit(scope, defaultProjectId, tool, payload);
+    const res = await commit(scope, defaultProjectId, tool, payload);
+    if (res.error) return res.error;
+    // 卡片布局刚落库：把服务端存下的文档推给工作台 / 常驻栏（它们只在挂载时播种，
+    // 等 router.refresh 的 props 是等不到的，共享 layout 更不会重新渲染）
+    const layout = res.data?.layout;
+    if (isLayoutSavedDetail(layout)) {
+      window.dispatchEvent(new CustomEvent(LAYOUT_SAVED_EVENT, { detail: layout }));
+    }
     // 回调放在这里而不是 CardShell：拿到的才是用户改过之后的 payload
-    if (!err) onCommitted?.(index, { tool, draft: payload });
-    return err;
+    onCommitted?.(index, { tool, draft: payload });
+    return null;
   };
 
   if (draft.tool === "save_personal_context") {
@@ -1507,6 +1521,66 @@ function DraftCard({
         )}
         <p className="text-xs text-ink-faint">
           勾选结果就是任务最终的标签集合：取消勾选的会从任务上撕下。
+        </p>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "manage_dashboard_widgets") {
+    const d = data as { surface?: string; ops?: unknown[]; summary?: string[] };
+    const ops = Array.isArray(d.ops) ? d.ops : [];
+    const summary = Array.isArray(d.summary) ? d.summary : [];
+    const where = d.surface === "rail" ? "常驻栏" : "工作台";
+    return (
+      <CardShell
+        title={`${where}卡片调整（${ops.length} 项）`}
+        onConfirm={() => save("manage_dashboard_widgets", d)}
+        invalid={ops.length === 0 ? "没有要执行的改动，请让助手重拟一次" : undefined}
+      >
+        <p className="text-xs text-ink-soft">目标：{where}</p>
+        {summary.length > 0 ? (
+          <ul className="space-y-0.5 text-xs text-ink">
+            {summary.map((line, i) => (
+              <li key={i} className="flex gap-1.5">
+                <span className="shrink-0 text-ink-faint">{i + 1}.</span>
+                <span className="min-w-0 break-words">{line}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-ink-faint">将执行 {ops.length} 项卡片改动。</p>
+        )}
+        <p className="text-xs text-ink-faint">
+          只改你自己的卡片布局与设置（便签、时钟、倒计时、日程表），不牵动任务与项目数据。
+        </p>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "manage_task_plans") {
+    const d = data as { ops?: unknown[]; summary?: string[] };
+    const ops = Array.isArray(d.ops) ? d.ops : [];
+    const summary = Array.isArray(d.summary) ? d.summary : [];
+    return (
+      <CardShell
+        title={`日程表排期（${ops.length} 项）`}
+        onConfirm={() => save("manage_task_plans", d)}
+        invalid={ops.length === 0 ? "没有要执行的改动，请让助手重拟一次" : undefined}
+      >
+        {summary.length > 0 ? (
+          <ul className="space-y-0.5 text-xs text-ink">
+            {summary.map((line, i) => (
+              <li key={i} className="flex gap-1.5">
+                <span className="shrink-0 text-ink-faint">{i + 1}.</span>
+                <span className="min-w-0 break-words">{line}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-ink-faint">将执行 {ops.length} 项计划改动。</p>
+        )}
+        <p className="text-xs text-ink-faint">
+          只改你自己的「打算哪天做」；任务官方起止日不变（那要走任务变更）。
         </p>
       </CardShell>
     );

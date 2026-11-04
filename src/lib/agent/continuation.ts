@@ -30,6 +30,8 @@ export const DRAFT_TOOL_LABELS: Record<string, string> = {
   update_label: "修改标签",
   delete_label: "删除标签",
   edit_task_labels: "任务标签",
+  manage_dashboard_widgets: "工作台卡片",
+  manage_task_plans: "日程表排期",
 };
 
 /**
@@ -210,6 +212,12 @@ export function summarizeDraft(d: DraftLike): string {
         list(body.labelIds).length
       } 个）`;
     }
+    case "manage_dashboard_widgets": {
+      const where = body.surface === "rail" ? "常驻栏" : "工作台";
+      return `${where}卡片调整（${list(body.ops).length} 项）`;
+    }
+    case "manage_task_plans":
+      return `日程表排期（${list(body.ops).length} 项）`;
     case "save_personal_context":
       return `个人上下文（${list(body.entries).length} 条）`;
     case "respond_group_invite": {

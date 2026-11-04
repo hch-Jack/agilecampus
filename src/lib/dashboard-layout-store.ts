@@ -6,6 +6,7 @@ import { db } from "@/db";
 import { users } from "@/db/schema";
 import {
   defaultDashboardLayoutFor,
+  defaultRailLayoutFor,
   normalizeLayoutDoc,
   type DashboardLayoutDoc,
 } from "./dashboard-layout";
@@ -37,4 +38,43 @@ export async function saveDashboardLayout(
   const normalized = normalizeLayoutDoc(doc);
   await db.update(users).set({ dashboardLayout: normalized }).where(eq(users.id, userId));
   return normalized;
+}
+
+/** 读用户的常驻栏布局；NULL / 坏数据 → 默认常驻栏，空 items 保留为空 */
+export async function getRailLayout(
+  userId: string,
+  opts?: { isApprover?: boolean },
+): Promise<DashboardLayoutDoc> {
+  const [row] = await db
+    .select({ railLayout: users.railLayout })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (row?.railLayout == null)
+    return normalizeLayoutDoc(defaultRailLayoutFor(opts?.isApprover ?? false));
+  return normalizeLayoutDoc(row.railLayout);
+}
+
+export async function saveRailLayout(
+  userId: string,
+  doc: DashboardLayoutDoc,
+): Promise<DashboardLayoutDoc> {
+  const normalized = normalizeLayoutDoc(doc);
+  await db.update(users).set({ railLayout: normalized }).where(eq(users.id, userId));
+  return normalized;
+}
+
+/** 常驻栏是否收起；从未设置过（NULL）按默认收起 */
+export async function getRailCollapsed(userId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ railCollapsed: users.railCollapsed })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return row?.railCollapsed ?? true;
+}
+
+/** 记住收起状态：下次登录（换设备也一样）按上次的来 */
+export async function saveRailCollapsed(userId: string, collapsed: boolean): Promise<void> {
+  await db.update(users).set({ railCollapsed: collapsed }).where(eq(users.id, userId));
 }

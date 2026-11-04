@@ -11,6 +11,7 @@ import {
   ATTACHMENT_MAX_SIZE,
 } from "@/lib/attachment";
 import { createTaskComment, deleteTaskComment } from "@/lib/comment";
+import { notifyMentionedUsers } from "@/lib/mention";
 import { AppError, ForbiddenError } from "@/lib/errors";
 
 export type FormState = { error: string } | null;
@@ -202,14 +203,38 @@ export async function addCommentAction(
   const parsed = addCommentSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: parsed.error.issues[0].message };
   const { projectId, taskId, content } = parsed.data;
+  // @ 多选：表单里以重复字段 mentions 递交，逐个校验 uuid
+  const mentions = formData
+    .getAll("mentions")
+    .map(String)
+    .filter((s) => /^[0-9a-f-]{36}$/i.test(s));
+  // 「同时发私信通知」默认勾选（表单 checkbox 默认 checked）；取消勾选则不递交该字段
+  const notify = formData.get("notify") === "on";
 
   try {
-    await createTaskComment(session.user.id, taskId, content);
+    await createTaskComment(session.user.id, taskId, content, mentions);
   } catch (e) {
     if (e instanceof ForbiddenError) return { error: "没有权限发表留言" };
     if (e instanceof AppError) return { error: e.message };
     throw e;
   }
+
+  // 通知与落库解耦：独立 try-catch，失败仅记日志，绝不阻塞留言发表（工程补丁①）
+  if (notify && mentions.length > 0) {
+    try {
+      await notifyMentionedUsers({
+        actorId: session.user.id,
+        mentionedUserIds: mentions,
+        scope: "task",
+        projectId,
+        taskId,
+        content,
+      });
+    } catch (e) {
+      console.error("[mention] task comment notification failed:", e);
+    }
+  }
+
   revalidateTaskPaths(projectId, taskId);
   return null;
 }

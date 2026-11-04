@@ -16,6 +16,8 @@ import {
 } from "@/lib/agent/conversation";
 import { setAiHistoryLimit } from "@/lib/agent/memory";
 import { runAgentTurn } from "@/lib/agent/orchestrator";
+import { getDashboardLayout } from "@/lib/dashboard-layout-store";
+import { listMyTaskPlans } from "@/lib/task-plan";
 import { resetDb } from "./helpers";
 
 async function makeUser(email: string) {
@@ -597,5 +599,76 @@ describe("runAgentTurn（续接上文）", () => {
       { role: "assistant", content: "项目第一答" },
       { role: "user", content: "项目第二问" },
     ]);
+  });
+});
+
+// 工作台卡片与日程表排期：模型只能拿到草案信封，落库留给确认卡 —— 这里钉住
+// 「工具真的挂在个人 scope 上」与「信封原样进了 result.drafts」这两件事。
+describe("runAgentTurn（个人 scope：卡片管理与日程表排期）", () => {
+  beforeEach(resetDb);
+
+  it("manage_dashboard_widgets 进草案清单，布局一个字都没动", async () => {
+    const { student } = await scene();
+    const before = await getDashboardLayout(student.id);
+
+    const { model } = capturingReplay([
+      toolCallStep("manage_dashboard_widgets", {
+        surface: "dashboard",
+        ops: [{ action: "add", type: "note", config: { text: "周五交实验报告" } }],
+      }),
+      textStep("已拟好卡片调整，请确认。"),
+    ]);
+    const result = await runAgentTurn({
+      actorId: student.id,
+      userText: "在工作台加一张便签：周五交实验报告",
+      scope: { kind: "personal" },
+      model,
+    });
+
+    expect(result.drafts).toEqual([
+      {
+        __draft: true,
+        tool: "manage_dashboard_widgets",
+        draft: {
+          surface: "dashboard",
+          ops: [{ action: "add", type: "note", config: { text: "周五交实验报告" } }],
+          summary: ["新增便签「周五交实验报告」（4×4 格）"],
+        },
+      },
+    ]);
+    expect(await getDashboardLayout(student.id)).toEqual(before);
+  });
+
+  it("manage_task_plans 进草案清单，计划日尚未写入", async () => {
+    const { student, project } = await scene();
+    const task = await createTask(student.id, project.id, {
+      title: "写开题报告",
+      assigneeId: student.id,
+    });
+
+    const { model } = capturingReplay([
+      toolCallStep("manage_task_plans", {
+        ops: [{ action: "add", taskId: task.id, start: "2026-11-02", end: "2026-11-05" }],
+      }),
+      textStep("已拟好排期，请确认。"),
+    ]);
+    const result = await runAgentTurn({
+      actorId: student.id,
+      userText: "把开题报告排到 11 月 2 日到 5 日",
+      scope: { kind: "personal" },
+      model,
+    });
+
+    expect(result.drafts).toEqual([
+      {
+        __draft: true,
+        tool: "manage_task_plans",
+        draft: {
+          ops: [{ action: "add", taskId: task.id, start: "2026-11-02", end: "2026-11-05" }],
+          summary: ["「写开题报告」排到 2026-11-02 → 2026-11-05"],
+        },
+      },
+    ]);
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({});
   });
 });

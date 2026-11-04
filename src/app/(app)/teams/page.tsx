@@ -50,6 +50,9 @@ export default async function TeamsPage() {
                 <Link href={`/teams/${t.id}/labels`} className="ac-btn-ghost">
                   标签
                 </Link>
+                <Link href={`/teams/${t.id}/permissions`} className="ac-btn-ghost">
+                  权限管理
+                </Link>
               </div>
               {/* 解散/退出按钮统一放在卡片右下角，成员页内不再出现 */}
               {t.role === "admin" ? (

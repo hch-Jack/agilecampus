@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { eq } from "drizzle-orm";
+import { db } from "@/db";
+import { users } from "@/db/schema";
 import { createUser } from "@/lib/user";
 import { getDashboardLayout } from "@/lib/dashboard-layout-store";
 import {
@@ -170,6 +173,38 @@ describe("saveDashboardLayoutAction", () => {
       items: [{ id: "note", x: 0, y: 0, w: 4, h: 4, config: { text: "字".repeat(600) } }],
     });
     expect((await getDashboardLayout(user.id)).items[0].config?.text).toHaveLength(NOTE_MAX_LENGTH);
+  });
+
+  it("缩放随布局往返；缺省与非法值都不落库", async () => {
+    const user = await makeUser("owner@example.com");
+    authMock.userId = user.id;
+
+    const doc = { ...DEFAULT_DASHBOARD_LAYOUT, zoom: 1.3 };
+    expect(await saveDashboardLayoutAction(doc)).toEqual({ ok: true });
+    expect((await getDashboardLayout(user.id)).zoom).toBe(1.3);
+
+    // 1 等价于标准，不写字段
+    expect(await saveDashboardLayoutAction({ ...DEFAULT_DASHBOARD_LAYOUT, zoom: 1 })).toEqual({
+      ok: true,
+    });
+    expect(await getDashboardLayout(user.id)).not.toHaveProperty("zoom");
+  });
+
+  it("zoom 超出合法范围或被夹到边界后能被读出", async () => {
+    const user = await makeUser("owner@example.com");
+    authMock.userId = user.id;
+
+    // 信封层直接拒绝明显非法的缩放
+    expect(await saveDashboardLayoutAction({ v: 1, items: [], zoom: 0.2 })).toHaveProperty("error");
+    expect(await saveDashboardLayoutAction({ v: 1, items: [], zoom: "1.2" })).toHaveProperty("error");
+    expect(await getDashboardLayout(user.id)).toEqual(DEFAULT_DASHBOARD_LAYOUT);
+
+    // 库里已有的越界值（旧数据 / 手改）读出来时夹到边界
+    await db
+      .update(users)
+      .set({ dashboardLayout: { v: 1, items: [], zoom: 5 } })
+      .where(eq(users.id, user.id));
+    expect((await getDashboardLayout(user.id)).zoom).toBe(1.5);
   });
 
   it("信封不合法时拒绝：版本不对 / 未知卡片 / 负数或非整数 / 数组超限 / 便签过长", async () => {

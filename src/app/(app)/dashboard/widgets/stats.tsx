@@ -7,9 +7,9 @@ export function StatWidget({ statKey, value }: { statKey: WorkbenchStatKey; valu
   const alert = statKey === "overdue" && value > 0;
   return (
     <div className={`dw-stat flex h-full min-h-0 flex-col justify-center p-3 ${alert ? "is-alert" : ""}`}>
-      <p className="dw-stat-label text-xs text-ink-soft">{meta.label}</p>
+      <p className="dw-stat-label text-ink-soft">{meta.label}</p>
       <p
-        className={`dw-stat-value font-display text-2xl font-semibold tabular-nums ${
+        className={`dw-stat-value font-display font-semibold tabular-nums ${
           alert ? "" : meta.tone
         }`}
       >

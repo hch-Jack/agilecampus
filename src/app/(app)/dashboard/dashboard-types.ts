@@ -33,6 +33,8 @@ export type DashboardMessages = {
   dm: number;
   group: number;
   invites: number;
+  /** 未读系统消息（审批申请与结果回执） */
+  system: number;
 };
 
 /** 跨项目的待完成里程碑（按目标日期升序） */
@@ -71,16 +73,18 @@ export type DashboardAttachment = {
   projectName: string;
 };
 
-/** 我的团队里待我审批的申请（老师/管理员视角；学生恒为空数组） */
+/** 我的团队里待我审批的申请（有对应审核权限的成员视角；无权限者恒为空数组） */
 export type DashboardApproval = {
   id: string;
-  type: "task_done" | "resource_usage";
+  type: "task_done" | "resource_usage" | "project_acceptance";
   teamId: string;
   teamName: string;
   requesterName: string;
   taskId: string | null;
   taskTitle: string | null;
   projectId: string | null;
+  /** type=project_acceptance 时的项目名 */
+  projectName: string | null;
   resourceName: string | null;
   purpose: string | null;
   startTime: Date | null;
@@ -90,6 +94,8 @@ export type DashboardApproval = {
 
 /** 整页一次性装配的数据；加卡不需要再请求服务端 */
 export type DashboardData = {
+  /** 是否在任一团队担任审批人：决定「恢复默认」用的是老师/管理员默认布局还是通用默认 */
+  isApprover: boolean;
   visibleTasks: WorkbenchTask[];
   plans: Record<string, TaskPlanSegment[]>;
   doneCount: number;

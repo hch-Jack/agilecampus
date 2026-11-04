@@ -10,6 +10,7 @@ import {
   index,
   integer,
   jsonb,
+  boolean,
   check,
   customType,
   type AnyPgColumn,
@@ -112,6 +113,11 @@ export const users = pgTable(
     // NULL = 从未自定义（用默认布局）；`items: []` = 用户主动把卡片删光 —— 两者语义不同。
     // 刻意不标类型：布局结构属于应用层，schema 由 drizzle-kit 独立加载，读写在 store 里收口。
     dashboardLayout: jsonb("dashboard_layout"),
+    // 全域常驻栏布局：结构同 dashboardLayout（同一套网格引擎与缩放）。
+    // NULL = 用默认常驻栏；`items: []` = 用户主动清空。
+    railLayout: jsonb("rail_layout"),
+    // 常驻栏收起状态：记住用户上次的选择（按账号跨设备）；NULL = 默认收起。
+    railCollapsed: boolean("rail_collapsed"),
     // 头像：PNG/JPEG/WebP 直存库内（与私信附件同构），经 /api/avatars/[userId] 流出。
     // avatarUpdatedAt 兼作缓存破坏版本号（URL 带 ?v=），换头像即覆盖旧图。
     avatarData: bytea("avatar_data"),
@@ -281,12 +287,18 @@ export const teamMembers = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     role: teamRoleEnum("role").notNull().default("student"),
+    // 审批权限（按人勾选，管理员在权限页授予；admin 角色天然拥有全部三项，
+    // 不依赖这三列——防唯一管理员把自己锁死）。加入团队默认全不勾。
+    canApproveTaskDone: boolean("can_approve_task_done").notNull().default(false),
+    canApproveResource: boolean("can_approve_resource").notNull().default(false),
+    canAcceptProject: boolean("can_accept_project").notNull().default(false),
     createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [uniqueIndex("team_members_team_user_unique").on(t.teamId, t.userId)],
 );
 
-export const projectStatusEnum = pgEnum("project_status", ["active", "archived"]);
+// completed = 结题验收通过（approval 流 project_acceptance 决定或有权者直接结题）
+export const projectStatusEnum = pgEnum("project_status", ["active", "completed", "archived"]);
 export const milestoneStatusEnum = pgEnum("milestone_status", ["open", "done"]);
 export const taskStatusEnum = pgEnum("task_status", ["todo", "doing", "done"]);
 export const taskPriorityEnum = pgEnum("task_priority", ["low", "medium", "high"]);
@@ -354,6 +366,9 @@ export const tasks = pgTable(
     dueDate: date("due_date"),
     status: taskStatusEnum("status").notNull().default("todo"),
     priority: taskPriorityEnum("priority").notNull().default("medium"),
+    // 完成是否需要老师/管理员审批：建任务时勾选，默认要审（沿用审批流上线前的口径）。
+    // 关掉后学生把任务拖到「已完成」即直接完成，不再生成完成申请。
+    requireApproval: boolean("require_approval").notNull().default(true),
     sortOrder: doublePrecision("sort_order").notNull().default(0),
     createdAt: dbTimestampNow("created_at").notNull(),
     updatedAt: dbTimestampNow("updated_at").notNull(),
@@ -658,14 +673,41 @@ export const taskComments = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     content: text("content").notNull(),
+    // @ 提醒：被 @ 的用户 id 数组（选择器模型，非正文内联 @ 文本）。NULL = 无 @。
+    // $type<string[]> 给 Drizzle 精确 TS 类型；jsonb 直存，读取按 string[] 还原。
+    mentions: jsonb("mentions").$type<string[]>(),
     createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [index("task_comments_task_idx").on(t.taskId)],
 );
 
+// 项目留言板：与 task_comments 同构，但挂项目级——项目整体讨论，不归属某个任务。
+// 项目删除时留言级联消失；@ 提醒同 task_comments.mentions。
+export const projectComments = pgTable(
+  "project_comments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    authorId: uuid("author_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    // @ 提醒：被 @ 的用户 id 数组。NULL = 无 @；$type<string[]> 给精确 TS 类型。
+    mentions: jsonb("mentions").$type<string[]>(),
+    createdAt: dbTimestampNow("created_at").notNull(),
+  },
+  (t) => [index("project_comments_project_idx").on(t.projectId)],
+);
+
 // ------------------------------------------------------- 审批（任务完成 / 资源占用）
 
-export const approvalTypeEnum = pgEnum("approval_type", ["task_done", "resource_usage"]);
+export const approvalTypeEnum = pgEnum("approval_type", [
+  "task_done",
+  "resource_usage",
+  "project_acceptance",
+]);
 export type ApprovalType = (typeof approvalTypeEnum.enumValues)[number];
 
 // 行存在即待处理是不够的（历史决定要留档），故带 status 列；pending 行受
@@ -674,13 +716,15 @@ export const approvalStatusEnum = pgEnum("approval_status", ["pending", "approve
 export type ApprovalStatus = (typeof approvalStatusEnum.enumValues)[number];
 
 /**
- * 审批申请：学生把任务 doing→done、登记资源占用时向老师/管理员发起，
- * 任一老师或团队管理员通过即生效。
+ * 审批申请：成员向**拥有对应审核权限**的成员（admin 恒有；其余由权限页授予）发起，
+ * 任一有权限者通过即生效。
  *
  * - task_done：taskId 指向目标任务（任务保持未完成直至通过）；撤回或
  *   被管理员直接完成等替代路径会删掉 pending 行。
  * - resource_usage：**通过时才建** resource_usages 行，故资源信息以快照
  *   存在本行上；拒绝则不留占用痕迹。
+ * - project_acceptance：projectId 指向申请结题的项目（项目保持 active 直至
+ *   通过）；有验收权限者也可在项目页直接结题，不经申请。
  */
 export const approvalRequests = pgTable(
   "approval_requests",
@@ -695,6 +739,8 @@ export const approvalRequests = pgTable(
     type: approvalTypeEnum("type").notNull(),
     // type=task_done 时必填
     taskId: uuid("task_id").references(() => tasks.id, { onDelete: "cascade" }),
+    // type=project_acceptance 时必填：申请结题验收的项目
+    projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
     // type=resource_usage 时的资源快照
     resourceName: text("resource_name"),
     purpose: text("purpose"),
@@ -704,11 +750,17 @@ export const approvalRequests = pgTable(
     // 决定人；pending 时为空。决定人被删号后置空，决定记录本身保留
     approverId: uuid("approver_id").references(() => users.id, { onDelete: "set null" }),
     decidedAt: dbTimestamp("decided_at"),
+    // 审批人填写的拒绝原因（通过时为空）：随回执系统消息发给申请人，详情页也展示
+    decisionNote: text("decision_note"),
     createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [
     uniqueIndex("approval_task_pending_unique")
       .on(t.taskId)
+      .where(sql`${t.status} = 'pending'`),
+    // 同一项目同时最多一条待审的结题申请（与任务完成申请同款护栏）
+    uniqueIndex("approval_project_pending_unique")
+      .on(t.projectId)
       .where(sql`${t.status} = 'pending'`),
     index("approval_requests_team_status_idx").on(t.teamId, t.status),
     index("approval_requests_requester_idx").on(t.requesterId),

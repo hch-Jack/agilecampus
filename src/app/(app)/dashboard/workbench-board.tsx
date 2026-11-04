@@ -29,6 +29,7 @@ import { SubtaskProgress } from "@/components/subtask-progress";
 import { dashboardHref } from "@/lib/workbench-filters";
 import { CompletionRequestModal } from "@/components/completion-request-modal";
 import { WorkbenchApprovalModal } from "./approval-status-modal";
+import { ApprovalHistoryModal } from "./approval-history-modal";
 import { isOverdueTask, sortBoardTasks } from "@/lib/workbench-order";
 
 export type WorkbenchTask = {
@@ -41,6 +42,8 @@ export type WorkbenchTask = {
   projectId: string;
   projectName: string;
   role: "admin" | "teacher" | "student";
+  /** 完成是否需要审批（建任务时可选）：false 时学生拖到「已完成」即直接完成 */
+  requireApproval: boolean;
   subTotal?: number;
   subDone?: number;
   /**
@@ -293,6 +296,8 @@ export function WorkbenchBoard({
   // 学生拖到「已完成」→ 完成申请弹窗（确认 + 填写完成情况/附件）；审批详情弹窗
   const [completionTask, setCompletionTask] = useState<WorkbenchTask | null>(null);
   const [approvalTask, setApprovalTask] = useState<WorkbenchTask | null>(null);
+  // 看板右上角「审批记录」：我发起的 + 我审批过的全部记录
+  const [historyOpen, setHistoryOpen] = useState(false);
   // 浮层宽度取被拖卡片的实际宽度：看板卡随工作台网格缩放，不能写死 262px
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const [optimisticTasks, moveOptimistic] = useOptimistic(
@@ -332,7 +337,8 @@ export function WorkbenchBoard({
     const patch: ColumnPatch = { status: key };
     // 学生把任务拖到「已完成」：不直接落列，先弹完成申请窗（确认 + 完成情况/附件）。
     // 任务停留在原列，提交受理后由整页回流带出「审批中」徽章。
-    if (key === "done" && task.role === "student" && task.status !== "done") {
+    // 建任务时关掉了「需要审批」的任务不弹窗，走下面的普通改状态分支直接完成。
+    if (key === "done" && task.role === "student" && task.status !== "done" && task.requireApproval) {
       setCompletionTask(task);
       return;
     }
@@ -363,19 +369,28 @@ export function WorkbenchBoard({
       <div className="workbench-board flex h-full min-h-0 flex-col p-4">
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
           <h2 className="font-display text-sm font-semibold text-ink">我的任务看板</h2>
-          <Link
-            href={dashboardHref({ hideDone: !hideDone, project: projectFilter })}
-            // 筛选只是换数据，不该把已经翻到下面的用户弹回页首
-            scroll={false}
-            aria-pressed={hideDone}
-            className={`ac-badge ${
-              hideDone
-                ? "bg-primary text-white"
-                : "bg-surface text-ink-soft hover:bg-primary-soft"
-            }`}
-          >
-            隐藏已完成
-          </Link>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setHistoryOpen(true)}
+              className="ac-btn-ghost px-2.5 py-1 text-xs"
+            >
+              审批记录
+            </button>
+            <Link
+              href={dashboardHref({ hideDone: !hideDone, project: projectFilter })}
+              // 筛选只是换数据，不该把已经翻到下面的用户弹回页首
+              scroll={false}
+              aria-pressed={hideDone}
+              className={`ac-badge ${
+                hideDone
+                  ? "bg-primary text-white"
+                  : "bg-surface text-ink-soft hover:bg-primary-soft"
+              }`}
+            >
+              隐藏已完成
+            </Link>
+          </div>
         </div>
 
         {chips.length > 0 && (
@@ -455,6 +470,9 @@ export function WorkbenchBoard({
           timeZone={timeZone}
           onClose={() => setApprovalTask(null)}
         />
+      )}
+      {historyOpen && (
+        <ApprovalHistoryModal timeZone={timeZone} onClose={() => setHistoryOpen(false)} />
       )}
       <DragOverlay dropAnimation={null}>
         {activeTask ? (

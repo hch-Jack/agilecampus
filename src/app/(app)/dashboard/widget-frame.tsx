@@ -19,6 +19,7 @@ export function WidgetFrame({
   title,
   editing,
   dragging,
+  alert = false,
   onRemove,
   onDragStart,
   onResizeStart,
@@ -29,6 +30,8 @@ export function WidgetFrame({
   title: string;
   editing: boolean;
   dragging: boolean;
+  /** 有内容需要处理（待办审批）时整卡高亮成橙色，一眼可见 */
+  alert?: boolean;
   onRemove: () => void;
   onDragStart: (e: ReactPointerEvent<HTMLElement>) => void;
   onResizeStart: (e: ReactPointerEvent<HTMLElement>) => void;
@@ -43,7 +46,9 @@ export function WidgetFrame({
 
   return (
     <section
-      className={`dashboard-widget${dragging ? " dashboard-widget-active" : ""}`}
+      className={`dashboard-widget${dragging ? " dashboard-widget-active" : ""}${
+        alert ? " dashboard-widget-alert" : ""
+      }`}
       style={style}
       data-widget-id={item.id}
     >

@@ -10,6 +10,7 @@ import {
 } from "@/db/schema";
 import { createUser } from "@/lib/user";
 import { createTeam, joinTeam } from "@/lib/team";
+import { setMemberPermission } from "@/lib/team-permissions";
 import { createProject } from "@/lib/project";
 import { createTask, createSubtask, updateTask } from "@/lib/task";
 import { createResourceUsage } from "@/lib/resource";
@@ -19,6 +20,7 @@ import {
   getApprovalDetail,
   getApprovalStatus,
   isApproverAnywhere,
+  listMyApprovalHistory,
   listMyResourceRequests,
   listMySystemMessages,
   listPendingApprovalsForApprover,
@@ -26,6 +28,7 @@ import {
   markSystemMessagesRead,
   requestResourceUsage,
 } from "@/lib/approval";
+import { DECISION_NOTE_MAX_LENGTH } from "@/lib/approval-view";
 import { ApprovalRequestedError, AppError, ForbiddenError } from "@/lib/errors";
 import { resetDb } from "./helpers";
 
@@ -39,12 +42,15 @@ async function makeUser(email: string, identity?: "teacher" | "student") {
 }
 
 // 常用布景：admin 建团，teacher（教师身份加入即 teacher 角色）与学生各就位，项目与任务就绪。
+// 审批权改为按人勾选后，teacher 在布景里显式获得两项审核权（任务完成/资源占用）。
 // 任务默认拖到「进行中」——完成审批只发生在 doing→done 这一步。
 async function scene() {
   const admin = await makeUser("admin@example.com");
   const team = await createTeam(admin.id, "东吴实验室");
   const teacher = await makeUser("teacher@example.com", "teacher");
   await joinTeam(teacher.id, team.inviteCode);
+  await setMemberPermission(admin.id, team.id, teacher.id, "task_done", true);
+  await setMemberPermission(admin.id, team.id, teacher.id, "resource", true);
   const student = await makeUser("student@example.com", "student");
   await joinTeam(student.id, team.inviteCode);
 
@@ -480,5 +486,130 @@ describe("系统消息查询", () => {
     expect(rows[0].status).toBe("approved");
     expect(rows[0].approverName).toBe("teacher");
     expect(rows[0].decidedAt).not.toBeNull();
+  });
+});
+
+describe("任务完成审批开关（requireApproval）", () => {
+  beforeEach(resetDb);
+
+  it("新建任务默认需要审批", async () => {
+    const { task } = await scene();
+    expect(task.requireApproval).toBe(true);
+  });
+
+  it("关掉审批的任务：学生拖到已完成直接完成，不生成申请", async () => {
+    const { admin, student, project } = await scene();
+    const free = await createTask(admin.id, project.id, {
+      title: "自由任务",
+      assigneeId: student.id,
+      requireApproval: false,
+    });
+    await updateTask(admin.id, free.id, { status: "doing" });
+
+    const done = await updateTask(student.id, free.id, { status: "done" });
+    expect(done.status).toBe("done");
+
+    const pendings = await db
+      .select()
+      .from(approvalRequests)
+      .where(eq(approvalRequests.taskId, free.id));
+    expect(pendings).toHaveLength(0);
+    expect(await listMySystemMessages(student.id)).toHaveLength(0);
+  });
+});
+
+describe("拒绝原因：随回执送达申请人", () => {
+  beforeEach(resetDb);
+
+  it("拒绝时填写原因：系统消息带上原因，详情与学生侧记录都能看到", async () => {
+    const { admin, student, task, pendingRow } = await scene();
+    await expect(updateTask(student.id, task.id, { status: "done" })).rejects.toBeInstanceOf(
+      ApprovalRequestedError,
+    );
+    const pending = (await pendingRow())!;
+
+    await decideApproval(admin.id, pending.id, "rejected", "  资料不全，请补充截图  ");
+
+    const [receipt] = await db
+      .select({ content: systemMessages.content })
+      .from(systemMessages)
+      .where(eq(systemMessages.userId, student.id));
+    expect(receipt.content).toContain("拒绝原因：资料不全，请补充截图");
+
+    const detail = await getApprovalDetail(student.id, pending.id);
+    expect(detail.decisionNote).toBe("资料不全，请补充截图");
+    const studentMsgs = await listMySystemMessages(student.id);
+    expect(studentMsgs[0].decisionNote).toBe("资料不全，请补充截图");
+
+    // 申请人可在审批历史里回看这条回复
+    const history = await listMyApprovalHistory(student.id);
+    expect(history[0].decisionNote).toBe("资料不全，请补充截图");
+  });
+
+  it("拒绝原因为空时沿用通用文案；通过时原因不落库", async () => {
+    const { admin, student, task, pendingRow } = await scene();
+    await expect(updateTask(student.id, task.id, { status: "done" })).rejects.toBeInstanceOf(
+      ApprovalRequestedError,
+    );
+    const pending = (await pendingRow())!;
+    await decideApproval(admin.id, pending.id, "rejected", "   ");
+    const [receipt] = await db
+      .select({ content: systemMessages.content })
+      .from(systemMessages)
+      .where(eq(systemMessages.userId, student.id));
+    expect(receipt.content).not.toContain("拒绝原因");
+
+    await expect(updateTask(student.id, task.id, { status: "done" })).rejects.toBeInstanceOf(
+      ApprovalRequestedError,
+    );
+    const again = (await pendingRow())!;
+    await decideApproval(admin.id, again.id, "approved", "通过时写的原因会被忽略");
+    expect((await getApprovalDetail(admin.id, again.id)).decisionNote).toBeNull();
+  });
+
+  it("原因超长会被截断到上限", async () => {
+    const { admin, student, task, pendingRow } = await scene();
+    await expect(updateTask(student.id, task.id, { status: "done" })).rejects.toBeInstanceOf(
+      ApprovalRequestedError,
+    );
+    const pending = (await pendingRow())!;
+    await decideApproval(admin.id, pending.id, "rejected", "长".repeat(DECISION_NOTE_MAX_LENGTH + 50));
+    const detail = await getApprovalDetail(admin.id, pending.id);
+    expect(detail.decisionNote).toHaveLength(DECISION_NOTE_MAX_LENGTH);
+  });
+});
+
+describe("审批历史（看板右上角弹窗的数据源）", () => {
+  beforeEach(resetDb);
+
+  it("我发起的与我审批的分开标记，团队外的人看不到", async () => {
+    const { admin, teacher, student, team, task, pendingRow } = await scene();
+    await requestResourceUsage(student.id, team.id, {
+      resourceName: "GPU-01",
+      startTime: new Date("2026-11-01T09:00:00Z"),
+    });
+    await expect(updateTask(student.id, task.id, { status: "done" })).rejects.toBeInstanceOf(
+      ApprovalRequestedError,
+    );
+    const pending = (await pendingRow())!;
+    await decideApproval(teacher.id, pending.id, "approved");
+
+    const forStudent = await listMyApprovalHistory(student.id);
+    expect(forStudent).toHaveLength(2);
+    expect(forStudent.every((r) => r.direction === "requested")).toBe(true);
+    expect(forStudent.every((r) => r.teamId === team.id)).toBe(true);
+    const taskRow = forStudent.find((r) => r.type === "task_done")!;
+    expect(taskRow.taskTitle).toBe("数据采集");
+    expect(taskRow.status).toBe("approved");
+    expect(taskRow.approverName).toBe("teacher");
+
+    const forTeacher = await listMyApprovalHistory(teacher.id);
+    expect(forTeacher).toHaveLength(1);
+    expect(forTeacher[0].direction).toBe("decided");
+    expect(forTeacher[0].requesterName).toBe("student");
+
+    const outsider = await makeUser("outsider2@example.com");
+    expect(await listMyApprovalHistory(outsider.id)).toHaveLength(0);
+    expect(await listMyApprovalHistory(admin.id)).toHaveLength(0);
   });
 });

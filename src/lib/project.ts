@@ -63,7 +63,9 @@ export async function listTeamProjects(actorId: string, teamId: string) {
     .orderBy(desc(projects.createdAt));
 }
 
-// 项目编辑/归档：仅团队 admin 可动（与 createProject 同一权限口径）
+// 项目编辑/归档：仅团队 admin 可动（与 createProject 同一权限口径）。
+// 注意 status 只收 active/archived：结题（completed）必须任务全部完成，
+// 只能走审批流或 completeProjectDirectly——即使 admin 也不许从编辑口直接标结题。
 export async function updateProject(
   actorId: string,
   projectId: string,
@@ -78,6 +80,8 @@ export async function updateProject(
   const access = await getProjectForUser(actorId, projectId);
   if (!access) throw new ForbiddenError();
   if (access.role !== "admin") throw new ForbiddenError();
+  if (patch.status === "completed")
+    throw new AppError("结题须任务全部完成后走验收流程，不能直接编辑状态");
 
   // 补丁触及起止日期时，与库中现有值合并后再校验——只改名的请求不受存量数据影响
   if (patch.startDate !== undefined || patch.endDate !== undefined) {

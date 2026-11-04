@@ -23,6 +23,8 @@ import {
   FORWARD_MESSAGE_TOOL,
   INVITE_GROUP_TOOL,
   JOIN_TEAM_TOOL,
+  MANAGE_TASK_PLANS_TOOL,
+  MANAGE_WIDGETS_TOOL,
   RESPOND_INVITE_TOOL,
   SAVE_CONTEXT_TOOL,
   SEND_MESSAGE_TOOL,
@@ -79,6 +81,7 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
         "invite_to_group",
         "join_team",
         "list_attachments",
+        "list_dashboard_widgets",
         "list_dependencies",
         "list_labels",
         "list_members",
@@ -88,6 +91,8 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
         "list_projects",
         "list_resource_usages",
         "list_tasks",
+        "manage_dashboard_widgets",
+        "manage_task_plans",
         "open_file",
         "open_message",
         "open_page",
@@ -296,6 +301,9 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     expect(WRITE_TOOL_NAMES).not.toContain(UPDATE_LABEL_TOOL);
     expect(WRITE_TOOL_NAMES).not.toContain(DELETE_LABEL_TOOL);
     expect(WRITE_TOOL_NAMES).not.toContain(EDIT_TASK_LABELS_TOOL);
+    // 工作台卡片与日程表排期也只归工作台助手：项目页没有工作台布局，也无从管个人的计划日
+    expect(WRITE_TOOL_NAMES).not.toContain(MANAGE_WIDGETS_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(MANAGE_TASK_PLANS_TOOL);
     expect(COMMIT_TOOL_NAMES).toEqual([
       ...WRITE_TOOL_NAMES,
       SAVE_CONTEXT_TOOL,
@@ -313,6 +321,8 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
       UPDATE_LABEL_TOOL,
       DELETE_LABEL_TOOL,
       EDIT_TASK_LABELS_TOOL,
+      MANAGE_WIDGETS_TOOL,
+      MANAGE_TASK_PLANS_TOOL,
     ]);
   });
 });
@@ -402,7 +412,7 @@ describe("个人写工具的草案，落库口都吃得下", () => {
 });
 
 // 右侧助手在项目页里会带一个「焦点项目」：不改会话归属，只多放出 6 件项目专属工具。
-// 这里钉住工具面——多放一件或少放一件都会改变模型的选择空间（39 → 45 已是有意为之）。
+// 这里钉住工具面——多放一件或少放一件都会改变模型的选择空间（42 → 48 已是有意为之）。
 describe("buildPersonalTools：焦点项目的工具面", () => {
   beforeEach(resetDb);
 
@@ -411,8 +421,8 @@ describe("buildPersonalTools：焦点项目的工具面", () => {
     const base = buildPersonalTools(student.id);
     const focused = buildPersonalTools(student.id, project.id);
 
-    expect(Object.keys(base)).toHaveLength(39);
-    expect(Object.keys(focused)).toHaveLength(45);
+    expect(Object.keys(base)).toHaveLength(42);
+    expect(Object.keys(focused)).toHaveLength(48);
     expect(Object.keys(focused).filter((name) => !(name in base)).sort()).toEqual(
       [...FOCUS_PROJECT_TOOL_NAMES].sort(),
     );

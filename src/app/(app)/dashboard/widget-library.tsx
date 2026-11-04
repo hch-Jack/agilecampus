@@ -15,10 +15,13 @@ export function WidgetLibrary({
   layout,
   onAdd,
   onClose,
+  compact = false,
 }: {
   layout: DashboardLayoutDoc;
   onAdd: (type: DashboardWidgetId) => void;
   onClose: () => void;
+  /** 常驻栏只有约 280px：单列铺开，别套三列 */
+  compact?: boolean;
 }) {
   const present = new Set(layout.items.map((item) => item.type));
   const missing = WIDGET_IDS.filter((type) => isRepeatableWidgetId(type) || !present.has(type));
@@ -44,7 +47,7 @@ export function WidgetLibrary({
       {missing.length === 0 ? (
         <p className="mt-3 text-sm text-ink-faint">所有卡片都已添加。</p>
       ) : (
-        <ul className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        <ul className={`mt-3 grid gap-2${compact ? "" : " sm:grid-cols-2 lg:grid-cols-3"}`}>
           {missing.map((type) => {
             const meta = DASHBOARD_WIDGETS[type];
             return (

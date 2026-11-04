@@ -5,9 +5,13 @@ import { auth } from "@/lib/auth";
 import { getProjectForUser, listProjectMilestones } from "@/lib/project";
 import { listTeamMembers } from "@/lib/team";
 import { listProjectTasks } from "@/lib/task";
+import { listProjectBoardComments } from "@/lib/comment";
 import { splitBoardTasks } from "@/lib/board-tasks";
 import { getFeedUnreadCount, listProjectActivities, projectFeedScope } from "@/lib/activity";
 import { listTeamLabels } from "@/lib/label";
+import { listPendingAcceptanceProjectIds } from "@/lib/approval";
+import { getMyPermissions } from "@/lib/team-permissions";
+import { AcceptanceControl } from "./acceptance-control";
 import { parseFilters, applyFilters } from "@/lib/board-filters";
 import { todayIn } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
@@ -16,6 +20,7 @@ import { MilestoneSection } from "./milestone-section";
 import { NewTaskForm } from "./new-task-form";
 import { Board } from "./board";
 import { FilterBar } from "./filter-bar";
+import { ProjectCommentList } from "./project-comment-list";
 
 export default async function ProjectPage({
   params,
@@ -34,15 +39,23 @@ export default async function ProjectPage({
   if (!access) notFound();
   const { project, role } = access;
 
-  const [projectMilestones, projectTasks, projectActivities, projectFeedUnread, members, teamLabels] =
-    await Promise.all([
-      listProjectMilestones(session.user.id, projectId),
-      listProjectTasks(session.user.id, projectId),
-      listProjectActivities(session.user.id, projectId),
-      getFeedUnreadCount(session.user.id, projectFeedScope(projectId)),
-      listTeamMembers(project.teamId),
-      listTeamLabels(session.user.id, project.teamId),
-    ]);
+  const [
+    projectMilestones,
+    projectTasks,
+    projectActivities,
+    projectFeedUnread,
+    members,
+    teamLabels,
+    projectBoardComments,
+  ] = await Promise.all([
+    listProjectMilestones(session.user.id, projectId),
+    listProjectTasks(session.user.id, projectId),
+    listProjectActivities(session.user.id, projectId),
+    getFeedUnreadCount(session.user.id, projectFeedScope(projectId)),
+    listTeamMembers(project.teamId),
+    listTeamLabels(session.user.id, project.teamId),
+    listProjectBoardComments(session.user.id, projectId),
+  ]);
 
   const filters = parseFilters(
     new URLSearchParams(
@@ -64,6 +77,14 @@ export default async function ProjectPage({
 
   const canWrite = role === "admin" || role === "student";
   const isAdmin = role === "admin";
+
+  // 结题验收：有无待审申请（徽章 + 挡掉重复发起）、我是否有验收权（直接结题 vs 发起申请）
+  const [acceptancePending, myPerms] = await Promise.all([
+    listPendingAcceptanceProjectIds([projectId]),
+    getMyPermissions(session.user.id, project.teamId),
+  ]);
+  const pendingAcceptance = acceptancePending.has(projectId);
+  const canAccept = myPerms?.project ?? false;
 
   return (
     <main className="mx-auto max-w-5xl space-y-8 py-8">
@@ -122,10 +143,35 @@ export default async function ProjectPage({
         {project.description && (
           <p className="mt-1 text-sm text-ink-soft">{project.description}</p>
         )}
-        <p className="mt-1 text-xs text-ink-faint">
-          {project.startDate ?? "?"} ~ {project.endDate ?? "?"} · {project.status}
+        <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-ink-faint">
+          {project.startDate ?? "?"} ~ {project.endDate ?? "?"} ·{" "}
+          {project.status === "active" ? (
+            <span className="ac-badge bg-doing/10 text-doing">进行中</span>
+          ) : project.status === "completed" ? (
+            <span className="ac-badge bg-done/10 text-done">已结题</span>
+          ) : (
+            <span className="ac-badge bg-sunken text-ink-soft">已归档</span>
+          )}
+          {pendingAcceptance && (
+            <span className="ac-badge border border-medium bg-medium-soft font-medium text-medium">
+              ⏳ 结题审批中
+            </span>
+          )}
         </p>
       </header>
+      {/* 结题入口：有验收权=直接结题；无权=发起申请（全部任务完成后可提交） */}
+      <AcceptanceControl
+        projectId={projectId}
+        projectName={project.name}
+        status={project.status}
+        pendingAcceptance={pendingAcceptance}
+        canAccept={canAccept}
+      />
+      {project.status !== "active" && (
+        <p className="text-xs text-ink-faint">
+          项目已{project.status === "completed" ? "结题" : "归档"}，工作台不再统计其任务。
+        </p>
+      )}
 
       <MilestoneSection
         projectId={projectId}
@@ -160,6 +206,7 @@ export default async function ProjectPage({
               assigneeId: t.assigneeId,
               milestoneId: t.milestoneId,
               labels: t.labels,
+              requireApproval: t.requireApproval,
               subTotal: p?.total,
               subDone: p?.done,
             };
@@ -180,6 +227,18 @@ export default async function ProjectPage({
           projectEnd={project.endDate}
         />
       )}
+
+      {/* 项目留言板：对标任务留言板，挂在新任务与最新记录之间 */}
+      <section className="ac-card p-5">
+        <ProjectCommentList
+          projectId={projectId}
+          comments={projectBoardComments}
+          currentUserId={session.user.id}
+          canComment={true}
+          timeZone={tz}
+          members={members}
+        />
+      </section>
 
       {/* 本项目专属口径：只统计该项目的记录（不限「分配给我」）；「清除记录」只清自己视角 */}
       <ActivityFeed

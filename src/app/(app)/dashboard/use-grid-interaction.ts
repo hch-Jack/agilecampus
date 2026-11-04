@@ -45,6 +45,8 @@ type Session = {
   latest: DashboardLayoutDoc;
   colStep: number;
   rowStep: number;
+  /** 当前缩放下的格子间距（px）；缩放只改行高与间距 */
+  gap: number;
   moved: boolean;
 };
 
@@ -77,8 +79,8 @@ function settleResize(s: Session, commit: boolean) {
   node.style.removeProperty("width");
   node.style.removeProperty("height");
   if (!target) return;
-  const toW = target.w * s.colStep - GRID_GAP;
-  const toH = target.h * s.rowStep - GRID_GAP;
+  const toW = target.w * s.colStep - s.gap;
+  const toH = target.h * s.rowStep - s.gap;
   if (Math.abs(rect.width - toW) < 0.5 && Math.abs(rect.height - toH) < 0.5) return;
   node.animate(
     [
@@ -93,22 +95,42 @@ function settleResize(s: Session, commit: boolean) {
  * 网格拖拽 / 缩放的指针状态机。
  *
  * 只负责「按下 → 实时预览 → 松开提交」，布局怎么算全交给 dashboard-layout 的纯函数。
- * 坐标按 12 列网格吸附：列宽由网格实际宽度反推（含 gap），行高是固定像素。
+ * 坐标按 12 列网格吸附：列宽由网格实际宽度反推（含 gap），行高由 `getMetrics` 给出
+ * （工作台与常驻栏的缩放各算各的）。
+ *
+ * `getScrollContainer` 用于常驻栏这种「自身滚动、页面不滚」的容器：
+ * 内容坐标与边缘自动滚动都作用在它身上；缺省仍按整页（window）算。
  */
 export function useGridInteraction({
   gridRef,
   getLayout,
   onPreview,
   onCommit,
+  getMetrics = () => ({ rowHeight: GRID_ROW_HEIGHT, gap: GRID_GAP }),
+  getScrollContainer,
 }: {
   gridRef: RefObject<HTMLDivElement | null>;
   getLayout: () => DashboardLayoutDoc;
   onPreview: (doc: DashboardLayoutDoc) => void;
   onCommit: (doc: DashboardLayoutDoc) => void;
+  /** 缩放后的格子度量；缺省为标准尺寸 */
+  getMetrics?: () => { rowHeight: number; gap: number };
+  /** 拖拽时用于自动滚动的容器；缺省为整页 */
+  getScrollContainer?: () => HTMLElement | null;
 }) {
   const sessionRef = useRef<Session | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
+
+  /** 指针的内容坐标：随滚动容器（或页面）一起增长，拖到屏幕外也能继续 */
+  const contentPoint = useCallback(
+    (clientX: number, clientY: number) => {
+      const sc = getScrollContainer?.() ?? null;
+      if (sc) return { x: clientX + sc.scrollLeft, y: clientY + sc.scrollTop };
+      return { x: clientX + window.scrollX, y: clientY + window.scrollY };
+    },
+    [getScrollContainer],
+  );
 
   const begin = useCallback(
     (event: ReactPointerEvent<HTMLElement>, id: string, mode: Mode) => {
@@ -121,10 +143,11 @@ export function useGridInteraction({
       event.preventDefault();
       event.stopPropagation();
 
+      const { rowHeight, gap } = getMetrics();
       const rect = grid.getBoundingClientRect();
-      const colStep =
-        (rect.width - GRID_GAP * (GRID_COLUMNS - 1)) / GRID_COLUMNS + GRID_GAP;
-      const rowStep = GRID_ROW_HEIGHT + GRID_GAP;
+      const colStep = (rect.width - gap * (GRID_COLUMNS - 1)) / GRID_COLUMNS + gap;
+      const rowStep = rowHeight + gap;
+      const start = contentPoint(event.clientX, event.clientY);
       const snapshot = getLayout();
       const node = (event.currentTarget as HTMLElement).closest<HTMLElement>("[data-widget-id]");
       // 上一轮 FLIP / 尺寸收尾还没飞完就再次按下时先收掉，否则动画会盖住这次的视觉位移
@@ -146,8 +169,8 @@ export function useGridInteraction({
         type: item.type,
         mode,
         pointerId: event.pointerId,
-        startX: event.clientX + window.scrollX,
-        startY: event.clientY + window.scrollY,
+        startX: start.x,
+        startY: start.y,
         startItem: { x: item.x, y: item.y, w: item.w, h: item.h },
         node,
         offsetX,
@@ -158,6 +181,7 @@ export function useGridInteraction({
         latest: snapshot,
         colStep,
         rowStep,
+        gap,
         moved: false,
       };
       const captureTarget = event.currentTarget;
@@ -216,10 +240,9 @@ export function useGridInteraction({
         ev.preventDefault();
 
         // 内容坐标：自动滚动时 clientY 不变，内容坐标会继续增长，卡片因此能拖到屏幕外
-        const contentX = ev.clientX + window.scrollX;
-        const contentY = ev.clientY + window.scrollY;
-        const dx = contentX - s.startX;
-        const dy = contentY - s.startY;
+        const point = contentPoint(ev.clientX, ev.clientY);
+        const dx = point.x - s.startX;
+        const dy = point.y - s.startY;
         const dc = Math.round(dx / s.colStep);
         const dr = Math.round(dy / s.rowStep);
         const next =
@@ -235,9 +258,9 @@ export function useGridInteraction({
           s.node.style.transform = `translate3d(${s.offsetX + dx}px, ${s.offsetY + dy}px, 0)`;
         } else if (s.mode === "resize" && s.node && s.baseW > 0 && s.baseH > 0) {
           const min = DASHBOARD_WIDGETS[s.type].minSize;
-          const minW = min.w * s.colStep - GRID_GAP;
-          const maxW = (GRID_COLUMNS - s.startItem.x) * s.colStep - GRID_GAP;
-          const minH = min.h * s.rowStep - GRID_GAP;
+          const minW = min.w * s.colStep - s.gap;
+          const maxW = (GRID_COLUMNS - s.startItem.x) * s.colStep - s.gap;
+          const minH = min.h * s.rowStep - s.gap;
           const width = Math.min(Math.max(s.baseW + dx, minW), maxW);
           const height = Math.max(s.baseH + dy, minH);
           s.node.style.width = `${width}px`;
@@ -264,10 +287,18 @@ export function useGridInteraction({
           );
         }
 
-        // 靠近视口上下边缘时自动滚动，让长布局也能拖到屏幕外
+        // 靠近可滚动区域的上下边缘时自动滚动，让长布局也能拖到屏幕外
         const edge = 64;
-        if (ev.clientY < edge) window.scrollBy(0, -16);
-        else if (ev.clientY > window.innerHeight - edge) window.scrollBy(0, 16);
+        const sc = getScrollContainer?.() ?? null;
+        if (sc) {
+          const scRect = sc.getBoundingClientRect();
+          if (ev.clientY < scRect.top + edge) sc.scrollBy(0, -16);
+          else if (ev.clientY > scRect.bottom - edge) sc.scrollBy(0, 16);
+        } else if (ev.clientY < edge) {
+          window.scrollBy(0, -16);
+        } else if (ev.clientY > window.innerHeight - edge) {
+          window.scrollBy(0, 16);
+        }
       }
 
       function onUp(ev: PointerEvent) {
@@ -302,7 +333,7 @@ export function useGridInteraction({
       window.addEventListener("blur", onBlur);
       captureTarget.addEventListener("lostpointercapture", onLostCapture);
     },
-    [getLayout, gridRef, onCommit, onPreview],
+    [contentPoint, getLayout, getMetrics, getScrollContainer, gridRef, onCommit, onPreview],
   );
 
   const isInteracting = useCallback(() => sessionRef.current !== null, []);

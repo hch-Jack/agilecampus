@@ -35,7 +35,7 @@ export function ResourceForm({
       <div className="flex items-center justify-between">
         <h2 className="font-display text-base font-semibold text-ink">登记资源占用</h2>
         <span className="text-xs text-ink-faint">
-          {needsApproval ? "学生登记 · 待老师/管理员审批" : "登记后立即生效"}
+          {needsApproval ? "无审核权 · 登记后待审批" : "你有审核权 · 登记后立即生效"}
         </span>
       </div>
 
