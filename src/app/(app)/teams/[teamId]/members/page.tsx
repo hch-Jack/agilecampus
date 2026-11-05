@@ -4,8 +4,8 @@ import { notFound, redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { teamMembers, teams, users } from "@/db/schema";
-import { getTeamMembership, teamContentCounts } from "@/lib/team";
-import { LeaveTeamForm, MemberRow } from "./member-forms";
+import { getTeamMembership } from "@/lib/team";
+import { MemberRow } from "./member-forms";
 
 export default async function MembersPage({
   params,
@@ -41,17 +41,6 @@ export default async function MembersPage({
     .where(eq(teamMembers.teamId, teamId));
 
   const isAdmin = me.role === "admin";
-  const adminCount = members.filter((m) => m.role === "admin").length;
-  // 只剩自己 → 退出即解散（与 lib 层 leaveTeam 的判定口径一致）
-  const willDissolve = members.length === 1;
-  // 唯一管理员且团里还有别人 → 必须先指定接任者
-  const needsSuccessor = isAdmin && adminCount === 1 && !willDissolve;
-  const candidates = members
-    .filter((m) => m.userId !== session.user.id)
-    .map((m) => ({ userId: m.userId, name: m.name }));
-
-  // 「退出即解散」的确认框要说清会删掉什么；只有这一种形态需要，才查
-  const counts = willDissolve ? await teamContentCounts(teamId) : undefined;
 
   return (
     <main className="mx-auto max-w-2xl space-y-6 py-8">
@@ -67,14 +56,6 @@ export default async function MembersPage({
           />
         ))}
       </ul>
-      <LeaveTeamForm
-        teamId={teamId}
-        teamName={team.name}
-        willDissolve={willDissolve}
-        needsSuccessor={needsSuccessor}
-        candidates={candidates}
-        counts={counts}
-      />
     </main>
   );
 }
