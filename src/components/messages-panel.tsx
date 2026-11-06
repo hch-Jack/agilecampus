@@ -16,6 +16,7 @@ import {
   MESSAGES_PANEL_OPEN_EVENT,
 } from "@/lib/right-panels";
 import { MessagesPanelContext, useMessagesPanel, type MessagesMode } from "./messages-panel-context";
+import { setRightPanelOpen } from "./right-panel-push";
 
 /**
  * 消息系统的**固定模式**（整页 ⇄ 右侧浮窗）与浮窗本体。
@@ -28,7 +29,8 @@ import { MessagesPanelContext, useMessagesPanel, type MessagesMode } from "./mes
  *   弹回上一个页面（兜底工作台）并开浮窗，整页不让出现
  *
  * 浮窗布局口径与 AI 助手面板（assistant-shell.tsx）完全一致：桌面端挤压正文
- * （`lg:pr-[570px]`）、移动端覆盖 + 遮罩，抽屉同宽（`lg:w-[570px]`）；
+ * （由 right-panel-push.tsx 统一加 `lg:pr-[570px]`，两面板共用一层，切换不抖）、
+ * 移动端覆盖 + 遮罩，抽屉同宽（`lg:w-[570px]`）；
  * aside 复用 `assistant-panel` 类拿宇宙主题深色玻璃与减弱动态偏好。
  * 与助手的互斥靠 window 事件（见 lib/right-panels.ts），两边互不 import。
  *
@@ -126,6 +128,12 @@ export function MessagesPanelShell({
   useEffect(() => {
     if (open) window.dispatchEvent(new Event(MESSAGES_PANEL_OPEN_EVENT));
   }, [open]);
+
+  // 正文挤压交给 RightPanelPush 统一算：和助手互斥且同宽，切换时正文不挪位
+  useEffect(() => {
+    setRightPanelOpen("messages", visible);
+  }, [visible]);
+  useEffect(() => () => setRightPanelOpen("messages", false), []);
   useEffect(() => {
     const close = () => closePanel();
     window.addEventListener(ASSISTANT_PANEL_OPEN_EVENT, close);
@@ -206,14 +214,7 @@ export function MessagesPanelShell({
 
   return (
     <MessagesPanelContext.Provider value={{ mode, open, openMessages, toggleDrawer, switchMode }}>
-      {/* 桌面端挤压正文：与助手的 assistant-shell-push 同款；互斥保证不会同时挤压 */}
-      <div
-        className={`min-h-screen transition-[padding] duration-300 ease-out ${
-          visible ? "lg:pr-[570px]" : ""
-        }`}
-      >
-        {children}
-      </div>
+      {children}
 
       {/* 移动端遮罩；桌面端正文已被挤开，不需要 */}
       {visible && (
@@ -233,7 +234,9 @@ export function MessagesPanelShell({
           visible ? "translate-x-0" : "translate-x-full"
         }`}
       >
-        <div className="flex min-h-0 flex-1 flex-col p-4 lg:px-5">
+        {/* 不加内边距：浮窗里是左右两栏的界面，左栏要贴着抽屉左边框、
+            头部条要贴着上边框，留白交给各栏自己控制（页头 px-3、列表 p-3）。 */}
+        <div className="flex min-h-0 flex-1 flex-col">
           {renderContent && <MessagesClient timeZone={timeZone} variant="panel" />}
         </div>
       </aside>
