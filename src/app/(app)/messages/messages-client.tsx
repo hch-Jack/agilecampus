@@ -1069,8 +1069,50 @@ export function MessagesClient({
           }}
         />
       )}
+      {variant === "panel" ? (
+        // 浮窗自己的头部条：左「消息」，右侧模式切换与关闭。
+        // 以前这里只有一枚靠右的「切换为整页」，独占一行、左边全空，
+        // 抽屉顶部于是空出两条留白；现在头部条贴住抽屉上沿，两栏内容顶到边。
+        <header className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2">
+          <span
+            aria-hidden
+            className="grid h-7 w-7 place-items-center rounded-full bg-primary-soft text-sm"
+          >
+            💬
+          </span>
+          <span className="text-sm font-semibold text-ink">消息</span>
+          {modeToggle && <div className="ml-auto flex items-center gap-1">{modeToggle}</div>}
+          {panel && (
+            <button
+              type="button"
+              onClick={() => panel.toggleDrawer()}
+              aria-label="关闭消息浮窗"
+              title="关闭"
+              className="grid h-8 w-8 place-items-center rounded-field text-ink-faint transition-colors hover:bg-sunken hover:text-ink"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                aria-hidden
+              >
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
+          )}
+        </header>
+      ) : (
+        modeToggle && <div className="mb-2 flex justify-end">{modeToggle}</div>
+      )}
       {notice && (
-        <div className="mb-2 flex items-center justify-between rounded-field border border-line bg-sunken px-3 py-1.5 text-xs text-ink-soft">
+        <div
+          className={`flex items-center justify-between rounded-field border border-line bg-sunken px-3 py-1.5 text-xs text-ink-soft ${
+            variant === "panel" ? "mx-3 mt-2" : "mb-2"
+          }`}
+        >
           <span>{notice}</span>
           <button
             type="button"
@@ -1082,7 +1124,6 @@ export function MessagesClient({
           </button>
         </div>
       )}
-      {modeToggle && <div className="mb-2 flex justify-end">{modeToggle}</div>}
       <div
         className={
           variant === "panel"
