@@ -122,6 +122,86 @@ describe("助手生成文件：按扩展名编码", () => {
     expect((xml.match(/<w:br w:type="page"\/>/g) || []).length).toBeGreaterThanOrEqual(2);
   });
 
+  it("结构化稿件能用横幅/卡片/时间线/进度条，并指定正文字体与标题字体", async () => {
+    const out = await generateFile({
+      filename: "丰富排版.docx",
+      document: {
+        title: "丰富排版",
+        font: "simsun",
+        headingFont: "kaiti",
+        blocks: [
+          { type: "banner", text: "第一部分 项目进展", subtitle: "截至 11 月" },
+          {
+            type: "cards",
+            title: "三大重点",
+            items: [
+              { title: "进度", text: "按期推进" },
+              { title: "质量", text: "回归全绿" },
+            ],
+          },
+          {
+            type: "timeline",
+            title: "路线",
+            items: [
+              { marker: "3 月", title: "立项", text: "确定范围" },
+              { marker: "6 月", title: "中期", text: "完成联调" },
+            ],
+          },
+          {
+            type: "progress",
+            title: "完成度",
+            items: [
+              { label: "前端", value: 80 },
+              { label: "后端", value: 45 },
+            ],
+          },
+        ],
+      },
+    });
+    const zip = await JSZip.loadAsync(out.data);
+    // 字体写在样式表里：正文宋体、标题楷体
+    const styles = await zip.file("word/styles.xml")!.async("string");
+    expect(styles).toContain("SimSun");
+    expect(styles).toContain("KaiTi");
+    const text = (
+      (await extractFileText({
+        filename: out.filename,
+        mimeType: out.mimeType,
+        data: out.data,
+      })) as { text: string }
+    ).text;
+    expect(text).toContain("第一部分 项目进展");
+    expect(text).toContain("三大重点");
+    expect(text).toContain("确定范围");
+    expect(text).toContain("80%");
+  });
+
+  it("PDF 也能排横幅、卡片、时间线与进度条（同一份稿件不掉内容）", async () => {
+    const out = await generateFile({
+      filename: "丰富排版.pdf",
+      document: {
+        title: "丰富排版",
+        blocks: [
+          { type: "banner", text: "项目进展", subtitle: "截至 11 月" },
+          {
+            type: "cards",
+            items: [
+              { title: "进度", text: "按期推进" },
+              { title: "质量", text: "回归全绿" },
+            ],
+          },
+          {
+            type: "timeline",
+            items: [{ marker: "3 月", title: "立项" }, { marker: "6 月", title: "中期" }],
+          },
+          { type: "progress", items: [{ label: "前端", value: 80 }] },
+        ],
+      },
+    });
+    expect(out.data.subarray(0, 5).toString("latin1")).toBe("%PDF-");
+    expect(out.data.length).toBeGreaterThan(1000);
+  });
+
   it("生成 PDF：返回真正的 PDF 字节，中文不会炸", async () => {
     const out = await generateFile({
       filename: "结题报告.pdf",
@@ -186,6 +266,70 @@ describe("助手生成文件：按扩展名编码", () => {
       .filter((part) => !parts.has(part));
     // pptxgenjs 会为每张幻灯片多声明一份 slideMasterN.xml；不修掉预览器会 0 页
     expect(dangling).toEqual([]);
+  });
+
+  it("PPT 支持卡片组 / 时间线 / 左右对比 / 原生图表，并可用自定义字体", async () => {
+    const out = await generateFile({
+      filename: "丰富版式.pptx",
+      slides: {
+        title: "丰富版式",
+        font: "dengxian",
+        headingFont: "simhei",
+        slides: [
+          { layout: "title", title: "丰富版式" },
+          {
+            layout: "cards",
+            title: "三大重点",
+            cards: [
+              { title: "进度", text: "按期推进" },
+              { title: "质量", text: "回归全绿" },
+              { title: "协作", text: "每周同步" },
+            ],
+          },
+          {
+            layout: "timeline",
+            title: "路线",
+            timeline: [
+              { marker: "3 月", title: "立项", text: "确定范围" },
+              { marker: "6 月", title: "中期", text: "完成联调" },
+              { marker: "9 月", title: "验收", text: "结题答辩" },
+            ],
+          },
+          {
+            layout: "comparison",
+            title: "现状与目标",
+            comparison: {
+              left: { title: "现状", bullets: ["手工统计"] },
+              right: { title: "目标", bullets: ["自动汇总"] },
+            },
+          },
+          {
+            layout: "chart",
+            title: "月度完成",
+            chart: {
+              kind: "bar",
+              categories: ["一月", "二月"],
+              series: [{ name: "完成数", values: [3, 5] }],
+            },
+          },
+          { layout: "closing", title: "谢谢" },
+        ],
+      },
+    });
+    const zip = await JSZip.loadAsync(out.data);
+    const slides = Object.keys(zip.files).filter((name) =>
+      /^ppt\/slides\/slide\d+\.xml$/.test(name),
+    );
+    expect(slides).toHaveLength(6);
+    // 图表是原生的图表部件，不是贴图
+    const chartName = Object.keys(zip.files).find((name) => /^ppt\/charts\/chart\d+\.xml$/.test(name));
+    expect(chartName).toBeTruthy();
+    const chart = await zip.file(chartName!)!.async("string");
+    expect(chart).toContain("一月");
+    const cardSlide = await zip.file("ppt/slides/slide2.xml")!.async("string");
+    expect(cardSlide).toContain("三大重点");
+    const timelineSlide = await zip.file("ppt/slides/slide3.xml")!.async("string");
+    expect(timelineSlide).toContain("确定范围");
   });
 
   it("只给正文也能生成 PPT（按标题拆页）", async () => {

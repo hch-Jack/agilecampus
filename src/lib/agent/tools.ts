@@ -679,9 +679,12 @@ function buildBasePersonalTools(actorId: string) {
       description:
         "生成一个文件并立刻提供下载（同时出现在回复下方）。" +
         `支持：${GENERATE_SUPPORTED_LABEL}。\n` +
-        "排版建议：docx/pdf 优先用 document 给结构化稿件（标题、章节、段落、列表、表格、引用、代码、标注、数据卡），" +
-        "会得到带版式的正式文档；只给 content 时按 Markdown 解析。\n" +
-        "pptx 用 slides 描述每一页（封面/章节/要点/表格/引用/数据卡/结束页）；只给 content 时按标题自动拆页。\n" +
+        "排版建议：docx/pdf 优先用 document 给结构化稿件（标题、章节、段落、列表、表格、引用、代码、标注、数据卡、" +
+        "横幅 banner、卡片组 cards、时间线 timeline、进度条 progress），" +
+        "可用 font / headingFont 指定字体 id（yahei/dengxian/simhei/simsun/kaiti/fangsong/arial/calibri/times/georgia）；" +
+        "只给 content 时按 Markdown 解析。\n" +
+        "pptx 用 slides 描述每一页（封面/章节/要点/表格/引用/数据卡/卡片组 cards/时间线 timeline/左右对比 comparison/图表 chart/结束页）；" +
+        "图表在 chart 里给 kind（bar/line/pie/doughnut）+ categories + series；只给 content 时按标题自动拆页。\n" +
         "xlsx 用 sheets 描述多个工作表；也可在 content 里写 CSV（第一行表头）。\n" +
         "文本类格式（md/txt/csv/json/html 等）把正文放在 content。\n" +
         `内容上限 ${GENERATE_MAX_CHARS} 字符。` +

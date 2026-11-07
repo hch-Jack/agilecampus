@@ -25,10 +25,10 @@ import { xlsxFromCsv, xlsxFromSheets } from "./xlsx-generate";
  * 模型给文件名 + 内容，这里按扩展名编码成真实文件：
  * - 文本类（txt/md/csv/json/html/xml/svg/代码…）：UTF-8 原样写入；
  * - xlsx：`sheets` 结构（多工作表、列宽自适应）或 CSV 正文；
- * - docx / pdf：`document` 结构化稿件（标题、章节、列表、表格、引用、代码、分页…），
- *   只给纯文本时用 Markdown 风格解析兜底；
- * - pptx：`slides` 结构化幻灯片（封面/章节/要点/表格/引用/数据卡/结束页），
- *   只给纯文本时按标题与段落自动拆页。
+ * - docx / pdf：`document` 结构化稿件（标题、章节、列表、表格、引用、代码、横幅、卡片组、
+ *   时间线、进度条、分页…），还可用 font / headingFont 选字体；只给纯文本时用 Markdown 解析兜底；
+ * - pptx：`slides` 结构化幻灯片（封面/章节/要点/表格/引用/数据卡/卡片组/时间线/左右对比/
+ *   原生图表/结束页），只给纯文本时按标题与段落自动拆页。
  *
  * PDF 与 PPT 是**原生生成**：PDF 用 pdf-lib 排版并嵌入中文字体子集，
  * PPT 用 pptxgenjs 生成可编辑的文本框与表格 —— 都不是把网页截成图片。

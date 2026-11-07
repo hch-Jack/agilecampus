@@ -97,6 +97,46 @@ export function resolveTheme(name?: string | null): DocTheme {
   return DOC_THEMES.business;
 }
 
+// —— 字体 ——
+
+/**
+ * 可选字体（Word / PPT 用）。这里只能是「目标机器上大概率已装」的常见字体：
+ * 文档里写的是字体名，没装的话 Word/WPS 会回退，排版才不至于崩。
+ * PDF 走内嵌 Noto Sans Hans，不受这里影响。
+ */
+export const DOC_FONT_NAMES = [
+  "yahei",
+  "dengxian",
+  "simhei",
+  "simsun",
+  "kaiti",
+  "fangsong",
+  "arial",
+  "calibri",
+  "times",
+  "georgia",
+] as const;
+export type DocFontName = (typeof DOC_FONT_NAMES)[number];
+
+export const DOC_FONTS: Record<DocFontName, { label: string; family: string }> = {
+  yahei: { label: "微软雅黑", family: "Microsoft YaHei" },
+  dengxian: { label: "等线", family: "DengXian" },
+  simhei: { label: "黑体", family: "SimHei" },
+  simsun: { label: "宋体", family: "SimSun" },
+  kaiti: { label: "楷体", family: "KaiTi" },
+  fangsong: { label: "仿宋", family: "FangSong" },
+  arial: { label: "Arial", family: "Arial" },
+  calibri: { label: "Calibri", family: "Calibri" },
+  times: { label: "Times New Roman", family: "Times New Roman" },
+  georgia: { label: "Georgia", family: "Georgia" },
+};
+
+/** 字体 id → 实际字体族名；不认识的 id 回落到主题默认 */
+export function resolveFontFamily(name: string | null | undefined, fallback: string): string {
+  if (name && name in DOC_FONTS) return DOC_FONTS[name as DocFontName].family;
+  return fallback;
+}
+
 // —— 上限（模型给的稿子不可信，生成前一律夹紧） ——
 
 export const DOC_MAX_BLOCKS = 300;
@@ -175,6 +215,56 @@ const statsSchema = z.object({
     .max(4),
 });
 
+const bannerSchema = z.object({
+  type: z.literal("banner"),
+  text: z.string().min(1).max(200).describe("横幅主文案，如「第一部分 项目进展」"),
+  subtitle: z.string().max(300).optional(),
+});
+
+const cardsSchema = z.object({
+  type: z.literal("cards"),
+  title: z.string().max(200).optional(),
+  items: z
+    .array(
+      z.object({
+        title: z.string().min(1).max(80),
+        text: z.string().min(1).max(800),
+      }),
+    )
+    .min(2)
+    .max(4)
+    .describe("2–4 张并排的卡片，每张一个短标题 + 一段说明"),
+});
+
+const timelineSchema = z.object({
+  type: z.literal("timeline"),
+  title: z.string().max(200).optional(),
+  items: z
+    .array(
+      z.object({
+        marker: z.string().min(1).max(40).describe("时间点 / 阶段名，如 3 月、里程碑一"),
+        title: z.string().max(80).optional(),
+        text: z.string().max(500).optional(),
+      }),
+    )
+    .min(2)
+    .max(12),
+});
+
+const progressSchema = z.object({
+  type: z.literal("progress"),
+  title: z.string().max(200).optional(),
+  items: z
+    .array(
+      z.object({
+        label: z.string().min(1).max(80),
+        value: z.number().min(0).max(100).describe("完成度百分比 0–100"),
+      }),
+    )
+    .min(1)
+    .max(10),
+});
+
 export const docBlockSchema = z.discriminatedUnion("type", [
   headingSchema,
   paragraphSchema,
@@ -186,6 +276,10 @@ export const docBlockSchema = z.discriminatedUnion("type", [
   pageBreakSchema,
   calloutSchema,
   statsSchema,
+  bannerSchema,
+  cardsSchema,
+  timelineSchema,
+  progressSchema,
 ]);
 
 export type DocBlock = z.infer<typeof docBlockSchema>;
@@ -196,6 +290,11 @@ export const documentSpecSchema = z.object({
   author: z.string().max(120).optional().describe("作者或团队"),
   date: z.string().max(60).optional().describe("日期文案，如 2026-11-08"),
   theme: z.enum(DOC_THEME_NAMES).optional().describe("配色主题，默认 business"),
+  font: z
+    .enum(DOC_FONT_NAMES)
+    .optional()
+    .describe("正文字体，见字体 id（yahei/dengxian/simhei/simsun/kaiti/fangsong/arial/calibri/times/georgia），默认微软雅黑"),
+  headingFont: z.enum(DOC_FONT_NAMES).optional().describe("标题字体，默认与正文字体相同"),
   blocks: z.array(docBlockSchema).min(1).max(DOC_MAX_BLOCKS),
 });
 
@@ -203,12 +302,53 @@ export type DocumentSpec = z.infer<typeof documentSpecSchema>;
 
 // —— 幻灯片 ——
 
+export const slideCardSchema = z.object({
+  title: z.string().min(1).max(80),
+  text: z.string().min(1).max(400),
+});
+
+export const slideTimelineItemSchema = z.object({
+  marker: z.string().min(1).max(40),
+  title: z.string().max(80).optional(),
+  text: z.string().max(300).optional(),
+});
+
+export const slideChartSchema = z.object({
+  kind: z
+    .enum(["bar", "line", "pie", "doughnut"])
+    .default("bar")
+    .describe("图表类型，默认柱状图"),
+  categories: z.array(z.string().max(60)).min(1).max(12).describe("横轴 / 扇区标签"),
+  series: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(60),
+        values: z.array(z.number()).min(1).max(12),
+      }),
+    )
+    .min(1)
+    .max(4)
+    .describe("数据系列；饼图只用第一个系列"),
+});
+
 export const slideSpecSchema = z.object({
   layout: z
-    .enum(["title", "section", "bullets", "table", "quote", "stats", "closing"])
+    .enum([
+      "title",
+      "section",
+      "bullets",
+      "table",
+      "quote",
+      "stats",
+      "closing",
+      "cards",
+      "timeline",
+      "comparison",
+      "chart",
+    ])
     .optional()
     .describe(
-      "版式：title=封面，section=章节页，bullets=要点页（默认），table=表格页，quote=大字引用，stats=数据卡片，closing=结束页",
+      "版式：title=封面，section=章节页，bullets=要点页（默认），table=表格页，quote=大字引用，stats=数据卡片，cards=2–4 张卡片，timeline=时间线，comparison=左右对比，chart=图表，closing=结束页",
     ),
   title: z.string().max(200).optional(),
   subtitle: z.string().max(400).optional().describe("仅 title / section 页使用"),
@@ -237,6 +377,27 @@ export const slideSpecSchema = z.object({
     .min(1)
     .max(4)
     .optional(),
+  cards: z.array(slideCardSchema).min(2).max(4).optional().describe("cards 版式：并排卡片"),
+  timeline: z
+    .array(slideTimelineItemSchema)
+    .min(2)
+    .max(8)
+    .optional()
+    .describe("timeline 版式：时间线节点"),
+  comparison: z
+    .object({
+      left: z.object({
+        title: z.string().min(1).max(60),
+        bullets: z.array(z.string().max(200)).max(6),
+      }),
+      right: z.object({
+        title: z.string().min(1).max(60),
+        bullets: z.array(z.string().max(200)).max(6),
+      }),
+    })
+    .optional()
+    .describe("comparison 版式：左右两栏对比"),
+  chart: slideChartSchema.optional(),
   notes: z.string().max(2_000).optional().describe("演讲者备注"),
 });
 
@@ -248,6 +409,11 @@ export const presentationSpecSchema = z.object({
   author: z.string().max(120).optional(),
   date: z.string().max(60).optional(),
   theme: z.enum(DOC_THEME_NAMES).optional(),
+  font: z
+    .enum(DOC_FONT_NAMES)
+    .optional()
+    .describe("正文字体 id，默认微软雅黑"),
+  headingFont: z.enum(DOC_FONT_NAMES).optional().describe("标题字体 id，默认与正文字体相同"),
   slides: z.array(slideSpecSchema).min(1).max(DOC_MAX_SLIDES),
 });
 
@@ -369,6 +535,66 @@ export function normalizeDocument(input: DocumentSpec): DocumentSpec {
         if (items.length > 0) blocks.push({ type: "stats", items });
         break;
       }
+      case "banner": {
+        const text = clip(block.text, 200);
+        if (text) {
+          blocks.push({
+            type: "banner",
+            text,
+            ...(block.subtitle ? { subtitle: clip(block.subtitle, 300) } : {}),
+          });
+        }
+        break;
+      }
+      case "cards": {
+        const items = block.items
+          .map((i) => ({ title: clip(i.title, 80), text: clip(i.text, 800) }))
+          .filter((i) => i.title && i.text)
+          .slice(0, 4);
+        if (items.length > 0) {
+          blocks.push({
+            type: "cards",
+            ...(block.title ? { title: clip(block.title, 200) } : {}),
+            items,
+          });
+        }
+        break;
+      }
+      case "timeline": {
+        const items = block.items
+          .map((i) => ({
+            marker: clip(i.marker, 40),
+            ...(i.title ? { title: clip(i.title, 80) } : {}),
+            ...(i.text ? { text: clip(i.text, 500) } : {}),
+          }))
+          .filter((i) => i.marker)
+          .slice(0, 12);
+        if (items.length > 0) {
+          blocks.push({
+            type: "timeline",
+            ...(block.title ? { title: clip(block.title, 200) } : {}),
+            items,
+          });
+        }
+        break;
+      }
+      case "progress": {
+        const items = block.items
+          .map((i) => ({
+            label: clip(i.label, 80),
+            value: Math.max(0, Math.min(100, Math.round(i.value))),
+          }))
+          .filter((i) => i.label)
+          .slice(0, 10);
+        if (items.length > 0) {
+          blocks.push({
+            type: "progress",
+            ...(block.title ? { title: clip(block.title, 200) } : {}),
+            items,
+          });
+        }
+        break;
+      }
     }
   }
   if (blocks.length === 0) {
@@ -380,6 +606,8 @@ export function normalizeDocument(input: DocumentSpec): DocumentSpec {
     ...(input.author ? { author: clip(input.author, 120) } : {}),
     ...(input.date ? { date: clip(input.date, 60) } : {}),
     ...(input.theme ? { theme: input.theme } : {}),
+    ...(input.font ? { font: input.font } : {}),
+    ...(input.headingFont ? { headingFont: input.headingFont } : {}),
     blocks,
   };
 }
@@ -418,6 +646,52 @@ export function normalizePresentation(input: PresentationSpec): PresentationSpec
         .slice(0, 4);
       if (stats.length > 0) next.stats = stats;
     }
+    if (slide.cards) {
+      const cards = slide.cards
+        .map((c) => ({ title: clip(c.title, 80), text: clip(c.text, 400) }))
+        .filter((c) => c.title && c.text)
+        .slice(0, 4);
+      if (cards.length > 0) next.cards = cards;
+    }
+    if (slide.timeline) {
+      const timeline = slide.timeline
+        .map((t) => ({
+          marker: clip(t.marker, 40),
+          ...(t.title ? { title: clip(t.title, 80) } : {}),
+          ...(t.text ? { text: clip(t.text, 300) } : {}),
+        }))
+        .filter((t) => t.marker)
+        .slice(0, 8);
+      if (timeline.length > 0) next.timeline = timeline;
+    }
+    if (slide.comparison) {
+      const side = (s: { title: string; bullets: string[] }) => ({
+        title: clip(s.title, 60),
+        bullets: s.bullets.map((b) => clip(b, 200)).filter(Boolean).slice(0, 6),
+      });
+      const left = side(slide.comparison.left);
+      const right = side(slide.comparison.right);
+      if (left.title && right.title) next.comparison = { left, right };
+    }
+    if (slide.chart) {
+      const categories = slide.chart.categories
+        .map((c) => clip(c, 60))
+        .filter(Boolean)
+        .slice(0, 12);
+      const series = slide.chart.series
+        .map((s) => ({
+          name: clip(s.name, 60) || "系列",
+          values: s.values
+            .filter((v) => Number.isFinite(v))
+            .slice(0, 12)
+            .map((v) => Math.round(v * 100) / 100),
+        }))
+        .filter((s) => s.values.length > 0)
+        .slice(0, 4);
+      if (categories.length > 0 && series.length > 0) {
+        next.chart = { kind: slide.chart.kind ?? "bar", categories, series };
+      }
+    }
     // 没有任何可视内容的页直接丢掉（备注页/空页）
     if (
       !next.title &&
@@ -425,7 +699,11 @@ export function normalizePresentation(input: PresentationSpec): PresentationSpec
       !next.bullets &&
       !next.table &&
       !next.quote &&
-      !next.stats
+      !next.stats &&
+      !next.cards &&
+      !next.timeline &&
+      !next.comparison &&
+      !next.chart
     ) {
       continue;
     }
@@ -438,6 +716,8 @@ export function normalizePresentation(input: PresentationSpec): PresentationSpec
     ...(input.author ? { author: clip(input.author, 120) } : {}),
     ...(input.date ? { date: clip(input.date, 60) } : {}),
     ...(input.theme ? { theme: input.theme } : {}),
+    ...(input.font ? { font: input.font } : {}),
+    ...(input.headingFont ? { headingFont: input.headingFont } : {}),
     slides,
   };
 }
@@ -721,6 +1001,24 @@ export function documentCharCount(spec: DocumentSpec): number {
         break;
       case "stats":
         total += block.items.reduce((n, i) => n + i.label.length + i.value.length, 0);
+        break;
+      case "banner":
+        total += block.text.length + (block.subtitle?.length ?? 0);
+        break;
+      case "cards":
+        total += (block.title?.length ?? 0);
+        total += block.items.reduce((n, i) => n + i.title.length + i.text.length, 0);
+        break;
+      case "timeline":
+        total += (block.title?.length ?? 0);
+        total += block.items.reduce(
+          (n, i) => n + i.marker.length + (i.title?.length ?? 0) + (i.text?.length ?? 0),
+          0,
+        );
+        break;
+      case "progress":
+        total += (block.title?.length ?? 0);
+        total += block.items.reduce((n, i) => n + i.label.length, 0);
         break;
       default:
         break;

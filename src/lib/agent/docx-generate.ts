@@ -17,6 +17,7 @@ import {
   WidthType,
 } from "docx";
 import {
+  resolveFontFamily,
   resolveTheme,
   type DocBlock,
   type DocTheme,
@@ -78,6 +79,25 @@ function estimateLines(block: DocBlock): number {
       return textLines(block.text) + (block.title ? 1 : 0) + 0.6;
     case "stats":
       return 3.5;
+    case "banner":
+      return 3.2 + (block.subtitle ? 1.2 : 0);
+    case "cards": {
+      // 每张卡只有版心的 1/cols 宽，同样的文字行数要乘以列数
+      const cols = block.items.length;
+      const lines = Math.max(
+        ...block.items.map(
+          (item) => textLines(item.title) * cols + textLines(item.text) * cols,
+        ),
+      );
+      return Math.min(lines, PAGE_LINES - 6) + (block.title ? 1.6 : 0) + 1.6;
+    }
+    case "timeline":
+      return (
+        (block.title ? 1.6 : 0) +
+        block.items.reduce((sum, item) => sum + textLines(item.text ?? item.title ?? "") + 1.4, 0)
+      );
+    case "progress":
+      return (block.title ? 1.4 : 0) + block.items.length * 1.1 + 0.6;
     case "divider":
       return 1;
     case "pageBreak":
@@ -95,8 +115,8 @@ function quoteBorders(theme: DocTheme) {
   };
 }
 
-function buildStyles(theme: DocTheme) {
-  const font = theme.font;
+function buildStyles(theme: DocTheme, bodyFont: string, headingFont: string) {
+  const font = bodyFont;
   return {
     default: {
       document: {
@@ -111,7 +131,7 @@ function buildStyles(theme: DocTheme) {
         basedOn: "Normal",
         next: "Normal",
         quickFormat: true,
-        run: { font, size: 44, bold: true, color: hex(theme.primary) },
+        run: { font: headingFont, size: 44, bold: true, color: hex(theme.primary) },
         paragraph: {
           spacing: { before: 120, after: 80, line: 280 },
           border: {
@@ -129,7 +149,7 @@ function buildStyles(theme: DocTheme) {
         name: "Doc Subtitle",
         basedOn: "Normal",
         next: "Normal",
-        run: { font, size: 23, color: hex(theme.muted) },
+        run: { font: headingFont, size: 23, color: hex(theme.muted) },
         paragraph: { spacing: { after: 80, line: 300 } },
       },
       {
@@ -146,7 +166,7 @@ function buildStyles(theme: DocTheme) {
         basedOn: "Normal",
         next: "Normal",
         quickFormat: true,
-        run: { font, size: 32, bold: true, color: hex(theme.primary) },
+        run: { font: headingFont, size: 32, bold: true, color: hex(theme.primary) },
         paragraph: {
           spacing: { before: 360, after: 140, line: 300 },
           border: {
@@ -165,7 +185,7 @@ function buildStyles(theme: DocTheme) {
         basedOn: "Normal",
         next: "Normal",
         quickFormat: true,
-        run: { font, size: 26, bold: true, color: hex(theme.ink) },
+        run: { font: headingFont, size: 26, bold: true, color: hex(theme.ink) },
         paragraph: { spacing: { before: 280, after: 90, line: 300 } },
       },
       {
@@ -174,7 +194,7 @@ function buildStyles(theme: DocTheme) {
         basedOn: "Normal",
         next: "Normal",
         quickFormat: true,
-        run: { font, size: 22, bold: true, color: hex(theme.primary) },
+        run: { font: headingFont, size: 22, bold: true, color: hex(theme.primary) },
         paragraph: { spacing: { before: 200, after: 70, line: 300 } },
       },
       {
@@ -380,6 +400,195 @@ function statsTable(block: Extract<DocBlock, { type: "stats" }>, theme: DocTheme
   });
 }
 
+const NO_BORDERS = {
+  top: { style: BorderStyle.NONE, size: 0, color: "auto" },
+  bottom: { style: BorderStyle.NONE, size: 0, color: "auto" },
+  left: { style: BorderStyle.NONE, size: 0, color: "auto" },
+  right: { style: BorderStyle.NONE, size: 0, color: "auto" },
+} as const;
+
+/** 横幅：整行深色底 + 大字，用作章节分隔 / 重点提示 */
+function bannerTable(block: Extract<DocBlock, { type: "banner" }>, theme: DocTheme): Table {
+  const children: Paragraph[] = [
+    new Paragraph({
+      spacing: { after: block.subtitle ? 80 : 0, line: 300 },
+      children: [
+        new TextRun({ text: block.text, bold: true, size: 32, color: hex(theme.onPrimary) }),
+      ],
+    }),
+  ];
+  if (block.subtitle) {
+    children.push(
+      new Paragraph({
+        spacing: { after: 0, line: 300 },
+        children: [
+          new TextRun({ text: block.subtitle, size: 20, color: hex(theme.soft) }),
+        ],
+      }),
+    );
+  }
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    layout: TableLayoutType.FIXED,
+    columnWidths: [CONTENT_TWIPS],
+    borders: NO_BORDERS,
+    rows: [
+      new TableRow({
+        children: [
+          new TableCell({
+            shading: { type: ShadingType.CLEAR, color: "auto", fill: hex(theme.primary) },
+            margins: { top: 220, bottom: 220, left: 260, right: 260 },
+            children,
+          }),
+        ],
+      }),
+    ],
+  });
+}
+
+/** 卡片组：2–4 张并排的浅底卡片（短标题 + 说明） */
+function cardsTable(block: Extract<DocBlock, { type: "cards" }>, theme: DocTheme): Table {
+  const count = block.items.length;
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    layout: TableLayoutType.FIXED,
+    columnWidths: block.items.map(() => Math.round(CONTENT_TWIPS / count)),
+    borders: NO_BORDERS,
+    rows: [
+      new TableRow({
+        children: block.items.map(
+          (item, index) =>
+            new TableCell({
+              shading: { type: ShadingType.CLEAR, color: "auto", fill: hex(theme.soft) },
+              margins: { top: 160, bottom: 160, left: 180, right: 180 },
+              // 用「白色内边框」撑出卡片之间的间隙
+              borders:
+                index === 0
+                  ? NO_BORDERS
+                  : { ...NO_BORDERS, left: { style: BorderStyle.SINGLE, size: 24, color: "FFFFFF" } },
+              children: [
+                new Paragraph({
+                  spacing: { after: 60, line: 280 },
+                  children: [
+                    new TextRun({
+                      text: item.title,
+                      bold: true,
+                      size: 21,
+                      color: hex(theme.primary),
+                    }),
+                  ],
+                }),
+                new Paragraph({
+                  spacing: { after: 0, line: 300 },
+                  children: [new TextRun({ text: item.text, size: 18, color: hex(theme.ink) })],
+                }),
+              ],
+            }),
+        ),
+      }),
+    ],
+  });
+}
+
+/** 时间线：左侧时间点标签 + 右侧内容，靠主色左条串成一条线 */
+function timelineTable(block: Extract<DocBlock, { type: "timeline" }>, theme: DocTheme): Table {
+  const markerWidth = Math.round(CONTENT_TWIPS * 0.2);
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    layout: TableLayoutType.FIXED,
+    columnWidths: [markerWidth, CONTENT_TWIPS - markerWidth],
+    borders: NO_BORDERS,
+    rows: block.items.map(
+      (item) =>
+        new TableRow({
+          children: [
+            new TableCell({
+              shading: { type: ShadingType.CLEAR, color: "auto", fill: hex(theme.soft) },
+              margins: { top: 120, bottom: 120, left: 160, right: 160 },
+              borders: {
+                ...NO_BORDERS,
+                left: { style: BorderStyle.SINGLE, size: 24, color: hex(theme.accent) },
+                bottom: { style: BorderStyle.SINGLE, size: 24, color: "FFFFFF" },
+              },
+              children: [
+                new Paragraph({
+                  spacing: { after: 0, line: 260 },
+                  children: [
+                    new TextRun({
+                      text: item.marker,
+                      bold: true,
+                      size: 19,
+                      color: hex(theme.primary),
+                    }),
+                  ],
+                }),
+              ],
+            }),
+            new TableCell({
+              margins: { top: 120, bottom: 120, left: 200, right: 120 },
+              borders: {
+                ...NO_BORDERS,
+                bottom: { style: BorderStyle.SINGLE, size: 24, color: "FFFFFF" },
+              },
+              children: [
+                ...(item.title
+                  ? [
+                      new Paragraph({
+                        spacing: { after: 40, line: 280 },
+                        children: [
+                          new TextRun({
+                            text: item.title,
+                            bold: true,
+                            size: 20,
+                            color: hex(theme.ink),
+                          }),
+                        ],
+                      }),
+                    ]
+                  : []),
+                new Paragraph({
+                  spacing: { after: 0, line: 300 },
+                  children: [
+                    new TextRun({ text: item.text ?? " ", size: 18, color: hex(theme.muted) }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+        }),
+    ),
+  });
+}
+
+/** 进度条：用方块字符画条，任何预览器 / Word / WPS 都能显示 */
+function progressParagraphs(
+  block: Extract<DocBlock, { type: "progress" }>,
+  theme: DocTheme,
+): Paragraph[] {
+  const SEGMENTS = 20;
+  return block.items.map((item) => {
+    const filled = Math.round((item.value / 100) * SEGMENTS);
+    return new Paragraph({
+      spacing: { before: 60, after: 60, line: 300 },
+      children: [
+        new TextRun({ text: `${item.label}  `, size: 20, color: hex(theme.ink) }),
+        new TextRun({ text: "█".repeat(filled), size: 22, color: hex(theme.accent) }),
+        new TextRun({
+          text: "░".repeat(SEGMENTS - filled),
+          size: 22,
+          color: hex(theme.line),
+        }),
+        new TextRun({
+          text: `  ${item.value}%`,
+          bold: true,
+          size: 20,
+          color: hex(theme.primary),
+        }),
+      ],
+    });
+  });
+}
+
 function calloutParagraph(block: Extract<DocBlock, { type: "callout" }>, theme: DocTheme): Paragraph {
   const tone = block.tone ?? "info";
   const bar =
@@ -419,6 +628,8 @@ function codeParagraphs(block: Extract<DocBlock, { type: "code" }>): Paragraph[]
 
 export async function docxFromDocument(spec: DocumentSpec): Promise<Buffer> {
   const theme = resolveTheme(spec.theme);
+  const bodyFont = resolveFontFamily(spec.font, theme.font);
+  const headingFont = resolveFontFamily(spec.headingFont, bodyFont);
   const children: (Paragraph | Table)[] = [];
 
   if (spec.title) {
@@ -521,6 +732,52 @@ export async function docxFromDocument(spec: DocumentSpec): Promise<Buffer> {
         children.push(statsTable(block, theme));
         children.push(new Paragraph({ spacing: { after: 160 }, children: [] }));
         break;
+      case "banner":
+        children.push(bannerTable(block, theme));
+        children.push(new Paragraph({ spacing: { after: 160 }, children: [] }));
+        break;
+      case "cards":
+        if (block.title) {
+          children.push(
+            new Paragraph({
+              spacing: { before: 80, after: 100 },
+              children: [
+                new TextRun({ text: block.title, bold: true, size: 20, color: hex(theme.muted) }),
+              ],
+            }),
+          );
+        }
+        children.push(cardsTable(block, theme));
+        children.push(new Paragraph({ spacing: { after: 160 }, children: [] }));
+        break;
+      case "timeline":
+        if (block.title) {
+          children.push(
+            new Paragraph({
+              spacing: { before: 80, after: 100 },
+              children: [
+                new TextRun({ text: block.title, bold: true, size: 20, color: hex(theme.muted) }),
+              ],
+            }),
+          );
+        }
+        children.push(timelineTable(block, theme));
+        children.push(new Paragraph({ spacing: { after: 160 }, children: [] }));
+        break;
+      case "progress":
+        if (block.title) {
+          children.push(
+            new Paragraph({
+              spacing: { before: 80, after: 80 },
+              children: [
+                new TextRun({ text: block.title, bold: true, size: 20, color: hex(theme.muted) }),
+              ],
+            }),
+          );
+        }
+        children.push(...progressParagraphs(block, theme));
+        children.push(new Paragraph({ spacing: { after: 120 }, children: [] }));
+        break;
       case "divider":
         children.push(
           new Paragraph({
@@ -569,7 +826,7 @@ export async function docxFromDocument(spec: DocumentSpec): Promise<Buffer> {
     title: spec.title,
     subject: spec.subtitle,
     creator: spec.author ?? "AgileCampus AI 助手",
-    styles: buildStyles(theme),
+    styles: buildStyles(theme, bodyFont, headingFont),
     numbering: {
       config: [
         {

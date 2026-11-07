@@ -363,6 +363,168 @@ class PdfBuilder {
     this.y -= 12;
   }
 
+  banner(block: Extract<DocBlock, { type: "banner" }>): void {
+    const titleLines = wrapText(block.text, this.bold, 14, CONTENT_WIDTH - 28);
+    const subLines = block.subtitle
+      ? wrapText(block.subtitle, this.regular, 9.6, CONTENT_WIDTH - 28)
+      : [];
+    const height = titleLines.length * 20 + subLines.length * 14 + 16;
+    this.ensure(height + 12);
+    const top = this.y;
+    this.page.drawRectangle({
+      x: MARGIN_X,
+      y: top - height,
+      width: CONTENT_WIDTH,
+      height,
+      color: hexToRgb(this.theme.primary),
+    });
+    this.y = top - 2;
+    this.writeLines(titleLines, MARGIN_X + 14, 14, this.bold, this.theme.onPrimary, 20);
+    if (subLines.length > 0) {
+      this.writeLines(subLines, MARGIN_X + 14, 9.6, this.regular, this.theme.soft, 14);
+    }
+    this.y = top - height - 12;
+  }
+
+  cards(block: Extract<DocBlock, { type: "cards" }>): void {
+    const gap = 10;
+    const count = block.items.length;
+    const width = (CONTENT_WIDTH - gap * (count - 1)) / count;
+    const inner = width - 20;
+    const wrapped = block.items.map((item) => ({
+      title: wrapText(item.title, this.bold, 10.5, inner),
+      text: wrapText(item.text, this.regular, 8.8, inner),
+    }));
+    const height =
+      Math.max(...wrapped.map((w) => w.title.length * 14 + w.text.length * 12)) + 20;
+    if (block.title) {
+      this.ensure(18);
+      this.y -= 10;
+      this.drawLine(block.title, MARGIN_X, this.y, 9.2, this.bold, this.theme.muted);
+      this.y -= 4;
+    }
+    this.ensure(height + 12);
+    const top = this.y;
+    block.items.forEach((item, index) => {
+      const x = MARGIN_X + index * (width + gap);
+      this.page.drawRectangle({
+        x,
+        y: top - height,
+        width,
+        height,
+        color: hexToRgb(this.theme.soft),
+      });
+      this.page.drawRectangle({
+        x,
+        y: top - height,
+        width,
+        height: 2.5,
+        color: hexToRgb(index === 0 ? this.theme.primary : this.theme.accent),
+      });
+      let baseline = top - 20;
+      for (const line of wrapped[index].title) {
+        this.drawLine(line, x + 10, baseline, 10.5, this.bold, this.theme.primary);
+        baseline -= 14;
+      }
+      baseline -= 2;
+      for (const line of wrapped[index].text) {
+        this.drawLine(line, x + 10, baseline, 8.8, this.regular, this.theme.ink);
+        baseline -= 12;
+      }
+    });
+    this.y = top - height - 12;
+  }
+
+  timeline(block: Extract<DocBlock, { type: "timeline" }>): void {
+    const markerWidth = CONTENT_WIDTH * 0.22;
+    const contentWidth = CONTENT_WIDTH - markerWidth - 16;
+    if (block.title) {
+      this.ensure(18);
+      this.y -= 10;
+      this.drawLine(block.title, MARGIN_X, this.y, 9.2, this.bold, this.theme.muted);
+      this.y -= 4;
+    }
+    for (const item of block.items) {
+      const marker = wrapText(item.marker, this.bold, 9.6, markerWidth - 18);
+      const title = item.title ? wrapText(item.title, this.bold, 10, contentWidth) : [];
+      const text = item.text ? wrapText(item.text, this.regular, 9.2, contentWidth) : [];
+      const height = Math.max(marker.length, title.length + text.length) * 13 + 10;
+      this.ensure(height + 4);
+      const top = this.y;
+      this.page.drawRectangle({
+        x: MARGIN_X,
+        y: top - height,
+        width: markerWidth,
+        height,
+        color: hexToRgb(this.theme.soft),
+      });
+      this.page.drawRectangle({
+        x: MARGIN_X,
+        y: top - height,
+        width: 2.5,
+        height,
+        color: hexToRgb(this.theme.accent),
+      });
+      let markerY = top - 4;
+      for (const line of marker) {
+        markerY -= 13;
+        this.drawLine(line, MARGIN_X + 9, markerY, 9.6, this.bold, this.theme.primary);
+      }
+      let contentY = top - 4;
+      const cx = MARGIN_X + markerWidth + 12;
+      for (const line of title) {
+        contentY -= 13;
+        this.drawLine(line, cx, contentY, 10, this.bold, this.theme.ink);
+      }
+      for (const line of text) {
+        contentY -= 13;
+        this.drawLine(line, cx, contentY, 9.2, this.regular, this.theme.muted);
+      }
+      this.y = top - height;
+    }
+    this.y -= 12;
+  }
+
+  progress(block: Extract<DocBlock, { type: "progress" }>): void {
+    if (block.title) {
+      this.ensure(18);
+      this.y -= 10;
+      this.drawLine(block.title, MARGIN_X, this.y, 9.2, this.bold, this.theme.muted);
+    }
+    const barWidth = CONTENT_WIDTH * 0.5;
+    const labelWidth = CONTENT_WIDTH - barWidth - 70;
+    for (const item of block.items) {
+      this.ensure(24);
+      this.y -= 18;
+      const label = wrapText(item.label, this.regular, 9.6, labelWidth)[0] ?? item.label;
+      this.drawLine(label, MARGIN_X, this.y, 9.6, this.regular, this.theme.ink);
+      const x = MARGIN_X + labelWidth + 10;
+      this.page.drawRectangle({
+        x,
+        y: this.y - 1,
+        width: barWidth,
+        height: 7,
+        color: hexToRgb(this.theme.line),
+      });
+      this.page.drawRectangle({
+        x,
+        y: this.y - 1,
+        width: (barWidth * item.value) / 100,
+        height: 7,
+        color: hexToRgb(this.theme.accent),
+      });
+      this.drawLine(
+        `${item.value}%`,
+        x + barWidth + 8,
+        this.y,
+        9.2,
+        this.bold,
+        this.theme.primary,
+      );
+    }
+    this.y -= 10;
+  }
+
   stats(block: Extract<DocBlock, { type: "stats" }>): void {
     const gap = 10;
     const count = block.items.length;
@@ -540,6 +702,18 @@ class PdfBuilder {
           break;
         case "stats":
           this.stats(block);
+          break;
+        case "banner":
+          this.banner(block);
+          break;
+        case "cards":
+          this.cards(block);
+          break;
+        case "timeline":
+          this.timeline(block);
+          break;
+        case "progress":
+          this.progress(block);
           break;
         case "divider":
           this.divider();
