@@ -141,7 +141,9 @@ export async function uploadAttachmentAction(
 
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return { error: "请选择要上传的文件" };
-  if (file.size > ATTACHMENT_MAX_SIZE) return { error: "附件不能超过 10MB" };
+  // 大文件走 /api/attachments/upload（流式写盘）；这个 action 只作为小文件兼容路径，
+  // 实际受 server action body 上限约束（next.config 的 12mb）。
+  if (file.size > ATTACHMENT_MAX_SIZE) return { error: "附件不能超过 1GB" };
 
   try {
     await uploadAttachment(session.user.id, taskId, {

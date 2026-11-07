@@ -6,6 +6,8 @@
  * 服务端返回的 Date 一律在这里的边界上转成 ISO 字符串。
  */
 
+import { MAX_FILE_SIZE } from "@/lib/file-limits";
+
 /** 记住「上次看的是哪条会话」；只是 UX 提示，服务端仍会校验归属 */
 export const ASSISTANT_CONVERSATION_COOKIE = "ac_assistant_conversation";
 export const ASSISTANT_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
@@ -16,6 +18,8 @@ export const ASSISTANT_RESET_EVENT = "ac:assistant-reset";
 export type AssistantConversationSummary = {
   id: string;
   title: string | null;
+  /** 分类标签；null = 未分类（面板按分类分桶展示） */
+  category: string | null;
   createdAt: string; // ISO
   lastMessageAt: string | null; // ISO
 };
@@ -39,9 +43,9 @@ export type AssistantPanelMessage = {
   attachments?: MessageAttachment[];
 };
 
-/** 一句话最多带几个文件；单文件上限与任务附件一致（10MB），在服务端也再校一次 */
+/** 一句话最多带几个文件；单文件上限与任务附件一致（1GB），在服务端也再校一次 */
 export const ASSISTANT_ATTACHMENTS_MAX = 5;
-export const ASSISTANT_FILE_MAX_SIZE = 10 * 1024 * 1024;
+export const ASSISTANT_FILE_MAX_SIZE = MAX_FILE_SIZE;
 
 /** 助手拟「打开某页」时随响应下发的跳转意图；面板据此自动跳转并留一个可点的入口 */
 export type AssistantNavigation = { label: string; href: string };

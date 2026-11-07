@@ -1,10 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { AssistantConversationSummary } from "@/lib/agent/assistant-panel-shared";
+import {
+  CONVERSATION_CATEGORY_PRESETS,
+  categoryLabel,
+  compareConversationCategories,
+} from "@/lib/agent/conversation-category";
+
+/** 当前分类是不是内置预设（导入的旧数据可能有自定义名，也要出现在下拉里） */
+function isPreset(value: string): boolean {
+  return (CONVERSATION_CATEGORY_PRESETS as readonly string[]).includes(value);
+}
 
 /**
- * 面板顶部的会话列表：新建、切换、行内改名、删除。
+ * 面板顶部的会话列表：新建、切换、行内改名、删除、分类。
+ *
+ * 分类有两条路：每行的小下拉手动指定；表头「自动归类」给所有未分类会话按关键词
+ * 归类。列表按分类分桶，桶内仍按最近使用排序 —— 分类只是「分组」，不改顺序。
  *
  * 刻意做成**正常文档流里的可折叠块**，不用 absolute/fixed 弹层：
  * 抽屉本身带 transform（宇宙主题还有 backdrop-filter），绝对定位会被限制在抽屉/滚动容器里。
@@ -19,6 +32,8 @@ export function AssistantConversations({
   onNew,
   onRename,
   onDelete,
+  onCategorize,
+  onAutoCategorize,
 }: {
   conversations: AssistantConversationSummary[];
   activeId: string | null;
@@ -28,16 +43,61 @@ export function AssistantConversations({
   /** 返回错误文案；null 表示成功 */
   onRename: (id: string, title: string) => Promise<string | null>;
   onDelete: (id: string) => void;
+  /** 手动改分类；category=null 表示「未分类」。返回错误文案；null 表示成功 */
+  onCategorize: (id: string, category: string | null) => Promise<string | null>;
+  /** 自动归类所有未分类会话，返回错误文案；null 表示成功 */
+  onAutoCategorize: () => Promise<string | null>;
 }) {
   // 会话多了才默认展开；只有一条时收起，把高度留给消息
   const [open, setOpen] = useState(conversations.length > 1);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [renaming, setRenaming] = useState(false);
+  const [categorizingId, setCategorizingId] = useState<string | null>(null);
+  const [autoCategorizing, setAutoCategorizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const activeTitle =
     conversations.find((c) => c.id === activeId)?.title ?? "新对话";
+  const hasUncategorized = conversations.some((c) => !c.category);
+
+  // 按分类分桶：桶按预设/自定义/未分类排序，桶内保留传入的「最近用过」顺序
+  const groups = useMemo(() => {
+    const map = new Map<string | null, AssistantConversationSummary[]>();
+    for (const c of conversations) {
+      const key = c.category ?? null;
+      const bucket = map.get(key);
+      if (bucket) bucket.push(c);
+      else map.set(key, [c]);
+    }
+    return [...map.entries()].sort(([a], [b]) => compareConversationCategories(a, b));
+  }, [conversations]);
+  // 全部都是未分类时不必显示「未分类」小标题，把高度留给消息
+  const showGroupHeaders = groups.length > 1 || groups[0]?.[0] != null;
+
+  async function changeCategory(id: string, value: string) {
+    if (categorizingId) return;
+    setCategorizingId(id);
+    setError(null);
+    try {
+      const message = await onCategorize(id, value || null);
+      if (message) setError(message);
+    } finally {
+      setCategorizingId(null);
+    }
+  }
+
+  async function autoCategorize() {
+    if (autoCategorizing) return;
+    setAutoCategorizing(true);
+    setError(null);
+    try {
+      const message = await onAutoCategorize();
+      if (message) setError(message);
+    } finally {
+      setAutoCategorizing(false);
+    }
+  }
 
   function startEdit(c: AssistantConversationSummary) {
     setError(null);
@@ -94,14 +154,27 @@ export function AssistantConversations({
           <span className="shrink-0 font-medium">对话</span>
           <span className="truncate text-ink">· {activeTitle}</span>
         </button>
-        <button
-          type="button"
-          onClick={onNew}
-          disabled={busy}
-          className="ac-btn-ghost shrink-0 px-2.5 py-1.5 text-[13px] disabled:opacity-50"
-        >
-          ＋ 新对话
-        </button>
+        <div className="flex shrink-0 items-center gap-0.5">
+          {hasUncategorized && (
+            <button
+              type="button"
+              onClick={() => void autoCategorize()}
+              disabled={busy || autoCategorizing}
+              title="按关键词给未分类的对话归类；手动分过类的不动"
+              className="ac-btn-ghost px-2 py-1.5 text-xs text-ink-faint disabled:opacity-50"
+            >
+              {autoCategorizing ? "归类中…" : "自动归类"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onNew}
+            disabled={busy}
+            className="ac-btn-ghost shrink-0 px-2.5 py-1.5 text-[13px] disabled:opacity-50"
+          >
+            ＋ 新对话
+          </button>
+        </div>
       </div>
 
       {open && (
@@ -112,8 +185,17 @@ export function AssistantConversations({
           {conversations.length === 0 ? (
             <p className="px-2 py-1.5 text-xs text-ink-faint">还没有对话</p>
           ) : (
-            <ul className="space-y-0.5">
-              {conversations.map((c) => {
+            <ul className="space-y-1">
+              {groups.map(([category, items]) => (
+                <li key={category ?? "__uncategorized"}>
+                  {showGroupHeaders && (
+                    <div className="flex items-baseline gap-1.5 px-2.5 pb-0.5 pt-1 text-[11px] text-ink-faint">
+                      <span className="font-medium text-ink-soft">{categoryLabel(category)}</span>
+                      <span>· {items.length}</span>
+                    </div>
+                  )}
+                  <ul className="space-y-0.5">
+                    {items.map((c) => {
                 const active = c.id === activeId;
                 if (editingId === c.id) {
                   return (
@@ -171,6 +253,24 @@ export function AssistantConversations({
                     >
                       {c.title ?? "新对话"}
                     </button>
+                    <select
+                      value={c.category ?? ""}
+                      onChange={(e) => void changeCategory(c.id, e.target.value)}
+                      disabled={busy || categorizingId !== null}
+                      aria-label="会话分类"
+                      title="会话分类"
+                      className="w-[5.8rem] shrink-0 cursor-pointer truncate rounded bg-transparent px-0.5 py-1 text-[11px] text-ink-faint outline-none transition-colors hover:bg-surface focus:bg-surface disabled:cursor-default disabled:opacity-50"
+                    >
+                      <option value="">未分类</option>
+                      {CONVERSATION_CATEGORY_PRESETS.map((preset) => (
+                        <option key={preset} value={preset}>
+                          {preset}
+                        </option>
+                      ))}
+                      {c.category && !isPreset(c.category) && (
+                        <option value={c.category}>{c.category}</option>
+                      )}
+                    </select>
                     <button
                       type="button"
                       onClick={() => startEdit(c)}
@@ -217,7 +317,10 @@ export function AssistantConversations({
                     </button>
                   </li>
                 );
-              })}
+                    })}
+                  </ul>
+                </li>
+              ))}
             </ul>
           )}
         </div>

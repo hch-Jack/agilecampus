@@ -37,7 +37,9 @@ import {
   readAgentFileText,
   readMessageAttachmentText,
   readTaskAttachmentText,
+  saveAgentFile,
 } from "./files";
+import { GENERATE_MAX_CHARS, GENERATE_SUPPORTED_LABEL, generateFile } from "./file-generate";
 import {
   countUnread,
   findUserByUsername,
@@ -631,14 +633,14 @@ function buildBasePersonalTools(actorId: string) {
       description:
         "在界面里打开附件预览（图片、PDF、文本/代码、Word、Excel、PPT 等）。" +
         "用户说「打开 / 看看 / 预览这个文件」时调用。任务附件先 list_attachments 取 attachmentId；" +
-        "私信/群聊附件从 read_messages 消息的 attachment 字段取。" +
+        "私信/群聊附件从 read_messages 消息的 attachment 字段取；助手自己生成/上传的文件用 source=file。" +
         "只读、立即生效、不需要确认卡；调用后正文说「已为你打开…」即可。",
       inputSchema: z.object({
-        attachmentId: z.uuid().describe("取自 list_attachments 或 read_messages"),
+        attachmentId: z.uuid().describe("取自 list_attachments / read_messages / 文件清单"),
         source: z
-          .enum(["task", "message"])
+          .enum(["task", "message", "file"])
           .default("task")
-          .describe("task = 任务附件；message = 私信/群聊附件"),
+          .describe("task = 任务附件；message = 私信/群聊附件；file = 助手对话文件"),
       }),
       execute: async ({ attachmentId, source }) =>
         resolveFileOpen(actorId, { attachmentId, source }),
@@ -668,13 +670,46 @@ function buildBasePersonalTools(actorId: string) {
           : readMessageAttachmentText(actorId, attachmentId);
       },
     }),
+    create_file: tool({
+      description:
+        "生成一个文件并立刻提供下载（同时出现在回复下方）。" +
+        `支持：${GENERATE_SUPPORTED_LABEL}；文本类正文原样写入，` +
+        "xlsx 的 content 写 CSV（第一行表头，可用 sheetName 命名工作表），docx 按行分段。" +
+        "PDF/PPT 不支持（需要 PDF 可先生成 HTML 再让用户打印）。" +
+        `content 上限 ${GENERATE_MAX_CHARS} 字符。` +
+        "生成后如需放进任务附件，继续调用 save_file_to_task(fileId)；" +
+        '如需发给某人/群，调用 send_message 并传 fileSource="file"、attachmentId=fileId。',
+      inputSchema: z.object({
+        filename: z.string().min(1).max(200).describe("带扩展名，如 周报.md、数据.xlsx"),
+        content: z.string().min(1).max(GENERATE_MAX_CHARS).describe("文件正文"),
+        sheetName: z.string().max(31).optional().describe("仅 xlsx：工作表名"),
+      }),
+      execute: async ({ filename, content, sheetName }) => {
+        const generated = await generateFile({ filename, content, sheetName });
+        const row = await saveAgentFile(actorId, {
+          filename: generated.filename,
+          mimeType: generated.mimeType,
+          data: generated.data,
+        });
+        return {
+          __showFile: true as const,
+          fileId: row.id,
+          url: `/api/assistant/files/${row.id}`,
+          filename: row.filename,
+          mimeType: row.mimeType,
+          size: row.size,
+          hint: "文件已生成，可直接下载；要放进任务或发给别人，继续调用 save_file_to_task / send_message。",
+        };
+      },
+    }),
     save_file_to_task: tool({
       description:
-        "把用户随消息上传的文件（fileId）拟成「添加为任务附件」草案。需要对该任务有写权限。" +
-        "fileId 取自本轮消息末尾的文件清单；taskId 取自 list_tasks / get_task_detail / 快照。" +
+        "把助手对话里的文件（fileId）拟成「添加为任务附件」草案。需要对该任务有写权限。" +
+        "fileId 取自本轮消息末尾的文件清单、create_file 的返回值，或历史文件；" +
+        "taskId 取自 list_tasks / get_task_detail / 快照。" +
         "仅产草案，用户点确认后才复制进任务附件。",
       inputSchema: z.object({
-        fileId: z.uuid().describe("随消息上传的文件 id"),
+        fileId: z.uuid().describe("助手对话文件的 id（上传或 create_file 生成）"),
         taskId: z.uuid().describe("目标任务 id"),
       }),
       execute: async ({ fileId, taskId }) => {
@@ -923,9 +958,10 @@ function buildBasePersonalTools(actorId: string) {
     }),
     send_message: tool({
       description:
-        "拟一条发送消息草案：给个人或群聊发文本，可附一份文件。文件来源二选一：" +
-        "fileSource=task（任务附件，attachmentId 取自 list_attachments）或 " +
-        "fileSource=message（消息附件，attachmentId 取自 read_messages）。" +
+        "拟一条发送消息草案：给个人或群聊发文本，可附一份文件。文件来源三选一：" +
+        "fileSource=task（任务附件，attachmentId 取自 list_attachments）、" +
+        "fileSource=message（消息附件，attachmentId 取自 read_messages）、" +
+        "fileSource=file（助手上传/生成的文件，attachmentId 取自文件清单或 create_file 的返回值）。" +
         "targetType=user 时 targetId 取自 find_contact / list_message_threads / list_members；" +
         "targetType=group 时取自 list_message_threads。仅产草案，确认后才会真正发送；绝不能声称已发送。",
       inputSchema: z.object({
@@ -933,9 +969,9 @@ function buildBasePersonalTools(actorId: string) {
         targetId: z.uuid().describe("对方 userId 或群聊 groupId"),
         content: z.string().optional().describe("消息正文；与文件至少给一个"),
         fileSource: z
-          .enum(["task", "message"])
+          .enum(["task", "message", "file"])
           .optional()
-          .describe("附件来源：task=任务附件，message=消息附件"),
+          .describe("附件来源：task=任务附件，message=消息附件，file=助手对话文件"),
         attachmentId: z.uuid().optional().describe("附件 id；给了 fileSource 就必须给"),
       }),
       execute: async ({ targetType, targetId, content, fileSource, attachmentId }) => {

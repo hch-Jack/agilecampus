@@ -13,6 +13,7 @@ import { setTaskLabels } from "@/lib/label";
 import { createMilestone } from "@/lib/project";
 import { AppError, ApprovalRequestedError, ForbiddenError } from "@/lib/errors";
 import { ATTACHMENT_MAX_SIZE, uploadAttachment } from "@/lib/attachment";
+import { MAX_FILE_SIZE_LABEL } from "@/lib/file-limits";
 import { completeProjectDirectly, reopenProject, requestProjectAcceptance } from "@/lib/approval";
 import { createProjectComment, deleteProjectComment } from "@/lib/comment";
 import { notifyMentionedUsers } from "@/lib/mention";
@@ -322,7 +323,8 @@ export async function submitCompletionAction(
   if (files.length > COMPLETION_MAX_FILES)
     return { error: `附件最多 ${COMPLETION_MAX_FILES} 个` };
   for (const f of files) {
-    if (f.size > ATTACHMENT_MAX_SIZE) return { error: `附件「${f.name}」超过 10MB` };
+    if (f.size > ATTACHMENT_MAX_SIZE)
+      return { error: `附件「${f.name}」超过 ${MAX_FILE_SIZE_LABEL}` };
   }
 
   try {

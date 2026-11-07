@@ -172,7 +172,7 @@ describe("助手文件存取（agent_files）", () => {
     expect(Buffer.from(download.data).toString("utf8")).toBe("第一章：研究背景");
   });
 
-  it("空文件与超过 10MB 的文件都拒收", async () => {
+  it("空文件与超过 1GB 的文件都拒收", async () => {
     const user = await makeUser("student@example.com");
     await expect(
       saveAgentFile(user.id, { filename: "空.txt", size: 0, data: Buffer.alloc(0) }),
@@ -180,7 +180,7 @@ describe("助手文件存取（agent_files）", () => {
     await expect(
       saveAgentFile(user.id, {
         filename: "大.bin",
-        size: 10 * 1024 * 1024 + 1,
+        size: 1024 * 1024 * 1024 + 1,
         data: Buffer.alloc(1),
       }),
     ).rejects.toThrow(AppError);

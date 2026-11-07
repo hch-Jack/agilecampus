@@ -65,6 +65,7 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     expect(Object.keys(tools).sort()).toEqual(
       [
         "attach_message_file_to_task",
+        "create_file",
         "create_group_chat",
         "create_label",
         "create_milestone",
@@ -427,8 +428,8 @@ describe("buildPersonalTools：焦点项目的工具面", () => {
     const base = buildPersonalTools(student.id);
     const focused = buildPersonalTools(student.id, project.id);
 
-    expect(Object.keys(base)).toHaveLength(44);
-    expect(Object.keys(focused)).toHaveLength(50);
+    expect(Object.keys(base)).toHaveLength(45);
+    expect(Object.keys(focused)).toHaveLength(51);
     expect(Object.keys(focused).filter((name) => !(name in base)).sort()).toEqual(
       [...FOCUS_PROJECT_TOOL_NAMES].sort(),
     );

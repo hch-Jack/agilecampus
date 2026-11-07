@@ -79,6 +79,7 @@ export async function POST(req: Request) {
       // 面板靠这些 id 维护会话列表、给消息挂删除按钮；老客户端忽略即可
       conversationId: result.conversationId,
       conversationTitle: result.conversationTitle,
+      conversationCategory: result.conversationCategory,
       conversationCreatedAt: result.conversationCreatedAt.toISOString(),
       lastMessageAt: result.lastMessageAt.toISOString(),
       turnId: result.turnId,

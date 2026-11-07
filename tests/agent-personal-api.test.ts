@@ -354,7 +354,7 @@ describe("POST /api/chat", () => {
     const file = await saveAgentFile(student.id, {
       filename: "开题报告.txt",
       mimeType: "text/plain",
-      size: 6,
+      size: 12,
       data: Buffer.from("正文内容"),
     });
     useScript([textStep("收到，我读了。")]);
@@ -368,7 +368,7 @@ describe("POST /api/chat", () => {
     const messages = await listPersonalConversationMessages(student.id, data.conversationId);
     expect(messages.map((m) => m.role)).toEqual(["user", "assistant"]);
     expect(messages[0].attachments).toEqual([
-      { id: file.id, filename: "开题报告.txt", mimeType: "text/plain", size: 6 },
+      { id: file.id, filename: "开题报告.txt", mimeType: "text/plain", size: 12 },
     ]);
     // 正文照旧是用户原话，文件清单不混进聊天记录
     expect(messages[0].content).toBe("帮我看看这份文件");

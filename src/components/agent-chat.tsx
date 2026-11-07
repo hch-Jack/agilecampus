@@ -13,6 +13,8 @@ import {
   type AssistantNavigation,
   type MessageAttachment,
 } from "@/lib/agent/assistant-panel-shared";
+import { MAX_FILE_SIZE_LABEL } from "@/lib/file-limits";
+import { uploadFileRaw } from "@/lib/upload-client";
 import { Markdown } from "@/components/markdown";
 import { FilePreviewModal } from "@/components/file-preview";
 
@@ -58,7 +60,8 @@ export type ChatMessage = {
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
 let localSeq = 0;
@@ -101,6 +104,7 @@ export function AgentChat({
   onTurnPersisted?: (info: {
     conversationId: string;
     conversationTitle: string | null;
+    conversationCategory: string | null;
     conversationCreatedAt: string;
     lastMessageAt: string;
   }) => void;
@@ -240,6 +244,7 @@ export function AgentChat({
         onTurnPersisted?.({
           conversationId: data.conversationId,
           conversationTitle: data.conversationTitle ?? null,
+          conversationCategory: data.conversationCategory ?? null,
           conversationCreatedAt: data.conversationCreatedAt,
           lastMessageAt: data.lastMessageAt,
         });
@@ -277,30 +282,28 @@ export function AgentChat({
 
     setUploading(true);
     for (const file of picked.slice(0, room)) {
-      // 超限的本地先拦：不必把 10MB 白传一遍，服务端还会再校一次
+      // 超限的本地先拦：不必把大文件白传一遍，服务端还会再校一次
       if (file.size > ASSISTANT_FILE_MAX_SIZE) {
-        setUploadError(`「${file.name}」超过 10MB，未上传`);
+        setUploadError(`「${file.name}」超过 ${MAX_FILE_SIZE_LABEL}，未上传`);
         continue;
       }
-      const form = new FormData();
-      form.append("file", file);
-      try {
-        const res = await fetch("/api/assistant/files", { method: "POST", body: form });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          setUploadError(data.error ?? `「${file.name}」上传失败`);
-          continue;
-        }
-        const uploaded: MessageAttachment = {
-          id: String(data.id),
-          filename: String(data.filename),
-          mimeType: typeof data.mimeType === "string" ? data.mimeType : null,
-          size: Number(data.size) || file.size,
-        };
-        setAttachments((list) => [...list, uploaded]);
-      } catch {
-        setUploadError(`「${file.name}」上传失败，请重试`);
+      const up = await uploadFileRaw<{
+        id: string;
+        filename: string;
+        mimeType: string | null;
+        size: number;
+      }>("/api/assistant/files", file);
+      if (!up.ok) {
+        setUploadError(`「${file.name}」上传失败：${up.error}`);
+        continue;
       }
+      const uploaded: MessageAttachment = {
+        id: up.data.id,
+        filename: up.data.filename,
+        mimeType: up.data.mimeType,
+        size: up.data.size,
+      };
+      setAttachments((list) => [...list, uploaded]);
     }
     setUploading(false);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -608,7 +611,7 @@ export function AgentChat({
                 attachments.length >= ASSISTANT_ATTACHMENTS_MAX
               }
               aria-label="添加文件"
-              title={`添加文件（≤10MB，最多 ${ASSISTANT_ATTACHMENTS_MAX} 个）`}
+              title={`添加文件（≤${MAX_FILE_SIZE_LABEL}，最多 ${ASSISTANT_ATTACHMENTS_MAX} 个）`}
               className="ac-btn-ghost shrink-0 px-2 py-2 text-sm"
             >
               {uploading ? (

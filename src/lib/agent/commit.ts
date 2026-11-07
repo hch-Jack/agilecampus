@@ -180,7 +180,7 @@ const sendMessageSchema = z
     targetId: z.uuid(),
     content: z.string().optional(),
     // null 与 undefined 都表示「没带附件」；卡片清空附件字段时会送 null
-    fileSource: z.enum(["task", "message"]).nullable().optional(),
+    fileSource: z.enum(["task", "message", "file"]).nullable().optional(),
     attachmentId: z.uuid().nullable().optional(),
   })
   .refine((d) => (d.fileSource == null) === (d.attachmentId == null), {
@@ -378,7 +378,7 @@ export async function commitMessageAttachment(
 }
 
 // 助手对话里上传的文件 → 任务附件：同样只属于工作台助手。copyAgentFileToTask
-// 先验文件归属（ownerId = 发话人），再经 uploadAttachment 重校任务写权限与 10MB 上限。
+// 先验文件归属（ownerId = 发话人），再经 uploadAttachment 重校任务写权限与 1GB 上限。
 export async function commitSaveFileToTask(
   actorId: string,
   draft: unknown,
@@ -388,7 +388,7 @@ export async function commitSaveFileToTask(
   return { committed: 1, conflicts: [] };
 }
 
-// 发送消息：卡片确认后才真正落库。目标权限、附件可读性与 10MB 上限都由
+// 发送消息：卡片确认后才真正落库。目标权限、附件可读性与 1GB 上限都由
 // chat-transfer → sendDm/sendGroupMessage 重校；这里只负责把卡片数据还原成来源对象。
 export async function commitSendMessage(
   actorId: string,

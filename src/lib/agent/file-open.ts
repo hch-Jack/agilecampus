@@ -21,7 +21,12 @@ export async function resolveFileOpen(
   input: ChatAttachmentSource,
 ): Promise<FileOpenEnvelope> {
   const info = await getChatAttachmentInfo(actorId, input);
-  const base = input.source === "task" ? "/api/attachments" : "/api/dm/attachments";
+  const base =
+    input.source === "task"
+      ? "/api/attachments"
+      : input.source === "file"
+        ? "/api/assistant/files"
+        : "/api/dm/attachments";
   return {
     __showFile: true as const,
     url: `${base}/${info.attachmentId}`,

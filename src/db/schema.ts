@@ -128,8 +128,9 @@ export const users = pgTable(
   (t) => [uniqueIndex("users_name_unique").on(t.name)],
 );
 
-// 私信附件：与任务附件同构，内容（bytea）直存库内，单文件上限由应用层校验（lib/dm.ts，10MB）。
-// 附件随消息先落库再被消息引用；站内无删除入口，留档即永久。
+// 私信附件：与任务附件同构，单文件上限 1GB（lib/dm.ts）。
+// `storageKey` 非空 = 正文在磁盘上（见 lib/blob-store.ts），`data` 留空 Buffer；
+// 历史附件仍是库内 bytea。附件随消息先落库再被消息引用；站内无删除入口，留档即永久。
 export const dmAttachments = pgTable("dm_attachments", {
   id: uuid("id").primaryKey().defaultRandom(),
   uploaderId: uuid("uploader_id")
@@ -139,6 +140,7 @@ export const dmAttachments = pgTable("dm_attachments", {
   mimeType: text("mime_type"),
   size: integer("size").notNull(),
   data: bytea("data").notNull(),
+  storageKey: text("storage_key"),
   createdAt: dbTimestampNow("created_at").notNull(),
 });
 
@@ -402,6 +404,9 @@ export const conversations = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     title: text("title"),
+    // 会话分类：预设名或用户自定义短标签（应用层归一化，≤20 字符）；null = 未分类。
+    // 自动归类只在为空时写入，用户手动改过的不会被下一轮对话覆盖。
+    category: text("category"),
     // 最近一次落消息的时间，会话列表据此按「最近用过」排序；
     // 可空 —— 老数据没有，回落到 createdAt（见 lib/agent/conversation.ts 的排序）。
     lastMessageAt: dbTimestamp("last_message_at"),
@@ -582,8 +587,9 @@ export const taskLabels = pgTable(
   ],
 );
 
-// 任务附件：文件内容（bytea）直存库内，单文件上限由应用层校验（lib/attachment.ts，10MB）。
-// 任务删除时附件级联消失。
+// 任务附件：单文件上限 1GB（lib/attachment.ts）。`storageKey` 非空 = 正文在磁盘上，
+// `data` 留空 Buffer；历史附件仍是库内 bytea。任务删除时附件行级联消失（磁盘文件
+// 由删除路径尽力清理，不做级联）。
 export const taskAttachments = pgTable(
   "task_attachments",
   {
@@ -598,13 +604,14 @@ export const taskAttachments = pgTable(
     mimeType: text("mime_type"),
     size: integer("size").notNull(),
     data: bytea("data").notNull(),
+    storageKey: text("storage_key"),
     createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [index("task_attachments_task_idx").on(t.taskId)],
 );
 
-// AI 助手对话里上传的文件：与任务附件同构，内容（bytea）直存库内，单文件上限由应用层
-// 校验（lib/agent/files.ts，10MB）。**只属于上传者本人**——项目助手会话是团队共享的，
+// AI 助手对话里上传/生成的文件：与任务附件同构，单文件上限 1GB（lib/agent/files.ts），
+// `storageKey` 非空 = 正文在磁盘上。**只属于上传者本人**——项目助手会话是团队共享的，
 // 所以上传功能也只开在个人助手（工作台右侧面板），避免队友看到自己无权下载的文件。
 // 用户可让助手把这些文件读进上下文，或复制成某个任务的附件（复制字节、各存一份）。
 export const agentFiles = pgTable(
@@ -618,6 +625,7 @@ export const agentFiles = pgTable(
     mimeType: text("mime_type"),
     size: integer("size").notNull(),
     data: bytea("data").notNull(),
+    storageKey: text("storage_key"),
     createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [index("agent_files_owner_idx").on(t.ownerId)],

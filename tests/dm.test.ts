@@ -11,6 +11,7 @@ import {
 } from "@/lib/dm";
 import { createUser } from "@/lib/user";
 import { ForbiddenError } from "@/lib/errors";
+import { MAX_FILE_SIZE } from "@/lib/file-limits";
 import { resetDb } from "./helpers";
 
 async function seedUser(name: string, email: string) {
@@ -259,10 +260,10 @@ describe("私信附件", () => {
         file: {
           filename: "大.bin",
           mimeType: null,
-          size: 10 * 1024 * 1024 + 1,
+          size: MAX_FILE_SIZE + 1,
           data: Buffer.alloc(1),
         },
       }),
-    ).rejects.toThrow("文件不能超过 10MB");
+    ).rejects.toThrow("文件不能超过 1GB");
   });
 });

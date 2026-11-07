@@ -269,7 +269,8 @@ const PRIORITY_TEXT: Record<string, string> = { low: "低", medium: "中", high:
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
 // 选项来自响应里的 options（按草案的 projectId 查）——查不到就只显示 id，
@@ -839,7 +840,7 @@ function DraftCard({
       targetId?: string;
       targetName?: string;
       content?: string;
-      fileSource?: "task" | "message" | null;
+      fileSource?: "task" | "message" | "file" | null;
       attachmentId?: string | null;
       filename?: string | null;
       size?: number | null;
@@ -873,7 +874,11 @@ function DraftCard({
             <span>
               附件「{d.filename ?? "未命名文件"}」
               {typeof d.size === "number" ? `（${fmtSize(d.size)}）` : ""} · 来源：
-              {d.fileSource === "task" ? "项目任务附件" : "消息附件"}
+              {d.fileSource === "task"
+                ? "项目任务附件"
+                : d.fileSource === "file"
+                  ? "助手对话文件"
+                  : "消息附件"}
             </span>
             <button
               type="button"

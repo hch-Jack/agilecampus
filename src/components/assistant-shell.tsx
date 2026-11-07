@@ -238,6 +238,7 @@ export function AssistantShell({
     info: {
       conversationId: string;
       conversationTitle: string | null;
+      conversationCategory: string | null;
       conversationCreatedAt: string;
       lastMessageAt: string;
     },
@@ -248,6 +249,7 @@ export function AssistantShell({
       upsertConversation(prev, {
         id: info.conversationId,
         title: info.conversationTitle,
+        category: info.conversationCategory,
         createdAt: info.conversationCreatedAt,
         lastMessageAt: info.lastMessageAt,
       }),
@@ -269,6 +271,43 @@ export function AssistantShell({
         ),
       ),
     );
+  }
+
+  /** 手动改分类（null = 未分类）；只改这一条的摘要，不重排列表之外的东西 */
+  async function categorizeConversation(
+    id: string,
+    category: string | null,
+  ): Promise<string | null> {
+    try {
+      const res = await fetch(`/api/chat/conversations/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return data.error ?? "分类失败";
+      if (data.conversation) {
+        setConversations((prev) => upsertConversation(prev, data.conversation));
+      }
+      return null;
+    } catch {
+      return "网络异常，请重试";
+    }
+  }
+
+  /** 自动归类所有未分类会话；服务端返回最新列表，整表替换 */
+  async function autoCategorizeConversations(): Promise<string | null> {
+    try {
+      const res = await fetch("/api/chat/conversations/categorize", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return data.error ?? "自动归类失败";
+      if (Array.isArray(data.conversations)) {
+        setConversations(sortConversations(data.conversations));
+      }
+      return null;
+    } catch {
+      return "网络异常，请重试";
+    }
   }
 
   async function renameConversation(id: string, title: string): Promise<string | null> {
@@ -378,6 +417,8 @@ export function AssistantShell({
             onNew={() => void createConversation()}
             onRename={renameConversation}
             onDelete={(id) => void deleteConversation(id)}
+            onCategorize={categorizeConversation}
+            onAutoCategorize={autoCategorizeConversations}
           />
           {switchError && <p className="shrink-0 text-sm text-high">{switchError}</p>}
           <div className="min-h-0 flex-1">

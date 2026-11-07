@@ -12,6 +12,7 @@ import {
   normalizeContextContent,
 } from "@/lib/personal-context";
 import { getAiHistoryLimit } from "./memory";
+import { normalizeConversationCategory } from "./conversation-category";
 
 /**
  * AI 助手「记忆」的导入 / 导出。
@@ -56,6 +57,8 @@ export type MemoryExportMessage = {
 
 export type MemoryExportConversation = {
   title: string | null;
+  /** 分类标签；旧的导出文件没有这个字段，导入后按未分类处理 */
+  category?: string | null;
   createdAt: string;
   lastMessageAt: string | null;
   messages: MemoryExportMessage[];
@@ -78,6 +81,7 @@ export async function exportAssistantMemory(actorId: string): Promise<MemoryExpo
       .select({
         id: conversations.id,
         title: conversations.title,
+        category: conversations.category,
         createdAt: conversations.createdAt,
         lastMessageAt: conversations.lastMessageAt,
       })
@@ -136,6 +140,7 @@ export async function exportAssistantMemory(actorId: string): Promise<MemoryExpo
     })),
     conversations: convRows.map((c) => ({
       title: c.title,
+      category: c.category,
       createdAt: c.createdAt.toISOString(),
       lastMessageAt: c.lastMessageAt?.toISOString() ?? null,
       messages: (byConversation.get(c.id) ?? []).slice(0, EXPORT_MAX_MESSAGES_PER_CONVERSATION),
@@ -177,6 +182,7 @@ const importSchema = z.object({
     .array(
       z.object({
         title: z.string().max(200).nullable().optional(),
+        category: z.string().max(20).nullable().optional(),
         createdAt: dateString,
         // lastMessageAt 不落库——导入后由新消息与 createdAt 重新决定
         messages: z
@@ -255,6 +261,7 @@ export async function importAssistantMemory(
             ownerId: actorId,
             createdById: actorId,
             title: conv.title?.trim() || null,
+            category: normalizeConversationCategory(conv.category),
             createdAt: baseAt,
             lastMessageAt: baseAt,
           })
