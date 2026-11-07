@@ -11,6 +11,7 @@ import {
 } from "react";
 import { AgentChat, type ChatMessage } from "@/components/agent-chat";
 import { AssistantConversations } from "@/components/assistant-conversations";
+import { AssistantTagBoard } from "@/components/assistant-tag-board";
 import {
   ASSISTANT_CONVERSATION_COOKIE,
   ASSISTANT_COOKIE_MAX_AGE,
@@ -106,6 +107,11 @@ export function AssistantShell({
   const [sessionBusy, setSessionBusy] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
+  /** 「按标签查历史」点中的消息：切到会话后由 AgentChat 滚动定位 */
+  const [focusMessage, setFocusMessage] = useState<
+    { messageId: string; nonce: number } | null
+  >(null);
+  const focusNonce = useRef(0);
   /** 切换请求的递增序号：慢响应回来时若已过期就丢弃 */
   const switchSeq = useRef(0);
   /** 当前 AgentChat 的 viewKey；用来丢弃「重置前发出的请求」晚到的落库回调 */
@@ -198,6 +204,13 @@ export function AssistantShell({
     } finally {
       if (seq === switchSeq.current) setSwitching(false);
     }
+  }
+
+  /** 标签检索点选一条历史消息：切到它所在会话，并让 AgentChat 滚过去高亮 */
+  function openTaggedMessage(conversationId: string, messageId: string) {
+    focusNonce.current += 1;
+    setFocusMessage({ messageId, nonce: focusNonce.current });
+    if (conversationId !== activeId) void selectConversation(conversationId);
   }
 
   async function createConversation() {
@@ -420,6 +433,10 @@ export function AssistantShell({
             onCategorize={categorizeConversation}
             onAutoCategorize={autoCategorizeConversations}
           />
+          <AssistantTagBoard
+            busy={sessionBusy || switching}
+            onOpenMessage={openTaggedMessage}
+          />
           {switchError && <p className="shrink-0 text-sm text-high">{switchError}</p>}
           <div className="min-h-0 flex-1">
             <AgentChat
@@ -432,6 +449,7 @@ export function AssistantShell({
               onBusyChange={setSessionBusy}
               onTurnPersisted={(info) => handleTurnPersisted(info, viewKey)}
               onTurnDeleted={handleTurnDeleted}
+              focusMessage={focusMessage ?? undefined}
               subtitle={
                 focusProjectId ? "只属于你的对话 · 已带入当前项目" : "只属于你的对话"
               }

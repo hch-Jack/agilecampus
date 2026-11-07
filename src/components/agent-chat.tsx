@@ -14,6 +14,7 @@ import {
   type MessageAttachment,
 } from "@/lib/agent/assistant-panel-shared";
 import { MAX_FILE_SIZE_LABEL } from "@/lib/file-limits";
+import { MESSAGE_TAG_MAX, normalizeMessageTag } from "@/lib/message-tag";
 import { uploadFileRaw } from "@/lib/upload-client";
 import { Markdown } from "@/components/markdown";
 import { FilePreviewModal } from "@/components/file-preview";
@@ -54,6 +55,8 @@ export type ChatMessage = {
   files?: AssistantFile[];
   /** 这条提问随行上传的文件（落库后服务端回读，刷新仍在） */
   attachments?: MessageAttachment[];
+  /** 本人给这条助手消息打的标签（私有，服务端按用户过滤） */
+  tags?: string[];
 };
 
 /** 文件胶囊上的大小提示；只用于 title，不需要更精细 */
@@ -84,6 +87,7 @@ export function AgentChat({
   onBusyChange,
   onTurnPersisted,
   onTurnDeleted,
+  focusMessage,
 }: {
   scope: ChatScope;
   /** 当前页面所在项目；有值时后端把它当焦点项目（会话仍是个人会话） */
@@ -113,12 +117,22 @@ export function AgentChat({
     deletedIds: string[];
     lastMessageAt: string | null;
   }) => void;
+  /** 从「按标签查历史」跳过来时定位到的那条消息；nonce 让同一条消息也能再次触发滚动 */
+  focusMessage?: { messageId: string; nonce: number };
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** 正在编辑标签的消息 id（一次只开一个行内编辑器） */
+  const [tagEditorId, setTagEditorId] = useState<string | null>(null);
+  const [tagDraft, setTagDraft] = useState("");
+  /** 标签请求在飞的消息 id：只禁这一条的按钮，不影响继续聊天 */
+  const [tagBusyId, setTagBusyId] = useState<string | null>(null);
+  const [tagError, setTagError] = useState<string | null>(null);
+  /** 从标签检索跳转过来的目标消息：滚动到位后短暂高亮 */
+  const [highlightId, setHighlightId] = useState<string | null>(null);
   /** 当前正在预览的附件（助手 open_file 自动弹出，或用户点消息里的入口） */
   const [previewFile, setPreviewFile] = useState<AssistantFile | null>(null);
   /** 已上传、还没随消息发出去的文件（文件主人只有自己，见 /api/assistant/files） */
@@ -151,6 +165,33 @@ export function AgentChat({
       el.scrollTop = el.scrollHeight;
     }
   }, [messages, pending]);
+
+  // 「按标签查历史」跳过来：滚到目标消息并短暂高亮。目标可能已不在最近 200 条里 ——
+  // 那就只是切到了那条会话，不硬报错。nonce 保证同一条消息连点两次也会再次滚动。
+  const lastFocusNonce = useRef(-1);
+  useEffect(() => {
+    if (!focusMessage || lastFocusNonce.current === focusMessage.nonce) return;
+    lastFocusNonce.current = focusMessage.nonce;
+    const target = document.getElementById(`ac-msg-${focusMessage.messageId}`);
+    if (!target) return;
+    // 用户在翻历史：别让后续消息把人拽回底部
+    atBottomRef.current = false;
+    forceBottomRef.current = false;
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    // setState 放进定时器回调：既躲开 react-hooks/set-state-in-effect，
+    // 也让高亮从下一拍开始，不和滚动同一帧抢渲染
+    const highlightTimer = window.setTimeout(
+      () => setHighlightId(focusMessage.messageId),
+      0,
+    );
+    const clearTimer = window.setTimeout(() => {
+      setHighlightId((id) => (id === focusMessage.messageId ? null : id));
+    }, 2400);
+    return () => {
+      window.clearTimeout(highlightTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [focusMessage]);
 
   function handleListScroll() {
     const el = listRef.current;
@@ -315,6 +356,79 @@ export function AgentChat({
     void fetch(`/api/assistant/files/${id}`, { method: "DELETE" }).catch(() => {});
   }
 
+  function toggleTagEditor(messageId: string) {
+    setTagEditorId((prev) => (prev === messageId ? null : messageId));
+    setTagDraft("");
+    setTagError(null);
+  }
+
+  function applyMessageTags(messageId: string, tags: string[]) {
+    setMessages((ms) =>
+      ms.map((m) =>
+        m.id === messageId ? { ...m, tags: tags.length > 0 ? tags : undefined } : m,
+      ),
+    );
+  }
+
+  /** 给助手消息加一个标签；重复添加由服务端幂等处理 */
+  async function addTag(messageId: string) {
+    const tag = normalizeMessageTag(tagDraft);
+    if (!tag) {
+      setTagError("请输入标签");
+      return;
+    }
+    if (tagBusyId) return;
+    setTagBusyId(messageId);
+    setTagError(null);
+    try {
+      const res = await fetch(`/api/chat/messages/${messageId}/tags`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tag }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setTagError(data.error ?? "添加标签失败");
+        return;
+      }
+      applyMessageTags(messageId, Array.isArray(data.tags) ? data.tags : []);
+      setTagDraft("");
+    } catch {
+      setTagError("网络异常，请重试");
+    } finally {
+      setTagBusyId(null);
+    }
+  }
+
+  async function removeTag(messageId: string, tag: string) {
+    if (tagBusyId) return;
+    setTagBusyId(messageId);
+    setTagError(null);
+    try {
+      const res = await fetch(
+        `/api/chat/messages/${messageId}/tags?tag=${encodeURIComponent(tag)}`,
+        { method: "DELETE" },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setTagError(data.error ?? "移除标签失败");
+        return;
+      }
+      // 服务端不回整表；本地按已知标签过滤即可（撤回是幂等的）
+      setMessages((ms) =>
+        ms.map((m) => {
+          if (m.id !== messageId) return m;
+          const tags = (m.tags ?? []).filter((t) => t !== tag);
+          return { ...m, tags: tags.length > 0 ? tags : undefined };
+        }),
+      );
+    } catch {
+      setTagError("网络异常，请重试");
+    } finally {
+      setTagBusyId(null);
+    }
+  }
+
   async function deleteTurn(m: ChatMessage) {
     if (pending || deletingId || disabled) return;
 
@@ -422,8 +536,47 @@ export function AgentChat({
               </svg>
             </button>
           );
+          // 只有落库后的助手消息才有 id，也才谈得上打标签
+          const tagButton =
+            m.role === "assistant" && m.id ? (
+              <button
+                type="button"
+                onClick={() => toggleTagEditor(m.id!)}
+                aria-label="添加标签"
+                aria-expanded={tagEditorId === m.id}
+                title="标签"
+                className={`grid h-7 w-7 shrink-0 place-items-center rounded transition-colors hover:bg-surface ${
+                  tagEditorId === m.id || (m.tags?.length ?? 0) > 0
+                    ? "text-primary"
+                    : "text-ink-faint/70 hover:text-ink"
+                }`}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-3.5 w-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="M20.6 13.4 11 3.8H4v7l9.6 9.6a2 2 0 0 0 2.8 0l4.2-4.2a2 2 0 0 0 0-2.8Z" />
+                  <circle cx="7.5" cy="7.5" r="1" />
+                </svg>
+              </button>
+            ) : null;
+
           return (
-            <div key={m.localId ?? m.id ?? `idx-${i}`}>
+            <div
+              key={m.localId ?? m.id ?? `idx-${i}`}
+              id={m.id ? `ac-msg-${m.id}` : undefined}
+              className={
+                highlightId && highlightId === m.id
+                  ? "-m-1 rounded-lg p-1 ring-2 ring-primary/50 transition-shadow"
+                  : undefined
+              }
+            >
               {continuation ? (
                 <div
                   className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs ${
@@ -462,7 +615,10 @@ export function AgentChat({
                 >
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-xs text-ink-faint">{m.role === "user" ? "我" : "助手"}</span>
-                    <div className="-mt-1">{deleteButton}</div>
+                    <div className="-mt-1 flex items-center">
+                      {tagButton}
+                      {deleteButton}
+                    </div>
                   </div>
                   {/* 助手按 Markdown 渲染；用户自己敲的字保持原样，别把 * 和 # 也吃进去 */}
                   <div className="mt-1 text-ink">
@@ -472,6 +628,72 @@ export function AgentChat({
                       <p className="whitespace-pre-wrap">{m.content}</p>
                     )}
                   </div>
+                  {m.tags && m.tags.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {m.tags.map((tag) => (
+                        <span key={tag} className="ac-badge bg-surface text-ink-soft">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {m.role === "assistant" && m.id && tagEditorId === m.id && (
+                    <div className="mt-2 space-y-1.5 rounded-field border border-line bg-surface/80 p-2">
+                      {m.tags && m.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {m.tags.map((tag) => (
+                            <button
+                              key={tag}
+                              type="button"
+                              onClick={() => void removeTag(m.id!, tag)}
+                              disabled={tagBusyId === m.id}
+                              title="点击移除这个标签"
+                              className="ac-badge bg-primary-soft text-primary hover:bg-high hover:text-white disabled:opacity-50"
+                            >
+                              {tag} <span aria-hidden>×</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          value={tagDraft}
+                          onChange={(e) => setTagDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              void addTag(m.id!);
+                            }
+                            if (e.key === "Escape") {
+                              // 只关标签编辑器，别把整个抽屉关了
+                              e.stopPropagation();
+                              toggleTagEditor(m.id!);
+                            }
+                          }}
+                          maxLength={MESSAGE_TAG_MAX}
+                          placeholder="标签名，回车添加"
+                          aria-label="消息标签"
+                          className="ac-field min-w-0 flex-1 px-2 py-1 text-xs"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void addTag(m.id!)}
+                          disabled={tagBusyId === m.id || !tagDraft.trim()}
+                          className="ac-btn shrink-0 px-2 py-1 text-xs disabled:opacity-50"
+                        >
+                          添加
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleTagEditor(m.id!)}
+                          className="ac-btn-ghost shrink-0 px-2 py-1 text-xs"
+                        >
+                          关闭
+                        </button>
+                      </div>
+                      {tagError && <p className="text-[11px] text-high">{tagError}</p>}
+                    </div>
+                  )}
                   {m.attachments && m.attachments.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       {m.attachments.map((a) => (

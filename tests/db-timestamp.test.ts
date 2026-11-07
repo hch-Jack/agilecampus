@@ -132,8 +132,9 @@ describe("时间列的物理 schema 没有变（db:push 不该产生 ALTER）", 
     // 系统消息又加了 system_messages 的 created_at/read_at ——
     // 项目留言板又加了 project_comments 的 created_at ——
     // 助手对话文件又加了 agent_files.created_at ——
+    // 消息标签又加了 message_tags.created_at ——
     // 加表/加时间列就得同步这个数）
-    expect(columns).toHaveLength(48);
+    expect(columns).toHaveLength(49);
     for (const c of columns) expect(c.sqlType).toBe("timestamp");
 
     // createdAt / updatedAt 由 dbTimestampNow 声明，默认值必须在；

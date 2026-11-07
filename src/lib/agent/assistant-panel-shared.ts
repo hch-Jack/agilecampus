@@ -41,6 +41,8 @@ export type AssistantPanelMessage = {
   role: "user" | "assistant";
   content: string;
   attachments?: MessageAttachment[];
+  /** 本人给这条消息打的标签（只对助手消息有意义；服务端已按用户过滤） */
+  tags?: string[];
 };
 
 /** 一句话最多带几个文件；单文件上限与任务附件一致（1GB），在服务端也再校一次 */

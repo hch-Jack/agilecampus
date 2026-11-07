@@ -449,6 +449,31 @@ export const messages = pgTable(
   ],
 );
 
+// 用户给助手消息打的私有标签：标签属于「这个人」，不是消息本身的属性 ——
+// 同一条消息在不同用户眼里可以是不同的标签集合。因此不能存在 messages 行上。
+// 只允许给 role=assistant 的消息打标（应用层校验，见 lib/agent/message-tags.ts）。
+export const messageTags = pgTable(
+  "message_tags",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // 归一化后的短标签（≤20 码点）；同名标签可跨消息复用
+    tag: text("tag").notNull(),
+    createdAt: dbTimestampNow("created_at").notNull(),
+  },
+  (t) => [
+    // 同一用户给同一条消息重复打同一个标签视为幂等，不落第二行
+    uniqueIndex("message_tags_message_user_tag_unique").on(t.messageId, t.userId, t.tag),
+    // 「按标签查我的历史消息」与「列我的标签」都走这个前缀
+    index("message_tags_user_tag_idx").on(t.userId, t.tag),
+  ],
+);
+
 // ------------------------------------------------------- 个人上下文
 
 // 个人上下文：每人自记的一组背景（研究方向、当下在忙什么、协作偏好…），喂给 AI 助手。

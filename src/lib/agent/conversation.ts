@@ -13,6 +13,7 @@ import {
   classifyConversationText,
   normalizeConversationCategory,
 } from "./conversation-category";
+import { listMessageTagsForMessages } from "./message-tags";
 
 /**
  * 会话两种形态（见 schema 的 `conversation_kind` 与 `conversations_scope_chk`）：
@@ -250,13 +251,22 @@ export async function listPersonalConversationMessages(
     )
     .limit(capped);
 
-  return rows.reverse().map((r) => {
+  const ordered = rows.reverse();
+  // 标签是「我的」，随消息一起读回去；用户消息即使有历史残留也不展示
+  const tagsByMessage = await listMessageTagsForMessages(
+    actorId,
+    ordered.filter((r) => r.role === "assistant").map((r) => r.id),
+  );
+
+  return ordered.map((r) => {
     const attachments = parseMessageAttachments(r.attachments);
+    const tags = r.role === "assistant" ? tagsByMessage.get(r.id) : undefined;
     return {
       id: r.id,
       role: r.role as "user" | "assistant",
       content: r.content,
       ...(attachments ? { attachments } : {}),
+      ...(tags && tags.length > 0 ? { tags } : {}),
     };
   });
 }
