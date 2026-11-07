@@ -176,13 +176,48 @@ describe("助手生成文件：按扩展名编码", () => {
     expect(text).toContain("80%");
   });
 
+  it("红头文件：标题居中变红、红色分隔线、段落对齐/缩进/变色都写进 docx", async () => {
+    const out = await generateFile({
+      filename: "通知.docx",
+      document: {
+        title: "关于进一步加强项目管理的通知",
+        titleAlign: "center",
+        titleColor: "C00000",
+        blocks: [
+          { type: "divider", color: "C00000", thickness: 2.5 },
+          { type: "paragraph", text: "各部门：" },
+          {
+            type: "paragraph",
+            text: "为进一步规范项目管理，现将有关事项通知如下。",
+            indent: true,
+          },
+          { type: "heading", level: 2, text: "一、总体要求", align: "center", color: "C00000" },
+          { type: "paragraph", text: "请遵照执行。", align: "right" },
+        ],
+      },
+    });
+    const zip = await JSZip.loadAsync(out.data);
+    const xml = await zip.file("word/document.xml")!.async("string");
+    // 标题居中、红色
+    expect(xml).toContain('<w:jc w:val="center"/>');
+    expect(xml).toContain('<w:jc w:val="right"/>');
+    expect(xml).toContain('w:color w:val="C00000"');
+    // 红色分隔线：2.5pt → 20（八分之一磅）
+    expect(xml).toMatch(/<w:bottom[^>]*w:color="C00000"[^>]*w:sz="20"/);
+    // 首行缩进两字
+    expect(xml).toContain('<w:ind w:firstLine="420"/>');
+  });
+
   it("PDF 也能排横幅、卡片、时间线与进度条（同一份稿件不掉内容）", async () => {
     const out = await generateFile({
       filename: "丰富排版.pdf",
       document: {
         title: "丰富排版",
+        titleAlign: "center",
+        titleColor: "C00000",
         blocks: [
-          { type: "banner", text: "项目进展", subtitle: "截至 11 月" },
+          { type: "divider", color: "C00000", thickness: 2.5, style: "double" },
+          { type: "banner", text: "项目进展", subtitle: "截至 11 月", align: "center" },
           {
             type: "cards",
             items: [
@@ -195,6 +230,8 @@ describe("助手生成文件：按扩展名编码", () => {
             items: [{ marker: "3 月", title: "立项" }, { marker: "6 月", title: "中期" }],
           },
           { type: "progress", items: [{ label: "前端", value: 80 }] },
+          { type: "paragraph", text: "首行缩进两字的正文。", indent: true, align: "justify" },
+          { type: "paragraph", text: "右对齐落款", align: "right", color: "C00000" },
         ],
       },
     });
@@ -330,6 +367,38 @@ describe("助手生成文件：按扩展名编码", () => {
     expect(cardSlide).toContain("三大重点");
     const timelineSlide = await zip.file("ppt/slides/slide3.xml")!.async("string");
     expect(timelineSlide).toContain("确定范围");
+  });
+
+  it("PPT 要点支持子项层级，可设置正文对齐与颜色", async () => {
+    const out = await generateFile({
+      filename: "子项.pptx",
+      slides: {
+        title: "子项",
+        slides: [
+          {
+            layout: "bullets",
+            title: "工作安排",
+            align: "center",
+            textColor: "1E3A5F",
+            bullets: [
+              "项目启动",
+              { text: "组建团队", level: 1 },
+              { text: "明确分工", level: 2 },
+              "中期检查",
+            ],
+          },
+        ],
+      },
+    });
+    const zip = await JSZip.loadAsync(out.data);
+    const xml = await zip.file("ppt/slides/slide1.xml")!.async("string");
+    expect(xml).toContain("组建团队");
+    expect(xml).toContain('lvl="1"');
+    expect(xml).toContain('lvl="2"');
+    expect(xml).toContain('algn="ctr"');
+    expect(xml).toContain("1E3A5F");
+    // 子项两个字不应作为正文出现
+    expect(xml).not.toContain("子项：");
   });
 
   it("只给正文也能生成 PPT（按标题拆页）", async () => {

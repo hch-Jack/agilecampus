@@ -14,12 +14,15 @@ import {
   TableLayoutType,
   TableRow,
   TextRun,
+  UnderlineType,
   WidthType,
 } from "docx";
 import {
   resolveFontFamily,
   resolveTheme,
+  type DocAlign,
   type DocBlock,
+  type DocLineStyle,
   type DocTheme,
   type DocumentSpec,
 } from "./document-spec";
@@ -107,6 +110,46 @@ function estimateLines(block: DocBlock): number {
 
 function hex(value: string): string {
   return value.replace("#", "").toUpperCase();
+}
+
+const ALIGNMENT: Record<DocAlign, (typeof AlignmentType)[keyof typeof AlignmentType]> = {
+  left: AlignmentType.LEFT,
+  center: AlignmentType.CENTER,
+  right: AlignmentType.RIGHT,
+  justify: AlignmentType.JUSTIFIED,
+};
+
+function alignmentOf(align?: DocAlign) {
+  return align ? ALIGNMENT[align] : undefined;
+}
+
+const LINE_STYLE: Record<DocLineStyle, (typeof BorderStyle)[keyof typeof BorderStyle]> = {
+  single: BorderStyle.SINGLE,
+  double: BorderStyle.DOUBLE,
+  dashed: BorderStyle.DASHED,
+};
+
+type RunBlock = {
+  text: string;
+  color?: string;
+  size?: number;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+};
+
+/** 把块上的行内排版翻译成 TextRun 参数 */
+function runOptions(block: RunBlock, defaultBold?: boolean) {
+  return {
+    text: block.text,
+    ...(block.color ? { color: hex(block.color) } : {}),
+    ...(block.size ? { size: Math.round(block.size * 2) } : {}),
+    ...(block.bold !== undefined || defaultBold !== undefined
+      ? { bold: block.bold ?? defaultBold }
+      : {}),
+    ...(block.italic ? { italics: true } : {}),
+    ...(block.underline ? { underline: { type: UnderlineType.SINGLE } } : {}),
+  };
 }
 
 function quoteBorders(theme: DocTheme) {
@@ -249,7 +292,11 @@ function buildStyles(theme: DocTheme, bodyFont: string, headingFont: string) {
 
 function headingParagraph(block: Extract<DocBlock, { type: "heading" }>): Paragraph {
   const style = block.level === 1 ? "Heading1" : block.level === 2 ? "Heading2" : "Heading3";
-  return new Paragraph({ style, children: [new TextRun({ text: block.text })] });
+  return new Paragraph({
+    style,
+    ...(block.align ? { alignment: alignmentOf(block.align) } : {}),
+    children: [new TextRun(runOptions(block, true))],
+  });
 }
 
 function tableParagraph(text: string, opts: { bold?: boolean; size?: number; color?: string; align?: (typeof AlignmentType)[keyof typeof AlignmentType] }) {
@@ -409,17 +456,25 @@ const NO_BORDERS = {
 
 /** 横幅：整行深色底 + 大字，用作章节分隔 / 重点提示 */
 function bannerTable(block: Extract<DocBlock, { type: "banner" }>, theme: DocTheme): Table {
+  const alignment = alignmentOf(block.align);
   const children: Paragraph[] = [
     new Paragraph({
+      ...(alignment ? { alignment } : {}),
       spacing: { after: block.subtitle ? 80 : 0, line: 300 },
       children: [
-        new TextRun({ text: block.text, bold: true, size: 32, color: hex(theme.onPrimary) }),
+        new TextRun({
+          text: block.text,
+          bold: true,
+          size: 32,
+          color: hex(block.color ?? theme.onPrimary),
+        }),
       ],
     }),
   ];
   if (block.subtitle) {
     children.push(
       new Paragraph({
+        ...(alignment ? { alignment } : {}),
         spacing: { after: 0, line: 300 },
         children: [
           new TextRun({ text: block.subtitle, size: 20, color: hex(theme.soft) }),
@@ -633,7 +688,18 @@ export async function docxFromDocument(spec: DocumentSpec): Promise<Buffer> {
   const children: (Paragraph | Table)[] = [];
 
   if (spec.title) {
-    children.push(new Paragraph({ style: "DocTitle", children: [new TextRun({ text: spec.title })] }));
+    children.push(
+      new Paragraph({
+        style: "DocTitle",
+        ...(spec.titleAlign ? { alignment: alignmentOf(spec.titleAlign) } : {}),
+        children: [
+          new TextRun({
+            text: spec.title,
+            ...(spec.titleColor ? { color: hex(spec.titleColor) } : {}),
+          }),
+        ],
+      }),
+    );
   }
   if (spec.subtitle) {
     children.push(
@@ -671,10 +737,17 @@ export async function docxFromDocument(spec: DocumentSpec): Promise<Buffer> {
         break;
       case "paragraph":
         children.push(
-          new Paragraph({ style: "DocBody", children: [new TextRun({ text: block.text })] }),
+          new Paragraph({
+            style: "DocBody",
+            ...(block.align ? { alignment: alignmentOf(block.align) } : {}),
+            ...(block.indent ? { indent: { firstLine: 420 } } : {}),
+            children: [new TextRun(runOptions(block))],
+          }),
         );
         break;
-      case "list":
+      case "list": {
+        const itemRun = (item: string) =>
+          new TextRun({ text: item, ...(block.color ? { color: hex(block.color) } : {}) });
         block.items.forEach((item) => {
           children.push(
             new Paragraph(
@@ -682,18 +755,19 @@ export async function docxFromDocument(spec: DocumentSpec): Promise<Buffer> {
                 ? {
                     numbering: { reference: "ac-ordered", level: 0 },
                     spacing: { after: 60, line: 320 },
-                    children: [new TextRun({ text: item })],
+                    children: [itemRun(item)],
                   }
                 : {
                     bullet: { level: 0 },
                     spacing: { after: 60, line: 320 },
-                    children: [new TextRun({ text: item })],
+                    children: [itemRun(item)],
                   },
             ),
           );
         });
         children.push(new Paragraph({ spacing: { after: 80 }, children: [] }));
         break;
+      }
       case "table": {
         // 数据行太多时按页切开、每页重复表头 —— 预览器不会自动给长表格翻页
         if (block.rows.length > TABLE_ROWS_PER_PAGE) {
@@ -719,7 +793,11 @@ export async function docxFromDocument(spec: DocumentSpec): Promise<Buffer> {
       }
       case "quote":
         children.push(
-          new Paragraph({ style: "DocQuote", children: [new TextRun({ text: block.text })] }),
+          new Paragraph({
+            style: "DocQuote",
+            ...(block.align ? { alignment: alignmentOf(block.align) } : {}),
+            children: [new TextRun(runOptions(block))],
+          }),
         );
         break;
       case "code":
@@ -784,9 +862,10 @@ export async function docxFromDocument(spec: DocumentSpec): Promise<Buffer> {
             spacing: { before: 120, after: 160 },
             border: {
               bottom: {
-                style: BorderStyle.SINGLE,
-                size: 6,
-                color: hex(theme.line),
+                // Word 的边框线宽以 1/8 磅为单位
+                style: LINE_STYLE[block.style ?? "single"],
+                size: Math.round((block.thickness ?? 1) * 8),
+                color: hex(block.color ?? theme.line),
                 space: 1,
               },
             },

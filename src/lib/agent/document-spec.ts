@@ -148,6 +148,45 @@ export const DOC_MAX_SHEETS = 20;
 export const DOC_MAX_SHEET_ROWS = 20_000;
 export const DOC_MAX_SHEET_COLS = 50;
 
+// —— 行内排版 ——
+
+/** 文字对齐 */
+export const DOC_ALIGN_NAMES = ["left", "center", "right", "justify"] as const;
+export type DocAlign = (typeof DOC_ALIGN_NAMES)[number];
+
+/** 与 Word 一致的线型（分隔线用） */
+export const DOC_LINE_STYLES = ["single", "double", "dashed"] as const;
+export type DocLineStyle = (typeof DOC_LINE_STYLES)[number];
+
+/** 6 位 hex 颜色（可带 #）；红头文件常用 C00000 */
+const alignField = z
+  .enum(DOC_ALIGN_NAMES)
+  .optional()
+  .describe("对齐：center 居中、right 右对齐、justify 两端对齐，默认左对齐");
+const colorField = z
+  .string()
+  .regex(/^#?[0-9a-fA-F]{6}$/)
+  .optional()
+  .describe("颜色，6 位 hex（可带 #），如 C00000 红色");
+
+const textFormatShape = {
+  align: alignField,
+  color: colorField,
+} as const;
+
+const runFormatShape = {
+  ...textFormatShape,
+  size: z
+    .number()
+    .min(8)
+    .max(72)
+    .optional()
+    .describe("字号（磅）；标题默认按 16/13/11，正文默认 10.5"),
+  bold: z.boolean().optional().describe("加粗（标题默认加粗）"),
+  italic: z.boolean().optional().describe("斜体"),
+  underline: z.boolean().optional().describe("下划线"),
+} as const;
+
 // —— 块 ——
 
 const headingSchema = z.object({
@@ -157,17 +196,21 @@ const headingSchema = z.object({
     .default(1)
     .describe("1=章标题，2=节标题，3=小节标题"),
   text: z.string().min(1).max(300),
+  ...runFormatShape,
 });
 
 const paragraphSchema = z.object({
   type: z.literal("paragraph"),
   text: z.string().min(1).max(DOC_MAX_BLOCK_TEXT),
+  ...runFormatShape,
+  indent: z.boolean().optional().describe("首行缩进两字（中文公文常用）"),
 });
 
 const listSchema = z.object({
   type: z.literal("list"),
   ordered: z.boolean().optional().describe("true=有序列表，默认无序"),
   items: z.array(z.string().min(1).max(2_000)).min(1).max(200),
+  color: colorField,
 });
 
 const tableSchema = z.object({
@@ -183,6 +226,7 @@ const tableSchema = z.object({
 const quoteSchema = z.object({
   type: z.literal("quote"),
   text: z.string().min(1).max(DOC_MAX_BLOCK_TEXT),
+  ...textFormatShape,
 });
 
 const codeSchema = z.object({
@@ -191,7 +235,12 @@ const codeSchema = z.object({
   language: z.string().max(40).optional().describe("语言名，仅作标签"),
 });
 
-const dividerSchema = z.object({ type: z.literal("divider") });
+const dividerSchema = z.object({
+  type: z.literal("divider"),
+  color: colorField,
+  thickness: z.number().min(0.5).max(12).optional().describe("线宽（磅），默认 1"),
+  style: z.enum(DOC_LINE_STYLES).optional().describe("线型，默认 single"),
+});
 
 const pageBreakSchema = z.object({ type: z.literal("pageBreak") });
 
@@ -219,6 +268,8 @@ const bannerSchema = z.object({
   type: z.literal("banner"),
   text: z.string().min(1).max(200).describe("横幅主文案，如「第一部分 项目进展」"),
   subtitle: z.string().max(300).optional(),
+  align: alignField,
+  color: colorField.describe("横幅主文案颜色，默认白色"),
 });
 
 const cardsSchema = z.object({
@@ -286,6 +337,11 @@ export type DocBlock = z.infer<typeof docBlockSchema>;
 
 export const documentSpecSchema = z.object({
   title: z.string().max(200).optional().describe("文档标题（不要和第一段标题重复）"),
+  titleAlign: z
+    .enum(["left", "center", "right"])
+    .optional()
+    .describe("文档标题对齐，红头文件一般用 center；默认左对齐"),
+  titleColor: colorField,
   subtitle: z.string().max(400).optional().describe("副标题 / 一句话摘要"),
   author: z.string().max(120).optional().describe("作者或团队"),
   date: z.string().max(60).optional().describe("日期文案，如 2026-11-08"),
@@ -331,6 +387,20 @@ export const slideChartSchema = z.object({
     .describe("数据系列；饼图只用第一个系列"),
 });
 
+/** 幻灯片要点：字符串 = 顶层；对象 = 可带层级的子项 */
+export const slideBulletSchema = z.union([
+  z.string().min(1).max(500),
+  z.object({
+    text: z.string().min(1).max(500),
+    level: z
+      .union([z.literal(0), z.literal(1), z.literal(2)])
+      .optional()
+      .describe("0=顶层，1=子项，2=次子项，默认 0"),
+  }),
+]);
+
+export type SlideBullet = z.infer<typeof slideBulletSchema>;
+
 export const slideSpecSchema = z.object({
   layout: z
     .enum([
@@ -353,10 +423,18 @@ export const slideSpecSchema = z.object({
   title: z.string().max(200).optional(),
   subtitle: z.string().max(400).optional().describe("仅 title / section 页使用"),
   bullets: z
-    .array(z.string().max(500))
-    .max(12)
+    .array(slideBulletSchema)
+    .max(20)
     .optional()
-    .describe("要点，一条一行；可用「子项：…… 」不多于 12 条"),
+    .describe(
+      "要点：顶层一条一个字符串；要子项就用 { text, level: 1 } 对象（level 1=子项、2=次子项），" +
+        "不要把「子项」两个字当正文打出来。最多 20 条",
+    ),
+  align: z
+    .enum(["left", "center", "right"])
+    .optional()
+    .describe("要点页正文对齐，默认左"),
+  textColor: colorField.describe("要点页正文颜色，默认主题正文色"),
   table: z
     .object({
       headers: z.array(z.string().max(200)).min(1).max(8),
@@ -450,6 +528,43 @@ function clip(text: string, max: number): string {
   return normalized.length > max ? `${normalized.slice(0, max)}…` : normalized;
 }
 
+function normalizeHexColor(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  return value.replace("#", "").toUpperCase();
+}
+
+type RunFormat = {
+  align?: DocAlign;
+  color?: string;
+  size?: number;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+};
+
+/** 只保留有值的行内排版字段，避免把 undefined 写进 JSON */
+function normalizeRunFormat(block: RunFormat): RunFormat {
+  const out: RunFormat = {};
+  if (block.align) out.align = block.align;
+  const color = normalizeHexColor(block.color);
+  if (color) out.color = color;
+  if (typeof block.size === "number" && Number.isFinite(block.size)) {
+    out.size = Math.max(8, Math.min(72, Math.round(block.size * 2) / 2));
+  }
+  if (typeof block.bold === "boolean") out.bold = block.bold;
+  if (typeof block.italic === "boolean") out.italic = block.italic;
+  if (typeof block.underline === "boolean") out.underline = block.underline;
+  return out;
+}
+
+function normalizeTextFormat(block: { align?: DocAlign; color?: string }) {
+  const out: { align?: DocAlign; color?: string } = {};
+  if (block.align) out.align = block.align;
+  const color = normalizeHexColor(block.color);
+  if (color) out.color = color;
+  return out;
+}
+
 function alignRow(row: string[], count: number): string[] {
   const cells = row.slice(0, count).map((c) => clip(c, 2_000));
   while (cells.length < count) cells.push("");
@@ -463,12 +578,26 @@ export function normalizeDocument(input: DocumentSpec): DocumentSpec {
     switch (block.type) {
       case "heading": {
         const text = clip(block.text, 300);
-        if (text) blocks.push({ type: "heading", level: block.level ?? 1, text });
+        if (text) {
+          blocks.push({
+            type: "heading",
+            level: block.level ?? 1,
+            text,
+            ...normalizeRunFormat(block),
+          });
+        }
         break;
       }
       case "paragraph": {
         const text = clip(block.text, DOC_MAX_BLOCK_TEXT);
-        if (text) blocks.push({ type: "paragraph", text });
+        if (text) {
+          blocks.push({
+            type: "paragraph",
+            text,
+            ...normalizeRunFormat(block),
+            ...(block.indent ? { indent: true } : {}),
+          });
+        }
         break;
       }
       case "list": {
@@ -476,7 +605,15 @@ export function normalizeDocument(input: DocumentSpec): DocumentSpec {
           .map((i) => clip(i, 2_000))
           .filter(Boolean)
           .slice(0, 200);
-        if (items.length > 0) blocks.push({ type: "list", ordered: block.ordered, items });
+        if (items.length > 0) {
+          const color = normalizeHexColor(block.color);
+          blocks.push({
+            type: "list",
+            ordered: block.ordered,
+            items,
+            ...(color ? { color } : {}),
+          });
+        }
         break;
       }
       case "table": {
@@ -497,7 +634,7 @@ export function normalizeDocument(input: DocumentSpec): DocumentSpec {
       }
       case "quote": {
         const text = clip(block.text, DOC_MAX_BLOCK_TEXT);
-        if (text) blocks.push({ type: "quote", text });
+        if (text) blocks.push({ type: "quote", text, ...normalizeTextFormat(block) });
         break;
       }
       case "code": {
@@ -511,7 +648,18 @@ export function normalizeDocument(input: DocumentSpec): DocumentSpec {
         }
         break;
       }
-      case "divider":
+      case "divider": {
+        const color = normalizeHexColor(block.color);
+        blocks.push({
+          type: "divider",
+          ...(color ? { color } : {}),
+          ...(typeof block.thickness === "number"
+            ? { thickness: Math.max(0.5, Math.min(12, block.thickness)) }
+            : {}),
+          ...(block.style ? { style: block.style } : {}),
+        });
+        break;
+      }
       case "pageBreak":
         blocks.push(block);
         break;
@@ -542,6 +690,7 @@ export function normalizeDocument(input: DocumentSpec): DocumentSpec {
             type: "banner",
             text,
             ...(block.subtitle ? { subtitle: clip(block.subtitle, 300) } : {}),
+            ...normalizeTextFormat(block),
           });
         }
         break;
@@ -600,8 +749,11 @@ export function normalizeDocument(input: DocumentSpec): DocumentSpec {
   if (blocks.length === 0) {
     throw new Error("文档没有任何内容块");
   }
+  const titleColor = normalizeHexColor(input.titleColor);
   return {
     ...(input.title ? { title: clip(input.title, 200) } : {}),
+    ...(input.titleAlign ? { titleAlign: input.titleAlign } : {}),
+    ...(titleColor ? { titleColor } : {}),
     ...(input.subtitle ? { subtitle: clip(input.subtitle, 400) } : {}),
     ...(input.author ? { author: clip(input.author, 120) } : {}),
     ...(input.date ? { date: clip(input.date, 60) } : {}),
@@ -615,17 +767,24 @@ export function normalizeDocument(input: DocumentSpec): DocumentSpec {
 export function normalizePresentation(input: PresentationSpec): PresentationSpec {
   const slides: SlideSpec[] = [];
   for (const slide of input.slides.slice(0, DOC_MAX_SLIDES)) {
+    const slideColor = normalizeHexColor(slide.textColor);
     const next: SlideSpec = {
       ...(slide.layout ? { layout: slide.layout } : {}),
       ...(slide.title ? { title: clip(slide.title, 200) } : {}),
       ...(slide.subtitle ? { subtitle: clip(slide.subtitle, 400) } : {}),
+      ...(slide.align ? { align: slide.align } : {}),
+      ...(slideColor ? { textColor: slideColor } : {}),
       ...(slide.notes ? { notes: clip(slide.notes, 2_000) } : {}),
     };
     if (slide.bullets) {
       const bullets = slide.bullets
-        .map((b) => clip(b, 500))
-        .filter(Boolean)
-        .slice(0, 12);
+        .map((b) =>
+          typeof b === "string"
+            ? { text: clip(b, 500), level: 0 as const }
+            : { text: clip(b.text, 500), level: b.level ?? (0 as const) },
+        )
+        .filter((b) => b.text)
+        .slice(0, 20);
       if (bullets.length > 0) next.bullets = bullets;
     }
     if (slide.table) {

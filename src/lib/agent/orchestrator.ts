@@ -190,6 +190,9 @@ const SCOPE_NOTES: Record<AgentScope["kind"], string> = {
   docx / pdf 传 document（结构化排版，别只给一整段文字），pptx 传 slides，xlsx 传 sheets，
   纯文本 / 代码用 content。内容够丰富时用上卡片组 cards、时间线 timeline、进度条 progress、
   横幅 banner、图表 chart（pptx）这些块，不要全是段落；需要换字体就填 font / headingFont。
+  要居中 / 改字色 / 画彩色线时用 align、color、size、bold/italic/underline、indent 与 divider 的
+  color/thickness/style（红头文件：titleAlign=center + titleColor=C00000 + 红色 divider），
+  PPT 子项用 { text, level: 1 } 对象，不要把「子项」两个字写进正文。
   生成后可直接下载，也可 save_file_to_task 进任务，或 send_message（fileSource=file）发给别人。
 - 用户说「找一下之前聊过 X 的消息 / 跳过去」时：先 search_messages 搜关键词，挑出最相关的一条，
   再用 open_message（messageId）把他带到那条消息；不要把搜索片段当成完整对话，也不要臆造 messageId。

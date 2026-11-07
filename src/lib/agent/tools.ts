@@ -682,8 +682,11 @@ function buildBasePersonalTools(actorId: string) {
         "排版建议：docx/pdf 优先用 document 给结构化稿件（标题、章节、段落、列表、表格、引用、代码、标注、数据卡、" +
         "横幅 banner、卡片组 cards、时间线 timeline、进度条 progress），" +
         "可用 font / headingFont 指定字体 id（yahei/dengxian/simhei/simsun/kaiti/fangsong/arial/calibri/times/georgia）；" +
-        "只给 content 时按 Markdown 解析。\n" +
+        "标题/段落可设 align（如 center 居中）、color（hex，如 C00000 红色）、size（磅）、bold/italic/underline，" +
+        "正文可设 indent 首行缩进；divider 可设 color/thickness/style 画彩色分隔线（红头文件：titleAlign=center、" +
+        "titleColor=C00000、标题下接一条 color=C00000 thickness=2.5 的 divider）；只给 content 时按 Markdown 解析。\n" +
         "pptx 用 slides 描述每一页（封面/章节/要点/表格/引用/数据卡/卡片组 cards/时间线 timeline/左右对比 comparison/图表 chart/结束页）；" +
+        "要点支持子项：顶层用字符串，子项用 { text, level: 1 } 对象；可用 align / textColor 调正文对齐与颜色；" +
         "图表在 chart 里给 kind（bar/line/pie/doughnut）+ categories + series；只给 content 时按标题自动拆页。\n" +
         "xlsx 用 sheets 描述多个工作表；也可在 content 里写 CSV（第一行表头）。\n" +
         "文本类格式（md/txt/csv/json/html 等）把正文放在 content。\n" +

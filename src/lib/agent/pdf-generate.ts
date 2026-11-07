@@ -5,7 +5,9 @@ import { PDFDocument, rgb, type PDFFont, type PDFPage, type RGB } from "pdf-lib"
 import {
   DOC_THEMES,
   resolveTheme,
+  type DocAlign,
   type DocBlock,
+  type DocLineStyle,
   type DocTheme,
   type DocumentSpec,
 } from "./document-spec";
@@ -72,8 +74,17 @@ const TOKEN_RE = new RegExp(
   "g",
 );
 
-/** 按字/词切分：中文逐字断行，西文按单词断行 */
-function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
+/**
+ * 按字/词切分：中文逐字断行，西文按单词断行。
+ * `firstLineIndent` 给首行留出缩进（中文公文的首行缩进两字），后续行仍用满宽。
+ */
+function wrapText(
+  text: string,
+  font: PDFFont,
+  size: number,
+  maxWidth: number,
+  firstLineIndent = 0,
+): string[] {
   const lines: string[] = [];
   for (const rawLine of text.replace(/\t/g, "  ").split("\n")) {
     if (!rawLine) {
@@ -84,7 +95,8 @@ function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): 
     for (const token of rawLine.match(TOKEN_RE) ?? []) {
       if (!line && /^\s+$/.test(token)) continue;
       const candidate = line + token;
-      if (line && font.widthOfTextAtSize(candidate, size) > maxWidth) {
+      const limit = lines.length === 0 ? maxWidth - firstLineIndent : maxWidth;
+      if (line && font.widthOfTextAtSize(candidate, size) > limit) {
         lines.push(line.trimEnd());
         line = token.trimStart();
       } else {
@@ -178,14 +190,65 @@ class PdfBuilder {
     }
   }
 
+  /** 行的 x 坐标：按 left / center / right 对齐 */
+  private xForLine(
+    line: string,
+    size: number,
+    font: PDFFont,
+    align: DocAlign,
+    x0 = MARGIN_X,
+    boxWidth = CONTENT_WIDTH,
+  ): number {
+    if (align === "center") {
+      return x0 + (boxWidth - font.widthOfTextAtSize(line, size)) / 2;
+    }
+    if (align === "right") {
+      return x0 + boxWidth - font.widthOfTextAtSize(line, size);
+    }
+    return x0;
+  }
+
+  /** 带对齐的逐行绘制（justify 在 PDF 里按左对齐处理） */
+  private writeAligned(
+    lines: string[],
+    size: number,
+    font: PDFFont,
+    color: string,
+    lineHeight: number,
+    align: DocAlign = "left",
+    firstLineIndent = 0,
+    x0 = MARGIN_X,
+    boxWidth = CONTENT_WIDTH,
+  ): void {
+    lines.forEach((line, index) => {
+      this.y -= lineHeight;
+      if (!line) return;
+      const x =
+        index === 0 && firstLineIndent > 0
+          ? x0 + firstLineIndent
+          : this.xForLine(line, size, font, align, x0, boxWidth);
+      this.drawLine(line, x, this.y, size, font, color);
+    });
+  }
+
   frontMatter(spec: DocumentSpec): void {
     if (!spec.title) return;
+    const align = spec.titleAlign ?? "left";
+    const color = spec.titleColor ?? this.theme.primary;
     const titleLines = wrapText(spec.title, this.bold, 23, CONTENT_WIDTH);
-    this.writeLines(titleLines, MARGIN_X, 23, this.bold, this.theme.primary, 30);
+    this.writeAligned(titleLines, 23, this.bold, color, 30, align);
+    // 标题下的短强调线跟着标题对齐
+    const ruleWidth = 64;
+    const ruleX =
+      align === "center"
+        ? MARGIN_X + (CONTENT_WIDTH - ruleWidth) / 2
+        : align === "right"
+          ? MARGIN_X + CONTENT_WIDTH - ruleWidth
+          : MARGIN_X;
     this.page.drawRectangle({
-      x: MARGIN_X,
+      x: ruleX,
       y: this.y - 7,
-      width: 64,
+      width: ruleWidth,
       height: 3,
       color: hexToRgb(this.theme.accent),
     });
@@ -212,52 +275,87 @@ class PdfBuilder {
   }
 
   heading(block: Extract<DocBlock, { type: "heading" }>): void {
+    const align = block.align ?? "left";
     if (block.level === 1) {
+      const size = block.size ?? 15.5;
       this.ensure(52);
       this.y -= 14;
-      const lines = wrapText(block.text, this.bold, 15.5, CONTENT_WIDTH);
-      this.writeLines(lines, MARGIN_X, 15.5, this.bold, this.theme.primary, 21);
-      this.y -= 7;
-      const lastWidth = Math.min(
-        CONTENT_WIDTH,
-        Math.max(...lines.map((l) => this.bold.widthOfTextAtSize(l, 15.5)), 48),
+      const lines = wrapText(block.text, this.bold, size, CONTENT_WIDTH);
+      this.writeAligned(
+        lines,
+        size,
+        this.bold,
+        block.color ?? this.theme.primary,
+        size + 5.5,
+        align,
       );
+      this.y -= 7;
+      const barWidth = Math.min(
+        CONTENT_WIDTH,
+        Math.max(...lines.map((l) => this.bold.widthOfTextAtSize(l, size)), 48),
+      );
+      const barX =
+        align === "center"
+          ? MARGIN_X + (CONTENT_WIDTH - barWidth) / 2
+          : align === "right"
+            ? MARGIN_X + CONTENT_WIDTH - barWidth
+            : MARGIN_X;
       this.page.drawRectangle({
-        x: MARGIN_X,
+        x: barX,
         y: this.y,
-        width: lastWidth,
+        width: barWidth,
         height: 1.6,
         color: hexToRgb(this.theme.accent),
       });
       this.y -= 12;
       return;
     }
-    const size = block.level === 2 ? 12.8 : 11.2;
+    const size = block.size ?? (block.level === 2 ? 12.8 : 11.2);
     const lineHeight = size + 5;
     this.ensure(lineHeight + 22);
     this.y -= block.level === 2 ? 12 : 8;
     const lines = wrapText(block.text, this.bold, size, CONTENT_WIDTH);
-    this.writeLines(lines, MARGIN_X, size, this.bold, this.theme.ink, lineHeight);
+    this.writeAligned(lines, size, this.bold, block.color ?? this.theme.ink, lineHeight, align);
     this.y -= 6;
   }
 
-  paragraph(text: string): void {
-    const lines = wrapText(text, this.regular, BODY_SIZE, CONTENT_WIDTH);
-    for (const line of lines) {
-      this.ensure(BODY_LINE);
-      this.y -= BODY_LINE;
-      if (line) this.drawLine(line, MARGIN_X, this.y, BODY_SIZE, this.regular, this.theme.ink);
+  paragraph(block: Extract<DocBlock, { type: "paragraph" }>): void {
+    const size = block.size ?? BODY_SIZE;
+    const lineHeight = size * (BODY_LINE / BODY_SIZE);
+    const font = block.bold ? this.bold : this.regular;
+    const indent = block.indent ? size * 2 : 0;
+    const lines = wrapText(block.text, font, size, CONTENT_WIDTH, indent);
+    const align = block.align ?? "left";
+    for (let i = 0; i < lines.length; i++) {
+      this.ensure(lineHeight);
+      this.y -= lineHeight;
+      if (!lines[i]) continue;
+      const x =
+        i === 0 && indent > 0 ? MARGIN_X + indent : this.xForLine(lines[i], size, font, align);
+      this.drawLine(lines[i], x, this.y, size, font, block.color ?? this.theme.ink);
     }
     this.y -= 7;
   }
 
-  quote(text: string): void {
-    const lines = wrapText(text, this.regular, 10.2, CONTENT_WIDTH - 18);
+  quote(block: Extract<DocBlock, { type: "quote" }>): void {
+    const x0 = MARGIN_X + 16;
+    const innerWidth = CONTENT_WIDTH - 18;
+    const lines = wrapText(block.text, this.regular, 10.2, innerWidth);
     const height = lines.length * 16.5 + 10;
     this.ensure(height);
     const top = this.y;
     this.y -= 5;
-    this.writeLines(lines, MARGIN_X + 16, 10.2, this.regular, this.theme.muted, 16.5);
+    this.writeAligned(
+      lines,
+      10.2,
+      this.regular,
+      block.color ?? this.theme.muted,
+      16.5,
+      block.align ?? "left",
+      0,
+      x0,
+      innerWidth,
+    );
     this.page.drawRectangle({
       x: MARGIN_X + 2,
       y: this.y - 3,
@@ -378,10 +476,23 @@ class PdfBuilder {
       height,
       color: hexToRgb(this.theme.primary),
     });
+    const align = block.align ?? "left";
+    const x0 = MARGIN_X + 14;
+    const boxWidth = CONTENT_WIDTH - 28;
     this.y = top - 2;
-    this.writeLines(titleLines, MARGIN_X + 14, 14, this.bold, this.theme.onPrimary, 20);
+    this.writeAligned(
+      titleLines,
+      14,
+      this.bold,
+      block.color ?? this.theme.onPrimary,
+      20,
+      align,
+      0,
+      x0,
+      boxWidth,
+    );
     if (subLines.length > 0) {
-      this.writeLines(subLines, MARGIN_X + 14, 9.6, this.regular, this.theme.soft, 14);
+      this.writeAligned(subLines, 9.6, this.regular, this.theme.soft, 14, align, 0, x0, boxWidth);
     }
     this.y = top - height - 12;
   }
@@ -629,16 +740,30 @@ class PdfBuilder {
     this.y -= 10;
   }
 
-  divider(): void {
+  divider(block: Extract<DocBlock, { type: "divider" }> = { type: "divider" }): void {
+    const thickness = block.thickness ?? 1;
+    const color = hexToRgb(block.color ?? this.theme.line);
+    const style: DocLineStyle = block.style ?? "single";
+    const draw = (dy: number, dashArray?: number[]) =>
+      this.page.drawLine({
+        start: { x: MARGIN_X, y: this.y - dy },
+        end: { x: MARGIN_X + CONTENT_WIDTH, y: this.y - dy },
+        thickness,
+        color,
+        ...(dashArray ? { dashArray } : {}),
+      });
     this.ensure(20);
     this.y -= 10;
-    this.page.drawRectangle({
-      x: MARGIN_X,
-      y: this.y,
-      width: CONTENT_WIDTH,
-      height: 1,
-      color: hexToRgb(this.theme.line),
-    });
+    if (style === "double") {
+      const gap = Math.max(2, thickness + 1.5);
+      draw(0);
+      draw(gap);
+      this.y -= gap;
+    } else if (style === "dashed") {
+      draw(0, [4, 3]);
+    } else {
+      draw(0);
+    }
     this.y -= 10;
   }
 
@@ -683,7 +808,7 @@ class PdfBuilder {
           this.heading(block);
           break;
         case "paragraph":
-          this.paragraph(block.text);
+          this.paragraph(block);
           break;
         case "list":
           this.list(block);
@@ -692,7 +817,7 @@ class PdfBuilder {
           this.table(block);
           break;
         case "quote":
-          this.quote(block.text);
+          this.quote(block);
           break;
         case "code":
           this.code(block);
@@ -716,7 +841,7 @@ class PdfBuilder {
           this.progress(block);
           break;
         case "divider":
-          this.divider();
+          this.divider(block);
           break;
         case "pageBreak":
           this.newPage();

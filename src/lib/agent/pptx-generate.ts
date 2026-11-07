@@ -242,16 +242,24 @@ function bulletsSlide(
   const s = pptx.addSlide();
   s.background = { color: "FFFFFF" };
   addTitleBar(s, slide.title, theme, fonts);
-  const bullets = slide.bullets ?? [];
+  // 字符串 = 顶层要点；{ text, level } = 带层级的子项
+  const bullets = (slide.bullets ?? []).map((b) =>
+    typeof b === "string"
+      ? { text: b, level: 0 }
+      : { text: b.text, level: Math.max(0, Math.min(2, b.level ?? 0)) },
+  );
   if (bullets.length > 0) {
-    // 要点越多字号越小，避免溢出页面；下限 14pt
-    const size = Math.max(14, Math.min(22, Math.round(120 / Math.max(bullets.length, 4)) + 8));
-    const items = bullets.map((text) => ({
+    // 要点越多字号越小，避免溢出页面；下限 13pt
+    const size = Math.max(13, Math.min(22, Math.round(120 / Math.max(bullets.length, 4)) + 7));
+    const subColor = slide.textColor ? tint(slide.textColor, 0.2) : hex(theme.muted);
+    const items = bullets.map(({ text, level }) => ({
       text,
       options: {
-        bullet: { indent: 22 },
+        bullet: { indent: 22 + level * 16 },
+        indentLevel: level,
         breakLine: true,
-        paraSpaceAfter: Math.max(6, Math.round(size / 3)),
+        paraSpaceAfter: Math.max(4, Math.round(size / (level > 0 ? 4 : 3))),
+        ...(level > 0 ? { fontSize: Math.max(12, size - 2 * level), color: subColor } : {}),
       },
     }));
     s.addText(items, {
@@ -261,7 +269,8 @@ function bulletsSlide(
       h: BODY_BOTTOM - BODY_TOP,
       fontFace: fonts.body,
       fontSize: size,
-      color: hex(theme.ink),
+      color: slide.textColor ? hex(slide.textColor) : hex(theme.ink),
+      align: slide.align ?? "left",
       valign: "top",
       margin: 0,
       lineSpacingMultiple: 1.15,
