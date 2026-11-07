@@ -18,6 +18,7 @@ export const DRAFT_TOOL_LABELS: Record<string, string> = {
   save_personal_context: "个人上下文",
   respond_group_invite: "群邀请处理",
   attach_message_file_to_task: "消息附件",
+  save_file_to_task: "对话文件进任务",
   send_message: "发送消息",
   forward_message: "转发消息",
   create_group_chat: "组建群聊",
@@ -134,6 +135,13 @@ export function summarizeDraft(d: DraftLike): string {
       const name = text(body.filename);
       const task = text(body.taskTitle);
       return `消息附件「${name ? clip(name, TITLE_LIMIT) : "文件"}」→ ${
+        task ? `任务「${clip(task, TITLE_LIMIT)}」` : "任务附件"
+      }`;
+    }
+    case "save_file_to_task": {
+      const name = text(body.filename);
+      const task = text(body.taskTitle);
+      return `对话文件「${name ? clip(name, TITLE_LIMIT) : "文件"}」→ ${
         task ? `任务「${clip(task, TITLE_LIMIT)}」` : "任务附件"
       }`;
     }

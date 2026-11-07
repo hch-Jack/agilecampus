@@ -3,11 +3,14 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { submitCompletionAction } from "@/app/(app)/projects/[projectId]/actions";
+import { MAX_FILE_SIZE, MAX_FILE_SIZE_LABEL } from "@/lib/file-limits";
+import { uploadFileRaw } from "@/lib/upload-client";
 
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
 /** 附件个数上限（与 submitCompletionAction 服务端口径一致） */
@@ -66,11 +69,25 @@ export function CompletionRequestModal({
     }
     startTransition(async () => {
       setError("");
+      // 附件先逐个流式上传（不进 server action 的 body），全部成功后才提交完成说明
+      for (const f of files) {
+        if (f.size > MAX_FILE_SIZE) {
+          setError(`附件「${f.name}」超过 ${MAX_FILE_SIZE_LABEL}`);
+          return;
+        }
+        const up = await uploadFileRaw<{ id: string }>("/api/attachments/upload", f, {
+          taskId,
+          projectId,
+        });
+        if (!up.ok) {
+          setError(`附件「${f.name}」上传失败：${up.error}`);
+          return;
+        }
+      }
       const fd = new FormData();
       fd.set("taskId", taskId);
       fd.set("projectId", projectId);
       fd.set("completionNote", note.trim());
-      for (const f of files) fd.append("files", f);
       const res = await submitCompletionAction(fd);
       if ("error" in res) {
         setError(res.error);
@@ -137,7 +154,9 @@ export function CompletionRequestModal({
 
             <div className="mt-3">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-ink-soft">完成资料附件（可选，≤10MB/个）</span>
+                <span className="text-xs font-medium text-ink-soft">
+                  完成资料附件（可选，≤{MAX_FILE_SIZE_LABEL}/个）
+                </span>
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}

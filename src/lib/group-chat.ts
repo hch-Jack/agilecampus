@@ -10,8 +10,16 @@ import {
   type UserIdentity,
 } from "@/db/schema";
 import { AppError, ForbiddenError } from "./errors";
-// 单向依赖 dm.ts：复用用户名搜索与附件上限；dm.ts 不得反向 import 本文件（会成环）
-import { DM_ATTACHMENT_MAX_SIZE, findUserByUsername, type DmConversation } from "./dm";
+// 单向依赖 dm.ts：复用用户名搜索、附件上限与预上传附件的认领逻辑；
+// dm.ts 不得反向 import 本文件（会成环）
+import {
+  claimStagedAttachment,
+  DM_ATTACHMENT_MAX_SIZE,
+  findUserByUsername,
+  type DmConversation,
+  type DmFileInput,
+} from "./dm";
+import { deleteBlob, persistBlob } from "./blob-store";
 
 // 群名长度与群规模上限（含群主）；打开会话只回最近 N 条，避免老群越聊越重
 export const GROUP_NAME_MAX = 30;
@@ -613,42 +621,50 @@ export async function resolveGroupMembersByUsernames(
 // —— 发送 ——
 
 // 发群消息（文本与文件至少其一），校验口径与 sendDm 完全一致：附件复用 dm_attachments
-// 与同一 10MB 上限常量，文本截断到 5000 字符。
+// 与同一 1GB 上限常量，文本截断到 5000 字符。
 export async function sendGroupMessage(
   actorId: string,
   groupId: string,
   input: {
     content: string;
-    file?: { filename: string; mimeType?: string | null; size: number; data: Buffer } | null;
+    /** 随消息新落一份附件（REST / 助手复制路径） */
+    file?: DmFileInput | null;
+    /** 已由 /api/dm/attachments/upload 预上传的附件 id（网页发送路径） */
+    attachmentId?: string | null;
   },
 ) {
   await requireMembership(groupId, actorId);
 
   const content = input.content.trim().slice(0, 5000);
-  const file = input.file;
-  if (file) {
-    if (file.size > DM_ATTACHMENT_MAX_SIZE) throw new AppError("文件不能超过 10MB");
-    if (file.size === 0) throw new AppError("不能上传空文件");
-  }
-  if (!content && !file) throw new AppError("不能发送空消息");
+  if (input.file && input.attachmentId) throw new AppError("附件只能给一份");
+  if (!content && !input.file && !input.attachmentId) throw new AppError("不能发送空消息");
 
-  await db.transaction(async (tx) => {
-    let attachmentId: string | null = null;
-    if (file) {
-      const [att] = await tx
-        .insert(dmAttachments)
-        .values({
-          uploaderId: actorId,
-          filename: file.filename.slice(0, 200) || "未命名文件",
-          mimeType: file.mimeType ?? null,
-          size: file.size,
-          data: file.data,
-        })
-        .returning({ id: dmAttachments.id });
-      attachmentId = att.id;
-    }
-    await tx.insert(dmGroupMessages).values({ groupId, senderId: actorId, content, attachmentId });
-  });
+  const blob = input.file ? await persistBlob(input.file, DM_ATTACHMENT_MAX_SIZE) : null;
+
+  try {
+    await db.transaction(async (tx) => {
+      let attachmentId: string | null = input.attachmentId ?? null;
+      if (attachmentId) await claimStagedAttachment(tx, actorId, attachmentId);
+      if (blob) {
+        const [att] = await tx
+          .insert(dmAttachments)
+          .values({
+            uploaderId: actorId,
+            filename: input.file!.filename.slice(0, 200) || "未命名文件",
+            mimeType: input.file!.mimeType ?? null,
+            size: blob.size,
+            data: blob.data,
+            storageKey: blob.storageKey,
+          })
+          .returning({ id: dmAttachments.id });
+        attachmentId = att.id;
+      }
+      await tx.insert(dmGroupMessages).values({ groupId, senderId: actorId, content, attachmentId });
+    });
+  } catch (e) {
+    await deleteBlob(blob?.storageKey);
+    throw e;
+  }
 }
 
 // —— 成员操作 ——

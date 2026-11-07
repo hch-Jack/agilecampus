@@ -7,7 +7,13 @@ import { ForbiddenError, AppError, NotFoundError } from "@/lib/errors";
 import type {
   AssistantConversationSummary,
   AssistantPanelMessage,
+  MessageAttachment,
 } from "./assistant-panel-shared";
+import {
+  classifyConversationText,
+  normalizeConversationCategory,
+} from "./conversation-category";
+import { listMessageTagsForMessages } from "./message-tags";
 
 /**
  * 会话两种形态（见 schema 的 `conversation_kind` 与 `conversations_scope_chk`）：
@@ -69,6 +75,7 @@ export type ConversationRow = typeof conversations.$inferSelect;
 export type ConversationSummary = {
   id: string;
   title: string | null;
+  category: string | null;
   createdAt: Date;
   lastMessageAt: Date | null;
 };
@@ -78,6 +85,7 @@ export type PersistedTurn = {
   userMessageId: string;
   assistantMessageId: string;
   conversationTitle: string | null;
+  conversationCategory: string | null;
   conversationCreatedAt: Date;
   lastMessageAt: Date;
 };
@@ -199,6 +207,7 @@ export async function listPersonalConversations(
     .select({
       id: conversations.id,
       title: conversations.title,
+      category: conversations.category,
       createdAt: conversations.createdAt,
       lastMessageAt: conversations.lastMessageAt,
     })
@@ -223,7 +232,12 @@ export async function listPersonalConversationMessages(
 
   const capped = Math.min(Math.max(Math.trunc(limit), 1), 500);
   const rows = await db
-    .select({ id: messages.id, role: messages.role, content: messages.content })
+    .select({
+      id: messages.id,
+      role: messages.role,
+      content: messages.content,
+      attachments: messages.attachments,
+    })
     .from(messages)
     .where(
       and(
@@ -237,11 +251,43 @@ export async function listPersonalConversationMessages(
     )
     .limit(capped);
 
-  return rows.reverse().map((r) => ({
-    id: r.id,
-    role: r.role as "user" | "assistant",
-    content: r.content,
-  }));
+  const ordered = rows.reverse();
+  // 标签是「我的」，随消息一起读回去；用户消息即使有历史残留也不展示
+  const tagsByMessage = await listMessageTagsForMessages(
+    actorId,
+    ordered.filter((r) => r.role === "assistant").map((r) => r.id),
+  );
+
+  return ordered.map((r) => {
+    const attachments = parseMessageAttachments(r.attachments);
+    const tags = r.role === "assistant" ? tagsByMessage.get(r.id) : undefined;
+    return {
+      id: r.id,
+      role: r.role as "user" | "assistant",
+      content: r.content,
+      ...(attachments ? { attachments } : {}),
+      ...(tags && tags.length > 0 ? { tags } : {}),
+    };
+  });
+}
+
+/**
+ * jsonb 列读回来是 unknown：逐条校验形状，坏数据整条丢弃而不是把 undefined
+ * 塞进面板（面板会据此渲染下载按钮，链接坏了比不显示更糟）。
+ */
+function parseMessageAttachments(value: unknown): MessageAttachment[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out = value.filter(
+    (item): item is MessageAttachment =>
+      typeof item === "object" &&
+      item !== null &&
+      typeof (item as MessageAttachment).id === "string" &&
+      typeof (item as MessageAttachment).filename === "string" &&
+      typeof (item as MessageAttachment).size === "number" &&
+      (typeof (item as MessageAttachment).mimeType === "string" ||
+        (item as MessageAttachment).mimeType === null),
+  );
+  return out.length > 0 ? out : undefined;
 }
 
 export async function renamePersonalConversation(
@@ -260,10 +306,96 @@ export async function renamePersonalConversation(
     .returning({
       id: conversations.id,
       title: conversations.title,
+      category: conversations.category,
       createdAt: conversations.createdAt,
       lastMessageAt: conversations.lastMessageAt,
     });
   return updated ?? null;
+}
+
+/** 手动改分类；`category=null` 表示恢复「未分类」。只能改自己的个人会话。 */
+export async function setPersonalConversationCategory(
+  actorId: string,
+  conversationId: string,
+  category: string | null,
+): Promise<ConversationSummary | null> {
+  if (!isUuid(conversationId)) return null;
+
+  const [updated] = await db
+    .update(conversations)
+    .set({ category: normalizeConversationCategory(category) })
+    .where(and(eq(conversations.id, conversationId), personalWhere(actorId)))
+    .returning({
+      id: conversations.id,
+      title: conversations.title,
+      category: conversations.category,
+      createdAt: conversations.createdAt,
+      lastMessageAt: conversations.lastMessageAt,
+    });
+  return updated ?? null;
+}
+
+/**
+ * 自动归类：只补**空分类**的个人会话（用户手选过的一律不动）。
+ * 参考文本取每条会话最早的几条用户消息 —— 会话从哪聊起来，通常就属于哪一类。
+ * 命中不了关键词的继续保持未分类。返回实际更新的条数。
+ */
+export async function autoCategorizePersonalConversations(
+  actorId: string,
+  limit = 200,
+): Promise<number> {
+  const capped = Math.min(Math.max(Math.trunc(limit), 1), 200);
+  const pending = await db
+    .select({ id: conversations.id })
+    .from(conversations)
+    .where(and(personalWhere(actorId), sql`${conversations.category} is null`))
+    .orderBy(...PERSONAL_ORDER)
+    .limit(capped);
+  if (pending.length === 0) return 0;
+
+  const ids = pending.map((c) => c.id);
+  const rows = await db
+    .select({
+      conversationId: messages.conversationId,
+      content: messages.content,
+    })
+    .from(messages)
+    .where(and(inArray(messages.conversationId, ids), eq(messages.role, "user")))
+    .orderBy(asc(messages.createdAt));
+
+  // 每条会话取最早 3 条用户消息；消息按时间正序，先出现的就是更早的
+  const samples = new Map<string, string[]>();
+  for (const row of rows) {
+    const list = samples.get(row.conversationId);
+    if (!list) samples.set(row.conversationId, [row.content]);
+    else if (list.length < 3) list.push(row.content);
+  }
+
+  const decisions: { id: string; category: string }[] = [];
+  for (const conv of pending) {
+    const text = (samples.get(conv.id) ?? []).join("\n");
+    const category = classifyConversationText(text);
+    if (category) decisions.push({ id: conv.id, category });
+  }
+  if (decisions.length === 0) return 0;
+
+  let updated = 0;
+  for (const decision of decisions) {
+    // where 里再钉一次 category is null：归类期间用户恰好手选了，就不覆盖
+    const result = await db
+      .update(conversations)
+      .set({ category: decision.category })
+      .where(
+        and(
+          eq(conversations.id, decision.id),
+          personalWhere(actorId),
+          sql`${conversations.category} is null`,
+        ),
+      )
+      .returning({ id: conversations.id });
+    updated += result.length;
+  }
+  return updated;
 }
 
 export async function deletePersonalConversation(
@@ -304,6 +436,7 @@ export function toAssistantConversationSummary(
   return {
     id: c.id,
     title: c.title,
+    category: c.category,
     createdAt: c.createdAt.toISOString(),
     lastMessageAt: c.lastMessageAt?.toISOString() ?? null,
   };
@@ -362,6 +495,7 @@ export async function persistTurn(
   userText: string,
   assistantText: string,
   toolTrace: ToolTraceEntry[],
+  attachments: MessageAttachment[] = [],
 ): Promise<PersistedTurn> {
   const turnId = randomUUID();
 
@@ -369,6 +503,7 @@ export async function persistTurn(
     const [state] = await tx
       .select({
         title: conversations.title,
+        category: conversations.category,
         createdAt: conversations.createdAt,
         messageCount: sql<number>`(
           select count(*)::int from ${messages}
@@ -383,7 +518,14 @@ export async function persistTurn(
     const inserted = await tx
       .insert(messages)
       .values([
-        { conversationId, role: "user", content: userText, turnId },
+        {
+          conversationId,
+          role: "user",
+          content: userText,
+          turnId,
+          // 快照随消息存：源文件之后被清理，聊天记录里仍能显示当时带过什么
+          attachments: attachments.length > 0 ? attachments : null,
+        },
         {
           conversationId,
           role: "assistant",
@@ -400,6 +542,9 @@ export async function persistTurn(
 
     const nextTitle =
       state.title ?? (state.messageCount === 0 ? deriveConversationTitle(userText) : null);
+    // 分类只补空：用户手选过（非 null）就永远不再自动改
+    const autoCategory =
+      state.category === null ? classifyConversationText(userText) : null;
 
     const [conv] = await tx
       .update(conversations)
@@ -407,15 +552,21 @@ export async function persistTurn(
         // SQL now()：走库时钟。传 JS Date 会经 dbTimestamp 的写方向，只保留毫秒
         lastMessageAt: sql`now()`,
         ...(nextTitle ? { title: nextTitle } : {}),
+        ...(autoCategory ? { category: autoCategory } : {}),
       })
       .where(eq(conversations.id, conversationId))
-      .returning({ title: conversations.title, lastMessageAt: conversations.lastMessageAt });
+      .returning({
+        title: conversations.title,
+        category: conversations.category,
+        lastMessageAt: conversations.lastMessageAt,
+      });
 
     return {
       turnId,
       userMessageId: userRow.id,
       assistantMessageId: assistantRow.id,
       conversationTitle: conv?.title ?? state.title,
+      conversationCategory: conv?.category ?? state.category,
       conversationCreatedAt: state.createdAt,
       lastMessageAt: conv?.lastMessageAt ?? new Date(),
     };

@@ -11,6 +11,7 @@ import {
 } from "react";
 import { AgentChat, type ChatMessage } from "@/components/agent-chat";
 import { AssistantConversations } from "@/components/assistant-conversations";
+import { AssistantTagBoard } from "@/components/assistant-tag-board";
 import {
   ASSISTANT_CONVERSATION_COOKIE,
   ASSISTANT_COOKIE_MAX_AGE,
@@ -106,6 +107,11 @@ export function AssistantShell({
   const [sessionBusy, setSessionBusy] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
+  /** 「按标签查历史」点中的消息：切到会话后由 AgentChat 滚动定位 */
+  const [focusMessage, setFocusMessage] = useState<
+    { messageId: string; nonce: number } | null
+  >(null);
+  const focusNonce = useRef(0);
   /** 切换请求的递增序号：慢响应回来时若已过期就丢弃 */
   const switchSeq = useRef(0);
   /** 当前 AgentChat 的 viewKey；用来丢弃「重置前发出的请求」晚到的落库回调 */
@@ -200,6 +206,13 @@ export function AssistantShell({
     }
   }
 
+  /** 标签检索点选一条历史消息：切到它所在会话，并让 AgentChat 滚过去高亮 */
+  function openTaggedMessage(conversationId: string, messageId: string) {
+    focusNonce.current += 1;
+    setFocusMessage({ messageId, nonce: focusNonce.current });
+    if (conversationId !== activeId) void selectConversation(conversationId);
+  }
+
   async function createConversation() {
     if (sessionBusy || switching) return;
     const seq = ++switchSeq.current;
@@ -238,6 +251,7 @@ export function AssistantShell({
     info: {
       conversationId: string;
       conversationTitle: string | null;
+      conversationCategory: string | null;
       conversationCreatedAt: string;
       lastMessageAt: string;
     },
@@ -248,6 +262,7 @@ export function AssistantShell({
       upsertConversation(prev, {
         id: info.conversationId,
         title: info.conversationTitle,
+        category: info.conversationCategory,
         createdAt: info.conversationCreatedAt,
         lastMessageAt: info.lastMessageAt,
       }),
@@ -269,6 +284,43 @@ export function AssistantShell({
         ),
       ),
     );
+  }
+
+  /** 手动改分类（null = 未分类）；只改这一条的摘要，不重排列表之外的东西 */
+  async function categorizeConversation(
+    id: string,
+    category: string | null,
+  ): Promise<string | null> {
+    try {
+      const res = await fetch(`/api/chat/conversations/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return data.error ?? "分类失败";
+      if (data.conversation) {
+        setConversations((prev) => upsertConversation(prev, data.conversation));
+      }
+      return null;
+    } catch {
+      return "网络异常，请重试";
+    }
+  }
+
+  /** 自动归类所有未分类会话；服务端返回最新列表，整表替换 */
+  async function autoCategorizeConversations(): Promise<string | null> {
+    try {
+      const res = await fetch("/api/chat/conversations/categorize", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return data.error ?? "自动归类失败";
+      if (Array.isArray(data.conversations)) {
+        setConversations(sortConversations(data.conversations));
+      }
+      return null;
+    } catch {
+      return "网络异常，请重试";
+    }
   }
 
   async function renameConversation(id: string, title: string): Promise<string | null> {
@@ -378,6 +430,12 @@ export function AssistantShell({
             onNew={() => void createConversation()}
             onRename={renameConversation}
             onDelete={(id) => void deleteConversation(id)}
+            onCategorize={categorizeConversation}
+            onAutoCategorize={autoCategorizeConversations}
+          />
+          <AssistantTagBoard
+            busy={sessionBusy || switching}
+            onOpenMessage={openTaggedMessage}
           />
           {switchError && <p className="shrink-0 text-sm text-high">{switchError}</p>}
           <div className="min-h-0 flex-1">
@@ -391,6 +449,7 @@ export function AssistantShell({
               onBusyChange={setSessionBusy}
               onTurnPersisted={(info) => handleTurnPersisted(info, viewKey)}
               onTurnDeleted={handleTurnDeleted}
+              focusMessage={focusMessage ?? undefined}
               subtitle={
                 focusProjectId ? "只属于你的对话 · 已带入当前项目" : "只属于你的对话"
               }

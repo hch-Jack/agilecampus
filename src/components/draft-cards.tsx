@@ -269,7 +269,8 @@ const PRIORITY_TEXT: Record<string, string> = { low: "低", medium: "中", high:
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
 // 选项来自响应里的 options（按草案的 projectId 查）——查不到就只显示 id，
@@ -839,7 +840,7 @@ function DraftCard({
       targetId?: string;
       targetName?: string;
       content?: string;
-      fileSource?: "task" | "message" | null;
+      fileSource?: "task" | "message" | "file" | null;
       attachmentId?: string | null;
       filename?: string | null;
       size?: number | null;
@@ -873,7 +874,11 @@ function DraftCard({
             <span>
               附件「{d.filename ?? "未命名文件"}」
               {typeof d.size === "number" ? `（${fmtSize(d.size)}）` : ""} · 来源：
-              {d.fileSource === "task" ? "项目任务附件" : "消息附件"}
+              {d.fileSource === "task"
+                ? "项目任务附件"
+                : d.fileSource === "file"
+                  ? "助手对话文件"
+                  : "消息附件"}
             </span>
             <button
               type="button"
@@ -1230,6 +1235,37 @@ function DraftCard({
         </p>
         <p className="text-xs text-ink-faint">
           确认后会复制一份文件到任务附件；之后删除消息不会影响它。
+        </p>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "save_file_to_task") {
+    const d = data as {
+      fileId?: string;
+      taskId?: string;
+      filename?: string;
+      size?: number;
+      taskTitle?: string;
+    };
+    const missingIds =
+      typeof d.fileId !== "string" ||
+      d.fileId === "" ||
+      typeof d.taskId !== "string" ||
+      d.taskId === "";
+    return (
+      <CardShell
+        title="对话文件添加为任务附件"
+        onConfirm={() => save("save_file_to_task", d)}
+        invalid={missingIds ? "草案缺少文件或任务 id，请让助手重拟" : undefined}
+      >
+        <p className="text-xs text-ink-soft">
+          文件「{d.filename ?? "未命名文件"}」
+          {typeof d.size === "number" ? `（${fmtSize(d.size)}）` : ""} → 任务
+          {d.taskTitle ? `「${d.taskTitle}」` : "附件"}。
+        </p>
+        <p className="text-xs text-ink-faint">
+          确认后会复制一份文件到任务附件；之后清理对话或源文件都不影响它。
         </p>
       </CardShell>
     );

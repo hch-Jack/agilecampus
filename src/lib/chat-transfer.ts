@@ -15,6 +15,7 @@ import {
   getAttachmentForDownload,
   getAttachmentMeta,
 } from "./attachment";
+import { getAgentFileForDownload, getAgentFileMeta } from "./agent/files";
 
 /**
  * 消息发送 / 转发的公共实现。
@@ -29,8 +30,11 @@ export type ChatTarget =
   | { kind: "group"; id: string };
 
 export type ChatAttachmentSource = {
-  /** task = 任务附件（项目文件）；message = 私信/群聊附件（转发文件） */
-  source: "task" | "message";
+  /**
+   * task = 任务附件（项目文件）；message = 私信/群聊附件（转发文件）；
+   * file = 助手对话里上传/生成的文件（agent_files，只有主人能读）
+   */
+  source: "task" | "message" | "file";
   attachmentId: string;
 };
 
@@ -70,6 +74,16 @@ export async function getChatAttachmentInfo(
       size: row.size,
     };
   }
+  if (source.source === "file") {
+    const row = await getAgentFileMeta(actorId, source.attachmentId);
+    return {
+      source: "file",
+      attachmentId: row.id,
+      filename: row.filename,
+      mimeType: row.mimeType,
+      size: row.size,
+    };
+  }
   const row = await getDmAttachmentMeta(actorId, source.attachmentId);
   return {
     source: "message",
@@ -80,11 +94,19 @@ export async function getChatAttachmentInfo(
   };
 }
 
-/** 取附件内容（含 blob）。权限口径与下载一致。 */
+/**
+ * 取附件内容。权限口径与下载一致。
+ * 磁盘上的大文件只带 `storageKey`（复制时直接拷文件），历史附件才带 `data`。
+ */
+export type LoadedChatAttachment = ChatAttachmentInfo & {
+  data?: Buffer;
+  storageKey?: string | null;
+};
+
 export async function loadChatAttachment(
   actorId: string,
   source: ChatAttachmentSource,
-): Promise<ChatAttachmentInfo & { data: Buffer }> {
+): Promise<LoadedChatAttachment> {
   if (source.source === "task") {
     const row = await getAttachmentForDownload(actorId, source.attachmentId);
     return {
@@ -93,7 +115,22 @@ export async function loadChatAttachment(
       filename: row.filename,
       mimeType: row.mimeType,
       size: row.size,
-      data: Buffer.from(row.data),
+      ...(row.storageKey
+        ? { storageKey: row.storageKey }
+        : { data: Buffer.from(row.data) }),
+    };
+  }
+  if (source.source === "file") {
+    const row = await getAgentFileForDownload(actorId, source.attachmentId);
+    return {
+      source: "file",
+      attachmentId: row.id,
+      filename: row.filename,
+      mimeType: row.mimeType,
+      size: row.size,
+      ...(row.storageKey
+        ? { storageKey: row.storageKey }
+        : { data: Buffer.from(row.data) }),
     };
   }
   const row = await getDmAttachmentForDownload(actorId, source.attachmentId);
@@ -103,7 +140,9 @@ export async function loadChatAttachment(
     filename: row.filename,
     mimeType: row.mimeType,
     size: row.size,
-    data: Buffer.from(row.data),
+    ...(row.storageKey
+      ? { storageKey: row.storageKey }
+      : { data: Buffer.from(row.data) }),
   };
 }
 
@@ -134,7 +173,7 @@ export async function sendChatMessage(
   const attachmentSource = input.attachment ?? null;
   if (!content && !attachmentSource) throw new AppError("不能发送空消息");
 
-  // 先校验目标（含群成员身份），再读附件字节：目标不合法时不必把 10MB blob 拉出来
+  // 先校验目标（含群成员身份），再读附件：目标不合法时不必把大文件拉出来
   const targetInfo = await resolveChatTarget(actorId, target);
   const att = attachmentSource ? await loadChatAttachment(actorId, attachmentSource) : null;
   const file = att
@@ -142,7 +181,7 @@ export async function sendChatMessage(
         filename: att.filename,
         mimeType: att.mimeType,
         size: att.size,
-        data: att.data,
+        ...(att.storageKey ? { storageKey: att.storageKey } : { data: att.data }),
       }
     : null;
 
