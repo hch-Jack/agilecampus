@@ -18,6 +18,7 @@ import { MESSAGE_TAG_MAX, normalizeMessageTag } from "@/lib/message-tag";
 import { uploadFileRaw } from "@/lib/upload-client";
 import { Markdown } from "@/components/markdown";
 import { FilePreviewModal } from "@/components/file-preview";
+import { AssistantFileCards } from "@/components/assistant-file-cards";
 
 /**
  * AI 助手对话区 —— 右侧常驻面板（`assistant-shell.tsx`）的唯一使用者。
@@ -277,8 +278,9 @@ export function AgentChat({
       // 面板挂在 layout 里，换页不会把这段对话连同未确认的草案卡一起卸载。
       const navTarget = navigations.at(-1);
       if (navTarget) router.push(navTarget.href);
-      // 「打开某文件」同理：直接弹预览，消息下仍留一个可重开的入口
-      const fileTarget = files.at(-1);
+      // 「打开某文件」同理：直接弹预览，消息下仍留一个可重开的入口。
+      // 生成的文件（autoOpen=false）不弹 —— 别让全屏预览挡住刚生成的文件卡。
+      const fileTarget = [...files].reverse().find((f) => f.autoOpen !== false);
       if (fileTarget) setPreviewFile(fileTarget);
       // 外壳据此把「懒建出的会话」放进列表；**不**触发 remount，否则刚发的消息会消失
       if (data.conversationId) {
@@ -726,20 +728,8 @@ export function AgentChat({
                 </div>
               )}
               {m.files && m.files.length > 0 && (
-                <div className="mt-1 flex flex-wrap gap-1.5">
-                  {m.files.map((f) => (
-                    <button
-                      key={f.url}
-                      type="button"
-                      onClick={() => setPreviewFile(f)}
-                      title={f.filename}
-                      // 已经自动弹过一次；关掉后从这里可以重新打开
-                      className="ac-badge max-w-full truncate bg-primary-soft text-primary hover:bg-primary hover:text-white"
-                    >
-                      预览 {f.filename}
-                    </button>
-                  ))}
-                </div>
+                // 已经自动弹过一次预览；关掉后这里可以再预览，也可以直接下载
+                <AssistantFileCards files={m.files} onPreview={setPreviewFile} />
               )}
               {m.drafts && m.drafts.length > 0 && (
                 <DraftCards

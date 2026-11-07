@@ -6,9 +6,11 @@ import { getProjectForUser } from "@/lib/project";
 import { ForbiddenError, AppError, NotFoundError } from "@/lib/errors";
 import type {
   AssistantConversationSummary,
+  AssistantFile,
   AssistantPanelMessage,
   MessageAttachment,
 } from "./assistant-panel-shared";
+import { isFileOpenEnvelope } from "./file-open";
 import {
   classifyConversationText,
   normalizeConversationCategory,
@@ -237,6 +239,7 @@ export async function listPersonalConversationMessages(
       role: messages.role,
       content: messages.content,
       attachments: messages.attachments,
+      toolCalls: messages.toolCalls,
     })
     .from(messages)
     .where(
@@ -261,14 +264,39 @@ export async function listPersonalConversationMessages(
   return ordered.map((r) => {
     const attachments = parseMessageAttachments(r.attachments);
     const tags = r.role === "assistant" ? tagsByMessage.get(r.id) : undefined;
+    // 生成 / 打开过的文件从工具轨迹里还原：刷新后消息下方仍能直接下载
+    const files = r.role === "assistant" ? filesFromToolCalls(r.toolCalls) : undefined;
     return {
       id: r.id,
       role: r.role as "user" | "assistant",
       content: r.content,
       ...(attachments ? { attachments } : {}),
       ...(tags && tags.length > 0 ? { tags } : {}),
+      ...(files ? { files } : {}),
     };
   });
+}
+
+/** 工具轨迹里带 __showFile 的信封（create_file / open_file）按 url 去重还原成文件卡 */
+function filesFromToolCalls(value: unknown): AssistantFile[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const seen = new Set<string>();
+  const files: AssistantFile[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const output = (entry as { output?: unknown }).output;
+    if (!isFileOpenEnvelope(output)) continue;
+    if (seen.has(output.url)) continue;
+    seen.add(output.url);
+    files.push({
+      url: output.url,
+      filename: output.filename,
+      mimeType: output.mimeType,
+      size: output.size,
+      ...(output.__autoOpen === false ? { autoOpen: false } : {}),
+    });
+  }
+  return files.length > 0 ? files : undefined;
 }
 
 /**

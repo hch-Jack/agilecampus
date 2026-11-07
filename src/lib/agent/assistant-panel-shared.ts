@@ -43,6 +43,8 @@ export type AssistantPanelMessage = {
   attachments?: MessageAttachment[];
   /** 本人给这条消息打的标签（只对助手消息有意义；服务端已按用户过滤） */
   tags?: string[];
+  /** 这一轮助手生成 / 打开过的文件（从工具轨迹还原，刷新后仍可下载） */
+  files?: AssistantFile[];
 };
 
 /** 一句话最多带几个文件；单文件上限与任务附件一致（1GB），在服务端也再校一次 */
@@ -58,4 +60,6 @@ export type AssistantFile = {
   filename: string;
   mimeType: string | null;
   size: number;
+  /** 收到后是否自动弹预览；create_file 生成的文件为 false（给文件卡，不抢屏） */
+  autoOpen?: boolean;
 };

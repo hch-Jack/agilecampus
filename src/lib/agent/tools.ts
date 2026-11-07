@@ -41,6 +41,11 @@ import {
 } from "./files";
 import { GENERATE_MAX_CHARS, GENERATE_SUPPORTED_LABEL, generateFile } from "./file-generate";
 import {
+  documentSpecSchema,
+  presentationSpecSchema,
+  sheetsSpecSchema,
+} from "./document-spec";
+import {
   countUnread,
   findUserByUsername,
   getDmAttachmentMeta,
@@ -673,19 +678,44 @@ function buildBasePersonalTools(actorId: string) {
     create_file: tool({
       description:
         "生成一个文件并立刻提供下载（同时出现在回复下方）。" +
-        `支持：${GENERATE_SUPPORTED_LABEL}；文本类正文原样写入，` +
-        "xlsx 的 content 写 CSV（第一行表头，可用 sheetName 命名工作表），docx 按行分段。" +
-        "PDF/PPT 不支持（需要 PDF 可先生成 HTML 再让用户打印）。" +
-        `content 上限 ${GENERATE_MAX_CHARS} 字符。` +
+        `支持：${GENERATE_SUPPORTED_LABEL}。\n` +
+        "排版建议：docx/pdf 优先用 document 给结构化稿件（标题、章节、段落、列表、表格、引用、代码、标注、数据卡），" +
+        "会得到带版式的正式文档；只给 content 时按 Markdown 解析。\n" +
+        "pptx 用 slides 描述每一页（封面/章节/要点/表格/引用/数据卡/结束页）；只给 content 时按标题自动拆页。\n" +
+        "xlsx 用 sheets 描述多个工作表；也可在 content 里写 CSV（第一行表头）。\n" +
+        "文本类格式（md/txt/csv/json/html 等）把正文放在 content。\n" +
+        `内容上限 ${GENERATE_MAX_CHARS} 字符。` +
         "生成后如需放进任务附件，继续调用 save_file_to_task(fileId)；" +
         '如需发给某人/群，调用 send_message 并传 fileSource="file"、attachmentId=fileId。',
       inputSchema: z.object({
-        filename: z.string().min(1).max(200).describe("带扩展名，如 周报.md、数据.xlsx"),
-        content: z.string().min(1).max(GENERATE_MAX_CHARS).describe("文件正文"),
-        sheetName: z.string().max(31).optional().describe("仅 xlsx：工作表名"),
+        filename: z.string().min(1).max(200).describe("带扩展名，如 周报.docx、汇报.pptx、数据.xlsx"),
+        content: z
+          .string()
+          .min(1)
+          .max(GENERATE_MAX_CHARS)
+          .optional()
+          .describe("纯文本正文；文本类格式必填，docx/pdf/pptx/xlsx 在没给结构化稿件时作兜底"),
+        sheetName: z.string().max(31).optional().describe("仅 xlsx 的 CSV 路径：工作表名"),
+        document: documentSpecSchema
+          .optional()
+          .describe("docx/pdf 的结构化稿件：theme + blocks[]，块类型见 schema"),
+        slides: presentationSpecSchema
+          .optional()
+          .describe("pptx 的结构化幻灯片：theme + slides[]，每页一个版式"),
+        sheets: sheetsSpecSchema.optional().describe("xlsx 的多工作表：name + headers + rows"),
       }),
-      execute: async ({ filename, content, sheetName }) => {
-        const generated = await generateFile({ filename, content, sheetName });
+      execute: async ({ filename, content, sheetName, document, slides, sheets }) => {
+        if (!content && !document && !slides && !sheets) {
+          throw new AppError("请至少给出 content、document、slides 或 sheets 之一");
+        }
+        const generated = await generateFile({
+          filename,
+          content,
+          sheetName,
+          document,
+          slides,
+          sheets,
+        });
         const row = await saveAgentFile(actorId, {
           filename: generated.filename,
           mimeType: generated.mimeType,
@@ -693,6 +723,7 @@ function buildBasePersonalTools(actorId: string) {
         });
         return {
           __showFile: true as const,
+          __autoOpen: false as const,
           fileId: row.id,
           url: `/api/assistant/files/${row.id}`,
           filename: row.filename,

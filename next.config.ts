@@ -11,6 +11,16 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
+  // 文档生成库自带动态 require（pptxgenjs 找 jszip、docx 找 xml 序列化），
+  // 交给 Node 直接 require，别掺进 Turbopack 的打包图
+  serverExternalPackages: ["docx", "pptxgenjs"],
+  // PDF 的中文字体在运行时用 fs 读，不在模块图里；standalone 产物要显式带上这两份
+  outputFileTracingIncludes: {
+    "/api/chat": [
+      "./node_modules/@embedpdf/fonts-sc/fonts/NotoSansHans-Regular.otf",
+      "./node_modules/@embedpdf/fonts-sc/fonts/NotoSansHans-Bold.otf",
+    ],
+  },
   // 附件上传走 server action：默认 1MB 不够，放开到 12mb（附件上限 10MB + multipart 开销余量）
   experimental: {
     serverActions: {

@@ -1,0 +1,514 @@
+import {
+  AlignmentType,
+  BorderStyle,
+  Document,
+  Footer,
+  LevelFormat,
+  Packer,
+  PageBreak,
+  PageNumber,
+  Paragraph,
+  ShadingType,
+  Table,
+  TableCell,
+  TableLayoutType,
+  TableRow,
+  TextRun,
+  WidthType,
+} from "docx";
+import {
+  resolveTheme,
+  type DocBlock,
+  type DocTheme,
+  type DocumentSpec,
+} from "./document-spec";
+
+/**
+ * 结构化稿件 → Word（.docx）。
+ *
+ * 用 `docx` 包直接生成 OOXML：自定义标题样式、正文行距、表格斑马纹、引用条、代码块底色、
+ * 页脚页码。中文正文用「微软雅黑」，行距 1.33，段后留白，打开就是排好的稿子，
+ * 而不是原来那种「每行一段、全篇一个字号」的纯文本。
+ */
+
+/** A4 版心宽度（twips）：11906 - 左右各 1440（2.54cm） */
+const CONTENT_TWIPS = 11906 - 1440 * 2;
+
+function hex(value: string): string {
+  return value.replace("#", "").toUpperCase();
+}
+
+function quoteBorders(theme: DocTheme) {
+  return {
+    left: { style: BorderStyle.SINGLE, size: 18, color: hex(theme.accent), space: 10 },
+  };
+}
+
+function buildStyles(theme: DocTheme) {
+  const font = theme.font;
+  return {
+    default: {
+      document: {
+        run: { font, size: 21, color: hex(theme.ink) },
+        paragraph: { spacing: { line: 320, after: 120 } },
+      },
+    },
+    paragraphStyles: [
+      {
+        id: "DocTitle",
+        name: "Doc Title",
+        basedOn: "Normal",
+        next: "Normal",
+        quickFormat: true,
+        run: { font, size: 44, bold: true, color: hex(theme.primary) },
+        paragraph: {
+          spacing: { before: 120, after: 80, line: 280 },
+          border: {
+            bottom: {
+              style: BorderStyle.SINGLE,
+              size: 14,
+              color: hex(theme.accent),
+              space: 8,
+            },
+          },
+        },
+      },
+      {
+        id: "DocSubtitle",
+        name: "Doc Subtitle",
+        basedOn: "Normal",
+        next: "Normal",
+        run: { font, size: 23, color: hex(theme.muted) },
+        paragraph: { spacing: { after: 80, line: 300 } },
+      },
+      {
+        id: "DocMeta",
+        name: "Doc Meta",
+        basedOn: "Normal",
+        next: "Normal",
+        run: { font, size: 18, color: hex(theme.muted) },
+        paragraph: { spacing: { after: 280 } },
+      },
+      {
+        id: "Heading1",
+        name: "Heading 1",
+        basedOn: "Normal",
+        next: "Normal",
+        quickFormat: true,
+        run: { font, size: 32, bold: true, color: hex(theme.primary) },
+        paragraph: {
+          spacing: { before: 360, after: 140, line: 300 },
+          border: {
+            bottom: {
+              style: BorderStyle.SINGLE,
+              size: 6,
+              color: hex(theme.accent),
+              space: 4,
+            },
+          },
+        },
+      },
+      {
+        id: "Heading2",
+        name: "Heading 2",
+        basedOn: "Normal",
+        next: "Normal",
+        quickFormat: true,
+        run: { font, size: 26, bold: true, color: hex(theme.ink) },
+        paragraph: { spacing: { before: 280, after: 90, line: 300 } },
+      },
+      {
+        id: "Heading3",
+        name: "Heading 3",
+        basedOn: "Normal",
+        next: "Normal",
+        quickFormat: true,
+        run: { font, size: 22, bold: true, color: hex(theme.primary) },
+        paragraph: { spacing: { before: 200, after: 70, line: 300 } },
+      },
+      {
+        id: "DocBody",
+        name: "Doc Body",
+        basedOn: "Normal",
+        next: "Normal",
+        run: { font, size: 21, color: hex(theme.ink) },
+        paragraph: {
+          alignment: AlignmentType.JUSTIFIED,
+          spacing: { after: 120, line: 330 },
+        },
+      },
+      {
+        id: "DocQuote",
+        name: "Doc Quote",
+        basedOn: "Normal",
+        next: "Normal",
+        run: { font, size: 20, italics: true, color: hex(theme.muted) },
+        paragraph: {
+          indent: { left: 360, right: 240 },
+          spacing: { before: 120, after: 160, line: 320 },
+          border: quoteBorders(theme),
+        },
+      },
+      {
+        id: "DocCode",
+        name: "Doc Code",
+        basedOn: "Normal",
+        next: "Normal",
+        run: { font: "Consolas", size: 17, color: hex(theme.ink) },
+        paragraph: {
+          shading: { type: ShadingType.CLEAR, color: "auto", fill: hex(theme.soft) },
+          spacing: { before: 0, after: 0, line: 260 },
+          indent: { left: 160, right: 160 },
+        },
+      },
+      {
+        id: "DocCallout",
+        name: "Doc Callout",
+        basedOn: "Normal",
+        next: "Normal",
+        run: { font, size: 20, color: hex(theme.ink) },
+        paragraph: {
+          indent: { left: 200, right: 120 },
+          spacing: { before: 120, after: 160, line: 320 },
+        },
+      },
+    ],
+  };
+}
+
+function headingParagraph(block: Extract<DocBlock, { type: "heading" }>): Paragraph {
+  const style = block.level === 1 ? "Heading1" : block.level === 2 ? "Heading2" : "Heading3";
+  return new Paragraph({ style, children: [new TextRun({ text: block.text })] });
+}
+
+function tableParagraph(text: string, opts: { bold?: boolean; size?: number; color?: string; align?: (typeof AlignmentType)[keyof typeof AlignmentType] }) {
+  return new Paragraph({
+    alignment: opts.align,
+    spacing: { before: 0, after: 0, line: 260 },
+    children: [
+      new TextRun({
+        text: text || " ",
+        bold: opts.bold,
+        size: opts.size ?? 18,
+        ...(opts.color ? { color: hex(opts.color) } : {}),
+      }),
+    ],
+  });
+}
+
+function tableBlock(block: Extract<DocBlock, { type: "table" }>, theme: DocTheme): (Paragraph | Table)[] {
+  // 列宽按内容长度大致分配，给短列一个下限，避免「备注」列被挤成一条线
+  const weights = block.headers.map((header, index) => {
+    let weight = Math.max(4, header.length);
+    for (const row of block.rows.slice(0, 40)) {
+      weight = Math.max(weight, (row[index] ?? "").length * 0.8);
+    }
+    return Math.min(weight, 32);
+  });
+  const total = weights.reduce((sum, w) => sum + w, 0);
+  const widths = weights.map((w) => Math.round((w / total) * CONTENT_TWIPS));
+  const cellMargins = { top: 90, bottom: 90, left: 130, right: 130 };
+  const borders = {
+    top: { style: BorderStyle.SINGLE, size: 4, color: hex(theme.line) },
+    bottom: { style: BorderStyle.SINGLE, size: 4, color: hex(theme.line) },
+    left: { style: BorderStyle.SINGLE, size: 4, color: hex(theme.line) },
+    right: { style: BorderStyle.SINGLE, size: 4, color: hex(theme.line) },
+    insideHorizontal: { style: BorderStyle.SINGLE, size: 4, color: hex(theme.line) },
+    insideVertical: { style: BorderStyle.SINGLE, size: 4, color: hex(theme.line) },
+  };
+
+  const rows = [
+    new TableRow({
+      tableHeader: true,
+      children: block.headers.map(
+        (header) =>
+          new TableCell({
+            shading: {
+              type: ShadingType.CLEAR,
+              color: "auto",
+              fill: hex(theme.primary),
+            },
+            margins: cellMargins,
+            children: [
+              tableParagraph(header, { bold: true, size: 18, color: theme.onPrimary }),
+            ],
+          }),
+      ),
+    }),
+    ...block.rows.map(
+      (row, index) =>
+        new TableRow({
+          children: row.map(
+            (cell) =>
+              new TableCell({
+                shading:
+                  index % 2 === 1
+                    ? { type: ShadingType.CLEAR, color: "auto", fill: hex(theme.soft) }
+                    : undefined,
+                margins: cellMargins,
+                children: [tableParagraph(cell, { size: 18, color: theme.ink })],
+              }),
+          ),
+        }),
+    ),
+  ];
+
+  const out: (Paragraph | Table)[] = [];
+  if (block.caption) {
+    out.push(
+      new Paragraph({
+        spacing: { before: 160, after: 80 },
+        children: [
+          new TextRun({ text: block.caption, bold: true, size: 18, color: hex(theme.muted) }),
+        ],
+      }),
+    );
+  }
+  out.push(
+    new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      columnWidths: widths,
+      layout: TableLayoutType.FIXED,
+      borders,
+      rows,
+    }),
+  );
+  out.push(new Paragraph({ spacing: { after: 160 }, children: [] }));
+  return out;
+}
+
+function statsTable(block: Extract<DocBlock, { type: "stats" }>, theme: DocTheme): Table {
+  const cellBorders = {
+    top: { style: BorderStyle.NONE, size: 0, color: "auto" },
+    bottom: { style: BorderStyle.NONE, size: 0, color: "auto" },
+    left: { style: BorderStyle.NONE, size: 0, color: "auto" },
+    right: { style: BorderStyle.NONE, size: 0, color: "auto" },
+  };
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    layout: TableLayoutType.FIXED,
+    columnWidths: block.items.map(() => Math.round(CONTENT_TWIPS / block.items.length)),
+    borders: cellBorders,
+    rows: [
+      new TableRow({
+        children: block.items.map(
+          (item, index) =>
+            new TableCell({
+              shading: { type: ShadingType.CLEAR, color: "auto", fill: hex(theme.soft) },
+              margins: { top: 140, bottom: 140, left: 160, right: 160 },
+              borders:
+                index === 0
+                  ? cellBorders
+                  : {
+                      ...cellBorders,
+                      left: { style: BorderStyle.SINGLE, size: 8, color: "FFFFFF" },
+                    },
+              children: [
+                new Paragraph({
+                  spacing: { after: 20, line: 300 },
+                  children: [
+                    new TextRun({
+                      text: item.value,
+                      bold: true,
+                      size: 36,
+                      color: hex(theme.primary),
+                    }),
+                  ],
+                }),
+                new Paragraph({
+                  spacing: { after: 0 },
+                  children: [
+                    new TextRun({ text: item.label, size: 18, color: hex(theme.muted) }),
+                  ],
+                }),
+              ],
+            }),
+        ),
+      }),
+    ],
+  });
+}
+
+function calloutParagraph(block: Extract<DocBlock, { type: "callout" }>, theme: DocTheme): Paragraph {
+  const tone = block.tone ?? "info";
+  const bar =
+    tone === "success" ? "10B981" : tone === "warning" ? "D97706" : theme.accent;
+  const fill = tone === "success" ? "ECFDF5" : tone === "warning" ? "FFFBEB" : theme.soft;
+  const children: TextRun[] = [];
+  if (block.title) {
+    children.push(
+      new TextRun({ text: block.title, bold: true, size: 20, color: hex(theme.ink) }),
+      new TextRun({ break: 1 }),
+    );
+  }
+  children.push(new TextRun({ text: block.text, size: 20, color: hex(theme.ink) }));
+  return new Paragraph({
+    style: "DocCallout",
+    shading: { type: ShadingType.CLEAR, color: "auto", fill: hex(fill) },
+    border: {
+      left: { style: BorderStyle.SINGLE, size: 24, color: hex(bar), space: 10 },
+    },
+    children,
+  });
+}
+
+function codeParagraphs(block: Extract<DocBlock, { type: "code" }>): Paragraph[] {
+  return block.text.split("\n").map(
+    (line, index, all) =>
+      new Paragraph({
+        style: "DocCode",
+        spacing: {
+          before: index === 0 ? 120 : 0,
+          after: index === all.length - 1 ? 160 : 0,
+        },
+        children: [new TextRun({ text: line || " " })],
+      }),
+  );
+}
+
+export async function docxFromDocument(spec: DocumentSpec): Promise<Buffer> {
+  const theme = resolveTheme(spec.theme);
+  const children: (Paragraph | Table)[] = [];
+
+  if (spec.title) {
+    children.push(new Paragraph({ style: "DocTitle", children: [new TextRun({ text: spec.title })] }));
+  }
+  if (spec.subtitle) {
+    children.push(
+      new Paragraph({ style: "DocSubtitle", children: [new TextRun({ text: spec.subtitle })] }),
+    );
+  }
+  const meta = [spec.author, spec.date].filter(Boolean).join("  ·  ");
+  if (meta) {
+    children.push(new Paragraph({ style: "DocMeta", children: [new TextRun({ text: meta })] }));
+  }
+
+  for (const block of spec.blocks) {
+    switch (block.type) {
+      case "heading":
+        children.push(headingParagraph(block));
+        break;
+      case "paragraph":
+        children.push(
+          new Paragraph({ style: "DocBody", children: [new TextRun({ text: block.text })] }),
+        );
+        break;
+      case "list":
+        block.items.forEach((item) => {
+          children.push(
+            new Paragraph(
+              block.ordered
+                ? {
+                    numbering: { reference: "ac-ordered", level: 0 },
+                    spacing: { after: 60, line: 320 },
+                    children: [new TextRun({ text: item })],
+                  }
+                : {
+                    bullet: { level: 0 },
+                    spacing: { after: 60, line: 320 },
+                    children: [new TextRun({ text: item })],
+                  },
+            ),
+          );
+        });
+        children.push(new Paragraph({ spacing: { after: 80 }, children: [] }));
+        break;
+      case "table":
+        children.push(...tableBlock(block, theme));
+        break;
+      case "quote":
+        children.push(
+          new Paragraph({ style: "DocQuote", children: [new TextRun({ text: block.text })] }),
+        );
+        break;
+      case "code":
+        children.push(...codeParagraphs(block));
+        break;
+      case "callout":
+        children.push(calloutParagraph(block, theme));
+        break;
+      case "stats":
+        children.push(statsTable(block, theme));
+        children.push(new Paragraph({ spacing: { after: 160 }, children: [] }));
+        break;
+      case "divider":
+        children.push(
+          new Paragraph({
+            spacing: { before: 120, after: 160 },
+            border: {
+              bottom: {
+                style: BorderStyle.SINGLE,
+                size: 6,
+                color: hex(theme.line),
+                space: 1,
+              },
+            },
+            children: [],
+          }),
+        );
+        break;
+      case "pageBreak":
+        children.push(new Paragraph({ children: [new PageBreak()] }));
+        break;
+    }
+  }
+
+  const title = spec.title ?? "";
+  const footer = new Footer({
+    children: [
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { before: 80 },
+        border: {
+          top: { style: BorderStyle.SINGLE, size: 4, color: hex(theme.line), space: 6 },
+        },
+        children: [
+          ...(title
+            ? [new TextRun({ text: `${title}  ·  `, size: 16, color: hex(theme.muted) })]
+            : []),
+          new TextRun({ text: "第 ", size: 16, color: hex(theme.muted) }),
+          new TextRun({ children: [PageNumber.CURRENT], size: 16, color: hex(theme.muted) }),
+          new TextRun({ text: " 页 / 共 ", size: 16, color: hex(theme.muted) }),
+          new TextRun({ children: [PageNumber.TOTAL_PAGES], size: 16, color: hex(theme.muted) }),
+          new TextRun({ text: " 页", size: 16, color: hex(theme.muted) }),
+        ],
+      }),
+    ],
+  });
+
+  const doc = new Document({
+    title: spec.title,
+    subject: spec.subtitle,
+    creator: spec.author ?? "AgileCampus AI 助手",
+    styles: buildStyles(theme),
+    numbering: {
+      config: [
+        {
+          reference: "ac-ordered",
+          levels: [
+            {
+              level: 0,
+              format: LevelFormat.DECIMAL,
+              text: "%1.",
+              alignment: AlignmentType.START,
+              style: { paragraph: { indent: { left: 480, hanging: 300 } } },
+            },
+          ],
+        },
+      ],
+    },
+    sections: [
+      {
+        properties: {
+          page: {
+            margin: { top: 1440, right: 1440, bottom: 1440, left: 1440, header: 720, footer: 720 },
+          },
+        },
+        footers: { default: footer },
+        children,
+      },
+    ],
+  });
+
+  return Packer.toBuffer(doc);
+}

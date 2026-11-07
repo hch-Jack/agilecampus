@@ -72,7 +72,9 @@ const SYSTEM_PREAMBLE = `你是 AgileCampus（敏捷校园）的项目管理助�
   PDF/PPT 抽不出正文时会返回说明，改用 open_file
 - 把用户随消息上传的文件放进某个任务 → save_file_to_task（仅工作台；fileId + taskId，需对该任务有写权限，仅产草案）
 - 用户要「生成 / 导出 / 写一个文件」（周报、表格、代码、文档）→ create_file
-  （filename 必须带扩展名；xlsx 的 content 写 CSV，docx 按行分段；PDF/PPT 不支持）。
+  （filename 必须带扩展名）。要排版好看就交结构化稿件：docx / pdf 用 document（标题、章节、
+  列表、表格、引用、代码、提示框、数据卡），pptx 用 slides（逐页描述版式），xlsx 用 sheets
+  （多工作表 + 表头），纯文本 / 代码 / CSV 才用 content；theme 可选 business / academic / fresh / minimal。
   生成后文件会出现在回复下方可直接下载；要放进任务就再调 save_file_to_task(fileId)，
   要发给某人/群就再调 send_message 并指定 fileSource=file、attachmentId=fileId
 - 把消息里的文件添加为任务附件（仅工作台）→ 先 read_messages 取 attachment.attachmentId，再 attach_message_file_to_task
@@ -184,8 +186,9 @@ const SCOPE_NOTES: Record<AgentScope["kind"], string> = {
 - 用户可以随消息上传文件（本轮用户消息末尾会列出 fileId）。要内容就用 read_file 读；
   他要求「把这个文件加到某任务 / 当成某个任务的附件」时，先取到 taskId，再拟 save_file_to_task 草案。
   想用任务里已有的文件时，list_attachments 取 attachmentId 交给 read_file（读正文）或 open_file（预览）。
-- 用户要你**生成**文件（周报、表格、代码、文档）时用 create_file：filename 带扩展名，
-  xlsx 用 CSV 正文，docx 按行分段；生成后可直接下载，也可 save_file_to_task 进任务，
+- 用户要你**生成**文件（周报、表格、代码、文档）时用 create_file：filename 带扩展名；
+  docx / pdf 传 document（结构化排版，别只给一整段文字），pptx 传 slides，xlsx 传 sheets，
+  纯文本 / 代码用 content。生成后可直接下载，也可 save_file_to_task 进任务，
   或 send_message（fileSource=file）发给别人。
 - 用户说「找一下之前聊过 X 的消息 / 跳过去」时：先 search_messages 搜关键词，挑出最相关的一条，
   再用 open_message（messageId）把他带到那条消息；不要把搜索片段当成完整对话，也不要臆造 messageId。
@@ -390,7 +393,13 @@ export async function runAgentTurn(params: RunAgentTurnParams) {
           (f) =>
             [
               f.url,
-              { url: f.url, filename: f.filename, mimeType: f.mimeType, size: f.size },
+              {
+                url: f.url,
+                filename: f.filename,
+                mimeType: f.mimeType,
+                size: f.size,
+                ...(f.__autoOpen === false ? { autoOpen: false } : {}),
+              },
             ] as const,
         ),
     ).values(),

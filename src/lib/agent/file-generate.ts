@@ -1,22 +1,50 @@
+import type { z } from "zod";
 import { AppError } from "@/lib/errors";
+import {
+  documentCharCount,
+  documentFromText,
+  documentSpecSchema,
+  normalizeDocument,
+  normalizePresentation,
+  normalizeSheets,
+  presentationFromText,
+  presentationSpecSchema,
+  sheetsSpecSchema,
+  type DocumentSpec,
+  type PresentationSpec,
+  type SheetSpec,
+} from "./document-spec";
+import { docxFromDocument } from "./docx-generate";
+import { pdfFromDocument } from "./pdf-generate";
+import { pptxFromPresentation } from "./pptx-generate";
+import { xlsxFromCsv, xlsxFromSheets } from "./xlsx-generate";
 
 /**
  * 助手「生成文件」。
  *
- * 模型给文件名 + 正文，这里按扩展名编码成真实文件：
+ * 模型给文件名 + 内容，这里按扩展名编码成真实文件：
  * - 文本类（txt/md/csv/json/html/xml/svg/代码…）：UTF-8 原样写入；
- * - xlsx：正文按 CSV 解析后转成真正的 Excel 工作簿（沿用已有的 `xlsx` 依赖）；
- * - docx：正文按行分段，用最小的 OOXML 包生成（自写 zip，不引新依赖）。
+ * - xlsx：`sheets` 结构（多工作表、列宽自适应）或 CSV 正文；
+ * - docx / pdf：`document` 结构化稿件（标题、章节、列表、表格、引用、代码、分页…），
+ *   只给纯文本时用 Markdown 风格解析兜底；
+ * - pptx：`slides` 结构化幻灯片（封面/章节/要点/表格/引用/数据卡/结束页），
+ *   只给纯文本时按标题与段落自动拆页。
  *
- * PDF/PPT 不在支持范围内：中文字体嵌入与版式不是几十行能可靠做对的，
- * 想要 PDF 就让模型生成 HTML，用户再打印成 PDF。
+ * PDF 与 PPT 是**原生生成**：PDF 用 pdf-lib 排版并嵌入中文字体子集，
+ * PPT 用 pptxgenjs 生成可编辑的文本框与表格 —— 都不是把网页截成图片。
  */
 
 /** 生成正文的长度上限（约 20 万字符，足够一份长文档或几万行 CSV） */
 export const GENERATE_MAX_CHARS = 200_000;
 
 export const GENERATE_SUPPORTED_LABEL =
-  "txt、md、csv、json、html、xml、svg、yml/toml/ini、常见代码文件，以及 xlsx、docx";
+  "txt、md、csv、json、html、xml、svg、yml/toml/ini、常见代码文件，以及 xlsx、docx、pdf、pptx";
+
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const PPTX_MIME =
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+const PDF_MIME = "application/pdf";
 
 const TEXT_MIME: Record<string, string> = {
   txt: "text/plain; charset=utf-8",
@@ -65,181 +93,124 @@ export function fileExtension(filename: string): string {
   return filename.slice(idx + 1).toLowerCase();
 }
 
-export async function generateFile(input: {
+export type GenerateFileInput = {
   filename: string;
-  content: string;
+  /** 纯文本正文；文本类格式必填，xlsx/docx/pdf/pptx 在没给结构化稿件时用它兜底 */
+  content?: string;
+  /** 仅 xlsx（CSV 路径）：工作表名 */
   sheetName?: string;
-}): Promise<{ filename: string; mimeType: string; data: Buffer }> {
+  /** docx / pdf：结构化稿件 */
+  document?: DocumentSpec;
+  /** pptx：结构化幻灯片 */
+  slides?: PresentationSpec;
+  /** xlsx：多工作表 */
+  sheets?: SheetSpec[];
+};
+
+export type GeneratedFile = {
+  filename: string;
+  mimeType: string;
+  data: Buffer;
+};
+
+function parseSpec<T>(schema: z.ZodType<T>, value: unknown, label: string): T {
+  const result = schema.safeParse(value);
+  if (!result.success) {
+    const issue = result.error.issues[0];
+    const path = issue?.path.length ? `（${issue.path.join(".")}）` : "";
+    throw new AppError(`${label}格式不对${path}：${issue?.message ?? "无法解析"}`);
+  }
+  return result.data;
+}
+
+function normalized<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (error) {
+    throw new AppError(error instanceof Error ? error.message : "文档结构不合法");
+  }
+}
+
+function checkSize(chars: number): void {
+  if (chars > GENERATE_MAX_CHARS) {
+    throw new AppError(`生成内容最多 ${GENERATE_MAX_CHARS} 字符，请拆成多个文件`);
+  }
+}
+
+export async function generateFile(input: GenerateFileInput): Promise<GeneratedFile> {
   const filename = input.filename.trim().slice(0, 200);
   if (!filename) throw new AppError("请给出文件名");
-  if (!input.content) throw new AppError("文件内容不能为空");
-  if (input.content.length > GENERATE_MAX_CHARS)
-    throw new AppError(`生成内容最多 ${GENERATE_MAX_CHARS} 字符，请拆成多个文件`);
 
   const ext = fileExtension(filename);
-  if (!ext) throw new AppError("文件名要带扩展名，例如 report.md / 数据.xlsx");
+  if (!ext) throw new AppError("文件名要带扩展名，例如 report.md / 周报.docx / 汇报.pptx");
+
+  const content = input.content ?? "";
+  if (content.length > GENERATE_MAX_CHARS) {
+    throw new AppError(`生成内容最多 ${GENERATE_MAX_CHARS} 字符，请拆成多个文件`);
+  }
+
   if (ext === "xlsx") {
-    return { filename, mimeType: XLSX_MIME, data: await xlsxFromCsv(input.content, input.sheetName) };
+    if (input.sheets && input.sheets.length > 0) {
+      const sheets = normalized(() =>
+        normalizeSheets(parseSpec(sheetsSpecSchema, input.sheets, "工作表结构")),
+      );
+      const chars = sheets.reduce(
+        (sum, sheet) =>
+          sum +
+          (sheet.headers?.join("").length ?? 0) +
+          sheet.rows.reduce((n, row) => n + row.join("").length, 0),
+        0,
+      );
+      checkSize(chars);
+      return { filename, mimeType: XLSX_MIME, data: await xlsxFromSheets(sheets) };
+    }
+    if (!content) {
+      throw new AppError("生成 Excel 请给 CSV 正文（第一行表头），或用 sheets 描述多个工作表");
+    }
+    return { filename, mimeType: XLSX_MIME, data: await xlsxFromCsv(content, input.sheetName) };
   }
-  if (ext === "docx") {
-    return { filename, mimeType: DOCX_MIME, data: docxFromText(input.content) };
+
+  if (ext === "docx" || ext === "pdf") {
+    const spec = input.document
+      ? normalized(() => normalizeDocument(parseSpec(documentSpecSchema, input.document, "文档结构")))
+      : (() => {
+          if (!content.trim()) {
+            throw new AppError("生成文档请给 content 正文，或用 document 描述章节、表格与版式");
+          }
+          return normalized(() => normalizeDocument(documentFromText(content)));
+        })();
+    checkSize(documentCharCount(spec));
+    if (ext === "docx") {
+      return { filename, mimeType: DOCX_MIME, data: await docxFromDocument(spec) };
+    }
+    return { filename, mimeType: PDF_MIME, data: await pdfFromDocument(spec) };
   }
+
+  if (ext === "pptx") {
+    const spec = input.slides
+      ? normalized(() =>
+          normalizePresentation(parseSpec(presentationSpecSchema, input.slides, "幻灯片结构")),
+        )
+      : (() => {
+          if (!content.trim()) {
+            throw new AppError("生成 PPT 请给 content 大纲，或用 slides 描述每一页");
+          }
+          return normalized(() => normalizePresentation(presentationFromText(content)));
+        })();
+    checkSize(JSON.stringify(spec).length);
+    return { filename, mimeType: PPTX_MIME, data: await pptxFromPresentation(spec) };
+  }
+
+  if (ext === "ppt" || ext === "doc" || ext === "xls") {
+    throw new AppError(
+      `不支持旧的 .${ext} 格式；请改生成 .${ext === "xls" ? "xlsx" : ext === "doc" ? "docx" : "pptx"}`,
+    );
+  }
+
   const mimeType = TEXT_MIME[ext];
   if (!mimeType) {
     throw new AppError(`暂不支持生成 .${ext} 文件；支持 ${GENERATE_SUPPORTED_LABEL}`);
   }
-  return { filename, mimeType, data: Buffer.from(input.content, "utf8") };
-}
-
-const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-
-async function xlsxFromCsv(content: string, sheetName?: string): Promise<Buffer> {
-  const XLSX = await import("xlsx");
-  let workbook;
-  try {
-    // type:string 让 SheetJS 自己识别分隔符（逗号/制表符）与引号
-    workbook = XLSX.read(content, { type: "string" });
-  } catch {
-    throw new AppError("Excel 内容需为 CSV 文本（第一行作表头）");
-  }
-  if (sheetName?.trim()) {
-    const old = workbook.SheetNames[0];
-    const name = sheetName.trim().slice(0, 31);
-    workbook.SheetNames[0] = name;
-    workbook.Sheets[name] = workbook.Sheets[old];
-    if (name !== old) delete workbook.Sheets[old];
-  }
-  return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
-}
-
-// —— 最小 DOCX 生成：每行一段，不引新依赖 ——
-
-function escapeXml(text: string): string {
-  return text
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&apos;");
-}
-
-export function docxFromText(text: string): Buffer {
-  const paragraphs = text
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .map((line) =>
-      line
-        ? `<w:p><w:r><w:t xml:space="preserve">${escapeXml(line)}</w:t></w:r></w:p>`
-        : "<w:p/>",
-    )
-    .join("");
-
-  const documentXml =
-    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
-    `<w:body>${paragraphs}<w:sectPr/></w:body></w:document>`;
-
-  const contentTypes =
-    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
-    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
-    '<Default Extension="xml" ContentType="application/xml"/>' +
-    '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
-    "</Types>";
-
-  const rels =
-    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
-    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
-    "</Relationships>";
-
-  return zipStore([
-    { name: "[Content_Types].xml", data: Buffer.from(contentTypes, "utf8") },
-    { name: "_rels/.rels", data: Buffer.from(rels, "utf8") },
-    { name: "word/document.xml", data: Buffer.from(documentXml, "utf8") },
-  ]);
-}
-
-const CRC_TABLE = (() => {
-  const table = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    table[n] = c >>> 0;
-  }
-  return table;
-})();
-
-function crc32(buf: Buffer): number {
-  let c = 0xffffffff;
-  for (const byte of buf) c = CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
-  return (c ^ 0xffffffff) >>> 0;
-}
-
-/** 只存不压（method 0）的 zip：Word/mammoth 都能读，省掉压缩库依赖 */
-function zipStore(entries: { name: string; data: Buffer }[]): Buffer {
-  const locals: Buffer[] = [];
-  const centrals: Buffer[] = [];
-  let offset = 0;
-
-  // DOS 时间戳：1980-01-01 00:00（最低合法值），固定值让产物可复现
-  const dosTime = 0;
-  const dosDate = (1 << 5) | 1;
-
-  for (const entry of entries) {
-    const name = Buffer.from(entry.name, "utf8");
-    const crc = crc32(entry.data);
-
-    const local = Buffer.alloc(30 + name.length);
-    local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4); // version needed
-    local.writeUInt16LE(0x0800, 6); // UTF-8 flag
-    local.writeUInt16LE(0, 8); // method: store
-    local.writeUInt16LE(dosTime, 10);
-    local.writeUInt16LE(dosDate, 12);
-    local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(entry.data.length, 18);
-    local.writeUInt32LE(entry.data.length, 22);
-    local.writeUInt16LE(name.length, 26);
-    local.writeUInt16LE(0, 28);
-    name.copy(local, 30);
-    locals.push(local, entry.data);
-
-    const central = Buffer.alloc(46 + name.length);
-    central.writeUInt32LE(0x02014b50, 0);
-    central.writeUInt16LE(20, 4); // version made by
-    central.writeUInt16LE(20, 6); // version needed
-    central.writeUInt16LE(0x0800, 8);
-    central.writeUInt16LE(0, 10);
-    central.writeUInt16LE(dosTime, 12);
-    central.writeUInt16LE(dosDate, 14);
-    central.writeUInt32LE(crc, 16);
-    central.writeUInt32LE(entry.data.length, 20);
-    central.writeUInt32LE(entry.data.length, 24);
-    central.writeUInt16LE(name.length, 28);
-    central.writeUInt16LE(0, 30);
-    central.writeUInt16LE(0, 32);
-    central.writeUInt16LE(0, 34);
-    central.writeUInt16LE(0, 36);
-    central.writeUInt32LE(0, 38);
-    central.writeUInt32LE(offset, 42);
-    name.copy(central, 46);
-    centrals.push(central);
-
-    offset += local.length + entry.data.length;
-  }
-
-  const centralSize = centrals.reduce((sum, b) => sum + b.length, 0);
-  const eocd = Buffer.alloc(22);
-  eocd.writeUInt32LE(0x06054b50, 0);
-  eocd.writeUInt16LE(0, 4);
-  eocd.writeUInt16LE(0, 6);
-  eocd.writeUInt16LE(entries.length, 8);
-  eocd.writeUInt16LE(entries.length, 10);
-  eocd.writeUInt32LE(centralSize, 12);
-  eocd.writeUInt32LE(offset, 16);
-  eocd.writeUInt16LE(0, 20);
-
-  return Buffer.concat([...locals, ...centrals, eocd]);
+  if (!content) throw new AppError("文件内容不能为空");
+  return { filename, mimeType, data: Buffer.from(content, "utf8") };
 }
