@@ -622,25 +622,9 @@ export function AgentChat({
                       {deleteButton}
                     </div>
                   </div>
-                  {/* 助手按 Markdown 渲染；用户自己敲的字保持原样，别把 * 和 # 也吃进去 */}
-                  <div className="mt-1 text-ink">
-                    {m.role === "assistant" ? (
-                      <Markdown>{m.content}</Markdown>
-                    ) : (
-                      <p className="whitespace-pre-wrap">{m.content}</p>
-                    )}
-                  </div>
-                  {m.tags && m.tags.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {m.tags.map((tag) => (
-                        <span key={tag} className="ac-badge bg-surface text-ink-soft">
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                  {/* 标签编辑器紧贴右上角的标签按钮：长答复里不用滚到底部才能输入 */}
                   {m.role === "assistant" && m.id && tagEditorId === m.id && (
-                    <div className="mt-2 space-y-1.5 rounded-field border border-line bg-surface/80 p-2">
+                    <div className="mt-1.5 space-y-1.5 rounded-field border border-line bg-surface/80 p-2">
                       {m.tags && m.tags.length > 0 && (
                         <div className="flex flex-wrap gap-1.5">
                           {m.tags.map((tag) => (
@@ -694,6 +678,23 @@ export function AgentChat({
                         </button>
                       </div>
                       {tagError && <p className="text-[11px] text-high">{tagError}</p>}
+                    </div>
+                  )}
+                  {/* 助手按 Markdown 渲染；用户自己敲的字保持原样，别把 * 和 # 也吃进去 */}
+                  <div className="mt-1 text-ink">
+                    {m.role === "assistant" ? (
+                      <Markdown>{m.content}</Markdown>
+                    ) : (
+                      <p className="whitespace-pre-wrap">{m.content}</p>
+                    )}
+                  </div>
+                  {m.tags && m.tags.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {m.tags.map((tag) => (
+                        <span key={tag} className="ac-badge bg-surface text-ink-soft">
+                          {tag}
+                        </span>
+                      ))}
                     </div>
                   )}
                   {m.attachments && m.attachments.length > 0 && (

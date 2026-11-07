@@ -11,7 +11,7 @@ import {
 } from "react";
 import { AgentChat, type ChatMessage } from "@/components/agent-chat";
 import { AssistantConversations } from "@/components/assistant-conversations";
-import { AssistantTagBoard } from "@/components/assistant-tag-board";
+import { AssistantBoards } from "@/components/assistant-boards";
 import {
   ASSISTANT_CONVERSATION_COOKIE,
   ASSISTANT_COOKIE_MAX_AGE,
@@ -436,7 +436,7 @@ export function AssistantShell({
             onCategorize={categorizeConversation}
             onAutoCategorize={autoCategorizeConversations}
           />
-          <AssistantTagBoard
+          <AssistantBoards
             busy={sessionBusy || switching}
             onOpenMessage={openTaggedMessage}
           />

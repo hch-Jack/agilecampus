@@ -54,6 +54,21 @@ export const ASSISTANT_FILE_MAX_SIZE = MAX_FILE_SIZE;
 /** 助手拟「打开某页」时随响应下发的跳转意图；面板据此自动跳转并留一个可点的入口 */
 export type AssistantNavigation = { label: string; href: string };
 
+/**
+ * 「我生成过的文件」列表项：跨会话从助手消息的工具轨迹还原（只取 create_file 的结果）。
+ * `url` 是下载/预览路由，会话与消息 id 用来把用户带回当时那条答复。
+ */
+export type GeneratedFileEntry = {
+  url: string;
+  filename: string;
+  mimeType: string | null;
+  size: number;
+  conversationId: string;
+  conversationTitle: string | null;
+  messageId: string;
+  createdAt: string; // ISO
+};
+
 /** 助手拟「打开某文件」时随响应下发的预览目标；面板据此弹出预览并留一个可点的入口 */
 export type AssistantFile = {
   url: string;

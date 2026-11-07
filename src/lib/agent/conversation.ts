@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { db, type DbTx } from "@/db";
 import { conversations, messages } from "@/db/schema";
 import { getProjectForUser } from "@/lib/project";
@@ -8,6 +8,7 @@ import type {
   AssistantConversationSummary,
   AssistantFile,
   AssistantPanelMessage,
+  GeneratedFileEntry,
   MessageAttachment,
 } from "./assistant-panel-shared";
 import { isFileOpenEnvelope } from "./file-open";
@@ -297,6 +298,64 @@ function filesFromToolCalls(value: unknown): AssistantFile[] | undefined {
     });
   }
   return files.length > 0 ? files : undefined;
+}
+
+/**
+ * 「我生成过的文件」：跨个人会话扫描助手消息的工具轨迹，只取 `create_file`
+ * 留下的信封（`__autoOpen === false`）——`open_file` 打开的是既有附件，不算「生成」。
+ * 按文件 url 去重（同一条消息里重试过也不会重复），最近的在前。
+ */
+export async function listGeneratedFiles(
+  actorId: string,
+  limit = 300,
+): Promise<GeneratedFileEntry[]> {
+  const capped = Math.min(Math.max(Math.trunc(limit), 1), 500);
+  const rows = await db
+    .select({
+      messageId: messages.id,
+      toolCalls: messages.toolCalls,
+      createdAt: messages.createdAt,
+      conversationId: conversations.id,
+      conversationTitle: conversations.title,
+    })
+    .from(messages)
+    .innerJoin(conversations, eq(conversations.id, messages.conversationId))
+    .where(
+      and(
+        personalWhere(actorId),
+        eq(messages.role, "assistant"),
+        isNotNull(messages.toolCalls),
+      ),
+    )
+    .orderBy(desc(messages.createdAt))
+    // 先按消息截断再拆文件：一条消息可能生成多个文件
+    .limit(capped);
+
+  const seen = new Set<string>();
+  const files: GeneratedFileEntry[] = [];
+  for (const row of rows) {
+    if (!Array.isArray(row.toolCalls)) continue;
+    for (const entry of row.toolCalls) {
+      if (typeof entry !== "object" || entry === null) continue;
+      const output = (entry as { output?: unknown }).output;
+      // 只有 create_file 会显式标 __autoOpen: false
+      if (!isFileOpenEnvelope(output) || output.__autoOpen !== false) continue;
+      if (seen.has(output.url)) continue;
+      seen.add(output.url);
+      files.push({
+        url: output.url,
+        filename: output.filename,
+        mimeType: output.mimeType,
+        size: output.size,
+        conversationId: row.conversationId,
+        conversationTitle: row.conversationTitle,
+        messageId: row.messageId,
+        createdAt: row.createdAt.toISOString(),
+      });
+      if (files.length >= capped) return files;
+    }
+  }
+  return files;
 }
 
 /**
