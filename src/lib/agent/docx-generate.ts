@@ -31,8 +31,59 @@ import {
  * 而不是原来那种「每行一段、全篇一个字号」的纯文本。
  */
 
+/** A4 尺寸（twips）：210mm × 297mm —— 显式写进页面属性，不依赖库的默认值 */
+const A4_WIDTH = 11906;
+const A4_HEIGHT = 16838;
+
 /** A4 版心宽度（twips）：11906 - 左右各 1440（2.54cm） */
-const CONTENT_TWIPS = 11906 - 1440 * 2;
+const CONTENT_TWIPS = A4_WIDTH - 1440 * 2;
+
+/**
+ * 估算分页用的版面度量。
+ *
+ * Word 打开时会自己按页高排版，但**前端预览（docx-preview）只在显式分页符处换页**，
+ * 不按内容高度自动切页 —— 没有分页符的稿子会显示成一条超级长的「页」。
+ * 所以生成时按估算的行数主动切页：至少让每一章另起一页，内容够长时也会翻页。
+ */
+const PAGE_LINES = 38; // A4 版心约 42 行正文，留一点余量，避免和 Word 的实际分页错位太多
+const CHARS_PER_LINE = 40; // 10.5pt 中文正文在 6.27 英寸版心里一行约 40 个字
+const TABLE_ROWS_PER_PAGE = 20;
+
+function textLines(text: string): number {
+  return text
+    .split("\n")
+    .reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / CHARS_PER_LINE)), 0);
+}
+
+/** 每个块大约占多少行（用于判断当前页还放不放得下） */
+function estimateLines(block: DocBlock): number {
+  switch (block.type) {
+    case "heading":
+      return block.level === 1 ? 3 : block.level === 2 ? 2.2 : 1.8;
+    case "paragraph":
+      return textLines(block.text);
+    case "list":
+      return block.items.reduce((sum, item) => sum + textLines(item) + 0.4, 0) + 1;
+    case "table":
+      return (
+        Math.min(block.rows.length + 1, TABLE_ROWS_PER_PAGE) * 1.15 +
+        (block.caption ? 1 : 0) +
+        1
+      );
+    case "quote":
+      return textLines(block.text) + 0.8;
+    case "code":
+      return block.text.split("\n").length + 0.6;
+    case "callout":
+      return textLines(block.text) + (block.title ? 1 : 0) + 0.6;
+    case "stats":
+      return 3.5;
+    case "divider":
+      return 1;
+    case "pageBreak":
+      return 0;
+  }
+}
 
 function hex(value: string): string {
   return value.replace("#", "").toUpperCase();
@@ -383,7 +434,26 @@ export async function docxFromDocument(spec: DocumentSpec): Promise<Buffer> {
     children.push(new Paragraph({ style: "DocMeta", children: [new TextRun({ text: meta })] }));
   }
 
+  // 估算当前页已用行数；标题区按 4 行算
+  let used = spec.title ? 4 : 0;
+  let hasContent = false;
+  const pushPageBreak = () => {
+    children.push(new Paragraph({ children: [new PageBreak()] }));
+    used = 0;
+  };
+
   for (const block of spec.blocks) {
+    if (block.type === "pageBreak") {
+      pushPageBreak();
+      continue;
+    }
+
+    const lines = estimateLines(block);
+    // 一级标题 = 新章节，另起一页（文档开头除外）；当前页放不下下一个块时也翻页
+    const chapterStart = block.type === "heading" && block.level === 1 && hasContent && used > 0;
+    const overflow = used > 0 && used + lines > PAGE_LINES;
+    if (chapterStart || overflow) pushPageBreak();
+
     switch (block.type) {
       case "heading":
         children.push(headingParagraph(block));
@@ -413,9 +483,29 @@ export async function docxFromDocument(spec: DocumentSpec): Promise<Buffer> {
         });
         children.push(new Paragraph({ spacing: { after: 80 }, children: [] }));
         break;
-      case "table":
+      case "table": {
+        // 数据行太多时按页切开、每页重复表头 —— 预览器不会自动给长表格翻页
+        if (block.rows.length > TABLE_ROWS_PER_PAGE) {
+          for (let start = 0; start < block.rows.length; start += TABLE_ROWS_PER_PAGE) {
+            if (start > 0) pushPageBreak();
+            children.push(
+              ...tableBlock(
+                {
+                  ...block,
+                  rows: block.rows.slice(start, start + TABLE_ROWS_PER_PAGE),
+                  ...(start === 0 && block.caption ? { caption: block.caption } : { caption: undefined }),
+                },
+                theme,
+              ),
+            );
+          }
+          used = Math.min(block.rows.length, TABLE_ROWS_PER_PAGE) * 1.15 + 1;
+          hasContent = true;
+          continue;
+        }
         children.push(...tableBlock(block, theme));
         break;
+      }
       case "quote":
         children.push(
           new Paragraph({ style: "DocQuote", children: [new TextRun({ text: block.text })] }),
@@ -447,10 +537,9 @@ export async function docxFromDocument(spec: DocumentSpec): Promise<Buffer> {
           }),
         );
         break;
-      case "pageBreak":
-        children.push(new Paragraph({ children: [new PageBreak()] }));
-        break;
     }
+    used += lines;
+    hasContent = true;
   }
 
   const title = spec.title ?? "";
@@ -501,6 +590,8 @@ export async function docxFromDocument(spec: DocumentSpec): Promise<Buffer> {
       {
         properties: {
           page: {
+            // 最常见的模板：A4 纵向、四边 2.54cm 页边距
+            size: { width: A4_WIDTH, height: A4_HEIGHT },
             margin: { top: 1440, right: 1440, bottom: 1440, left: 1440, header: 720, footer: 720 },
           },
         },

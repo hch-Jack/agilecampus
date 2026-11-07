@@ -181,7 +181,11 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
         const res = await fetch(file.url);
         if (!res.ok) throw new Error(String(res.status));
         const buf = await res.arrayBuffer();
-        if (!cancelled) setPptBuf(buf);
+        // pptxgenjs 生成的旧文件可能带着悬空的 slideMaster 声明，解析器会整份放弃；
+        // 先修掉再交给 pptx-preview（无悬空声明时原样返回，不做重打包）
+        const { stripDanglingPptxOverrides } = await import("@/lib/pptx-sanitize");
+        const fixed = await stripDanglingPptxOverrides(buf);
+        if (!cancelled) setPptBuf(fixed);
       } catch {
         if (!cancelled) setError("文档解析失败，可下载后查看");
       }

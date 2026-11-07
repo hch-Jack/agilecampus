@@ -1,6 +1,7 @@
+import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 import { GENERATE_MAX_CHARS, fileExtension, generateFile } from "@/lib/agent/file-generate";
-import { blocksFromText, documentFromText } from "@/lib/agent/document-spec";
+import { blocksFromText, documentFromText, type DocBlock } from "@/lib/agent/document-spec";
 import { extractFileText } from "@/lib/agent/file-text";
 
 describe("助手生成文件：按扩展名编码", () => {
@@ -107,6 +108,20 @@ describe("助手生成文件：按扩展名编码", () => {
     expect(text).toContain("张三");
   });
 
+  it("生成的 docx 是 A4，长稿会主动分页（预览器不按高度自动切页）", async () => {
+    const blocks: DocBlock[] = [];
+    for (let i = 1; i <= 3; i++) {
+      blocks.push({ type: "heading", level: 1, text: `第 ${i} 章` });
+      blocks.push({ type: "paragraph", text: "正文内容。".repeat(30) });
+    }
+    const out = await generateFile({ filename: "长稿.docx", document: { title: "长稿", blocks } });
+    const zip = await JSZip.loadAsync(out.data);
+    const xml = await zip.file("word/document.xml")!.async("string");
+    expect(xml).toContain('<w:pgSz w:w="11906" w:h="16838"');
+    // 3 个一级标题 = 3 章：第 1 章在文首，后两章各另起一页
+    expect((xml.match(/<w:br w:type="page"\/>/g) || []).length).toBeGreaterThanOrEqual(2);
+  });
+
   it("生成 PDF：返回真正的 PDF 字节，中文不会炸", async () => {
     const out = await generateFile({
       filename: "结题报告.pdf",
@@ -149,6 +164,28 @@ describe("助手生成文件：按扩展名编码", () => {
     expect(out.mimeType).toContain("presentationml");
     expect(out.data.subarray(0, 2).toString("latin1")).toBe("PK");
     expect(out.data.length).toBeGreaterThan(5000);
+  });
+
+  it("生成的 PPTX 没有悬空部件声明，前端预览器才能解析", async () => {
+    const out = await generateFile({
+      filename: "汇报.pptx",
+      slides: {
+        title: "汇报",
+        slides: [
+          { layout: "title", title: "汇报" },
+          { layout: "bullets", title: "进展", bullets: ["一", "二"] },
+          { layout: "closing", title: "谢谢" },
+        ],
+      },
+    });
+    const zip = await JSZip.loadAsync(out.data);
+    const types = await zip.file("[Content_Types].xml")!.async("string");
+    const parts = new Set(Object.keys(zip.files).map((name) => `/${name}`));
+    const dangling = [...types.matchAll(/PartName="([^"]+)"/g)]
+      .map((match) => match[1])
+      .filter((part) => !parts.has(part));
+    // pptxgenjs 会为每张幻灯片多声明一份 slideMasterN.xml；不修掉预览器会 0 页
+    expect(dangling).toEqual([]);
   });
 
   it("只给正文也能生成 PPT（按标题拆页）", async () => {

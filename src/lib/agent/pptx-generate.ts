@@ -1,4 +1,5 @@
 import PptxGenJS from "pptxgenjs";
+import { stripDanglingPptxOverrides } from "@/lib/pptx-sanitize";
 import { resolveTheme, type DocTheme, type PresentationSpec, type SlideSpec } from "./document-spec";
 
 /**
@@ -465,5 +466,7 @@ export async function pptxFromPresentation(spec: PresentationSpec): Promise<Buff
   }
 
   const out = await pptx.write({ outputType: "nodebuffer" });
-  return Buffer.isBuffer(out) ? out : Buffer.from(out as ArrayBuffer);
+  const buf = Buffer.isBuffer(out) ? out : Buffer.from(out as ArrayBuffer);
+  // 修掉 pptxgenjs 多声明出来的 slideMaster 部件，否则前端预览解析不了
+  return Buffer.from(await stripDanglingPptxOverrides(buf));
 }
