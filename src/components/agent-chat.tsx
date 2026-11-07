@@ -6,7 +6,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { DraftCards, type ChatScope, type Draft, type OptionMap } from "@/components/draft-cards";
 import { continuationOriginalText, isContinuationText } from "@/lib/agent/continuation";
-import type { AssistantFile, AssistantNavigation } from "@/lib/agent/assistant-panel-shared";
+import {
+  ASSISTANT_ATTACHMENTS_MAX,
+  ASSISTANT_FILE_MAX_SIZE,
+  type AssistantFile,
+  type AssistantNavigation,
+  type MessageAttachment,
+} from "@/lib/agent/assistant-panel-shared";
 import { Markdown } from "@/components/markdown";
 import { FilePreviewModal } from "@/components/file-preview";
 
@@ -44,7 +50,16 @@ export type ChatMessage = {
   navigations?: AssistantNavigation[];
   /** 助手替用户打开的附件；收到即弹预览，并留一个可点重开的入口 */
   files?: AssistantFile[];
+  /** 这条提问随行上传的文件（落库后服务端回读，刷新仍在） */
+  attachments?: MessageAttachment[];
 };
+
+/** 文件胶囊上的大小提示；只用于 title，不需要更精细 */
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
 
 let localSeq = 0;
 function nextLocalId(): string {
@@ -102,6 +117,11 @@ export function AgentChat({
   const [error, setError] = useState<string | null>(null);
   /** 当前正在预览的附件（助手 open_file 自动弹出，或用户点消息里的入口） */
   const [previewFile, setPreviewFile] = useState<AssistantFile | null>(null);
+  /** 已上传、还没随消息发出去的文件（文件主人只有自己，见 /api/assistant/files） */
+  const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   // 翻历史时别被后续消息（答复、删除、pending 切换）拽回底部：
   // 只有本来就贴着底、或自己刚发出一条时才自动跟到底
@@ -139,7 +159,11 @@ export function AgentChat({
    * 发送一句话。`focus` 是这一轮带的项目上下文 —— 默认取屏幕上的当前项目；
    * 「继续处理后续动作」会显式传入**出卡时**的项目，避免切页后续做到别的项目上。
    */
-  async function sendText(text: string, focus = projectId): Promise<boolean> {
+  async function sendText(
+    text: string,
+    focus = projectId,
+    withFiles: MessageAttachment[] = [],
+  ): Promise<boolean> {
     const trimmed = text.trim();
     if (!trimmed || pending || disabled) return false;
     setError(null);
@@ -147,7 +171,15 @@ export function AgentChat({
     // 自己刚发出一条：即便刚才在翻历史，也要把这条与随后的答复带进视野
     atBottomRef.current = true;
     forceBottomRef.current = true;
-    setMessages((m) => [...m, { role: "user", content: trimmed, localId }]);
+    setMessages((m) => [
+      ...m,
+      {
+        role: "user",
+        content: trimmed,
+        localId,
+        ...(withFiles.length > 0 ? { attachments: withFiles } : {}),
+      },
+    ]);
     setPending(true);
     try {
       const res = await fetch("/api/chat", {
@@ -159,6 +191,7 @@ export function AgentChat({
           projectId: focus,
           userText: trimmed,
           ...(conversationId ? { conversationId } : {}),
+          ...(withFiles.length > 0 ? { attachmentIds: withFiles.map((f) => f.id) } : {}),
         }),
       });
       const data = await res.json();
@@ -222,9 +255,61 @@ export function AgentChat({
 
   function send() {
     const text = input.trim();
-    if (!text || pending || disabled) return;
+    if (!text || pending || disabled || uploading) return;
     setInput("");
-    void sendText(text);
+    const files = attachments;
+    setAttachments([]);
+    void sendText(text, projectId, files);
+  }
+
+  /** 选中的文件逐个传上去：一个失败不影响其余，失败原因留在输入框上方 */
+  async function uploadFiles(fileList: FileList | null) {
+    if (!fileList || fileList.length === 0) return;
+    setUploadError(null);
+    const room = ASSISTANT_ATTACHMENTS_MAX - attachments.length;
+    const picked = [...fileList];
+    if (room <= 0) {
+      setUploadError(`一句话最多带 ${ASSISTANT_ATTACHMENTS_MAX} 个文件`);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+    if (picked.length > room) setUploadError(`最多再加 ${room} 个文件，多余的已忽略`);
+
+    setUploading(true);
+    for (const file of picked.slice(0, room)) {
+      // 超限的本地先拦：不必把 10MB 白传一遍，服务端还会再校一次
+      if (file.size > ASSISTANT_FILE_MAX_SIZE) {
+        setUploadError(`「${file.name}」超过 10MB，未上传`);
+        continue;
+      }
+      const form = new FormData();
+      form.append("file", file);
+      try {
+        const res = await fetch("/api/assistant/files", { method: "POST", body: form });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setUploadError(data.error ?? `「${file.name}」上传失败`);
+          continue;
+        }
+        const uploaded: MessageAttachment = {
+          id: String(data.id),
+          filename: String(data.filename),
+          mimeType: typeof data.mimeType === "string" ? data.mimeType : null,
+          size: Number(data.size) || file.size,
+        };
+        setAttachments((list) => [...list, uploaded]);
+      } catch {
+        setUploadError(`「${file.name}」上传失败，请重试`);
+      }
+    }
+    setUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  /** 发送前撤掉一个文件：顺手删掉服务端那份，别留下没人引用的孤儿 */
+  function removeAttachment(id: string) {
+    setAttachments((list) => list.filter((f) => f.id !== id));
+    void fetch(`/api/assistant/files/${id}`, { method: "DELETE" }).catch(() => {});
   }
 
   async function deleteTurn(m: ChatMessage) {
@@ -384,6 +469,21 @@ export function AgentChat({
                       <p className="whitespace-pre-wrap">{m.content}</p>
                     )}
                   </div>
+                  {m.attachments && m.attachments.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {m.attachments.map((a) => (
+                        <a
+                          key={a.id}
+                          href={`/api/assistant/files/${a.id}`}
+                          download={a.filename}
+                          title={`${a.filename}（${formatFileSize(a.size)}）`}
+                          className="ac-badge max-w-full truncate bg-surface text-ink-soft hover:bg-primary-soft hover:text-primary"
+                        >
+                          {a.filename}
+                        </a>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
               {m.navigations && m.navigations.length > 0 && (
@@ -461,16 +561,88 @@ export function AgentChat({
         )}
       </div>
       {error && <p className="shrink-0 text-sm text-high">{error}</p>}
+      {(uploadError || (scope === "personal" && attachments.length > 0)) && (
+        <div className="shrink-0 space-y-1">
+          {scope === "personal" && attachments.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {attachments.map((a) => (
+                <span
+                  key={a.id}
+                  className="ac-badge max-w-full bg-surface text-ink-soft"
+                  title={`${a.filename}（${formatFileSize(a.size)}）`}
+                >
+                  <span className="max-w-[10rem] truncate">{a.filename}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(a.id)}
+                    aria-label={`移除 ${a.filename}`}
+                    className="text-ink-faint transition-colors hover:text-high"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          {uploadError && <p className="text-xs text-high">{uploadError}</p>}
+        </div>
+      )}
       <div className="flex shrink-0 gap-2">
+        {/* 上传只开在个人助手：项目助手会话是团队共享的，文件却有主人 */}
+        {scope === "personal" && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => void uploadFiles(e.target.files)}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={
+                pending ||
+                disabled ||
+                uploading ||
+                attachments.length >= ASSISTANT_ATTACHMENTS_MAX
+              }
+              aria-label="添加文件"
+              title={`添加文件（≤10MB，最多 ${ASSISTANT_ATTACHMENTS_MAX} 个）`}
+              className="ac-btn-ghost shrink-0 px-2 py-2 text-sm"
+            >
+              {uploading ? (
+                <span className="text-xs text-ink-faint">…</span>
+              ) : (
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-4 w-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l9-9a3.4 3.4 0 014.8 4.8l-9 9a1.8 1.8 0 01-2.5-2.5l8.2-8.2" />
+                </svg>
+              )}
+            </button>
+          </>
+        )}
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
           placeholder={placeholder}
           className="ac-field flex-1 text-sm"
-          disabled={pending || disabled}
+          disabled={pending || disabled || uploading}
         />
-        <button onClick={send} disabled={pending || disabled} className="ac-btn px-3 py-2 text-sm">
+        <button
+          onClick={send}
+          disabled={pending || disabled || uploading}
+          className="ac-btn px-3 py-2 text-sm"
+        >
           {pending ? "思考中…" : "发送"}
         </button>
       </div>

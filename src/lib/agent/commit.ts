@@ -35,6 +35,7 @@ import {
   type WidgetSurface,
 } from "./widget-ops";
 import { copyMessageAttachmentToTask, deleteAttachment } from "@/lib/attachment";
+import { copyAgentFileToTask } from "./files";
 import { createPersonalContext } from "@/lib/personal-context";
 import { createTeam, joinTeam } from "@/lib/team";
 import { notifyTaskAssigned, notifyTaskCompleted } from "@/lib/notify";
@@ -52,6 +53,7 @@ import { resolveUserTimeZone } from "@/lib/time-pref";
 import { AppError, ForbiddenError } from "@/lib/errors";
 import {
   ATTACH_MESSAGE_TOOL,
+  SAVE_FILE_TO_TASK_TOOL,
   CREATE_GROUP_TOOL,
   CREATE_LABEL_TOOL,
   CREATE_RESOURCE_USAGE_TOOL,
@@ -167,6 +169,7 @@ const createSubtaskSchema = z.object({
 const deleteSubtaskSchema = z.object({ taskId: z.uuid() });
 const deleteAttachmentSchema = z.object({ attachmentId: z.uuid() });
 const attachMessageFileSchema = z.object({ attachmentId: z.uuid(), taskId: z.uuid() });
+const saveFileToTaskSchema = z.object({ fileId: z.uuid(), taskId: z.uuid() });
 
 const chatTargetTypeSchema = z.enum(["user", "group"]);
 
@@ -371,6 +374,17 @@ export async function commitMessageAttachment(
 ): Promise<CommitResult> {
   const d = attachMessageFileSchema.parse(draft);
   await copyMessageAttachmentToTask(actorId, d.attachmentId, d.taskId);
+  return { committed: 1, conflicts: [] };
+}
+
+// 助手对话里上传的文件 → 任务附件：同样只属于工作台助手。copyAgentFileToTask
+// 先验文件归属（ownerId = 发话人），再经 uploadAttachment 重校任务写权限与 10MB 上限。
+export async function commitSaveFileToTask(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = saveFileToTaskSchema.parse(draft);
+  await copyAgentFileToTask(actorId, d.fileId, d.taskId);
   return { committed: 1, conflicts: [] };
 }
 
@@ -676,6 +690,7 @@ export async function commitPersonalDraft(
   if (tool === SAVE_CONTEXT_TOOL) return commitPersonalContext(actorId, draft);
   if (tool === RESPOND_INVITE_TOOL) return commitGroupInviteResponse(actorId, draft);
   if (tool === ATTACH_MESSAGE_TOOL) return commitMessageAttachment(actorId, draft);
+  if (tool === SAVE_FILE_TO_TASK_TOOL) return commitSaveFileToTask(actorId, draft);
   if (tool === SEND_MESSAGE_TOOL) return commitSendMessage(actorId, draft);
   if (tool === FORWARD_MESSAGE_TOOL) return commitForwardMessage(actorId, draft);
   if (tool === CREATE_GROUP_TOOL) return commitCreateGroup(actorId, draft);

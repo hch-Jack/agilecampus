@@ -429,6 +429,10 @@ export const messages = pgTable(
     role: messageRoleEnum("role").notNull(),
     content: text("content").notNull(),
     toolCalls: jsonb("tool_calls"),
+    // 用户随这句话上传的文件（`{ id, filename, mimeType, size }[]`，指向 agent_files）。
+    // 与 tool_calls 一样刻意不标类型：结构属于应用层，schema 由 drizzle-kit 独立加载。
+    // 文件名/大小在这里留快照 —— 源文件被清理后，聊天记录里仍能显示它当时叫什么。
+    attachments: jsonb("attachments"),
     // 一轮问答（user + assistant）共用这个 id：删一条就能精确删掉整轮。
     // 可空 —— 老数据没有，删除时退回按原始 created_at 配对（微秒只存在于库里，别经 JS Date）。
     turnId: uuid("turn_id"),
@@ -597,6 +601,26 @@ export const taskAttachments = pgTable(
     createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [index("task_attachments_task_idx").on(t.taskId)],
+);
+
+// AI 助手对话里上传的文件：与任务附件同构，内容（bytea）直存库内，单文件上限由应用层
+// 校验（lib/agent/files.ts，10MB）。**只属于上传者本人**——项目助手会话是团队共享的，
+// 所以上传功能也只开在个人助手（工作台右侧面板），避免队友看到自己无权下载的文件。
+// 用户可让助手把这些文件读进上下文，或复制成某个任务的附件（复制字节、各存一份）。
+export const agentFiles = pgTable(
+  "agent_files",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    filename: text("filename").notNull(),
+    mimeType: text("mime_type"),
+    size: integer("size").notNull(),
+    data: bytea("data").notNull(),
+    createdAt: dbTimestampNow("created_at").notNull(),
+  },
+  (t) => [index("agent_files_owner_idx").on(t.ownerId)],
 );
 
 // 任务动态：谁在何时对任务做了什么（创建/字段变更/子任务增改/附件增删）。

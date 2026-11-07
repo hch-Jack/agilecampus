@@ -17,6 +17,8 @@ import { getModel } from "./model";
 import { DRAFT_TOOL_LABELS } from "./continuation";
 import { isNavigationEnvelope } from "./navigation";
 import { isFileOpenEnvelope } from "./file-open";
+import { loadAttachmentMetas } from "./files";
+import type { MessageAttachment } from "./assistant-panel-shared";
 
 const SYSTEM_PREAMBLE = `你是 AgileCampus（敏捷校园）的项目管理助手，服务高校科研与课程团队。
 你的职责限于项目管理：拆解目标、排期、指派、跟踪进度、答疑项目现状。你不代做研究、编码或写作等实际工作。
@@ -65,6 +67,10 @@ const SYSTEM_PREAMBLE = `你是 AgileCampus（敏捷校园）的项目管理助�
 - 删除子任务 → delete_subtask（只能删子任务；其下级子任务与依赖会一并删除）
 - 改子任务的标题/状态/负责人/日期 → 与普通任务相同，用 update_tasks
 - 查任务附件 → list_attachments；删除任务附件 → delete_attachment
+- 要文件**正文**（总结文档、看表格、读代码）→ read_file：项目页传 attachmentId（取自 list_attachments）；
+  工作台还要指定 source=file（随消息上传的 fileId，见本轮消息末尾的文件清单）或 source=message（read_messages 的 attachmentId）。
+  PDF/PPT 抽不出正文时会返回说明，改用 open_file
+- 把用户随消息上传的文件放进某个任务 → save_file_to_task（仅工作台；fileId + taskId，需对该任务有写权限，仅产草案）
 - 把消息里的文件添加为任务附件（仅工作台）→ 先 read_messages 取 attachment.attachmentId，再 attach_message_file_to_task
 - 按用户名找一个人、要 userId → find_contact（用户名精确匹配，不支持模糊搜）
 - 给个人或群聊发文本 / 发项目文件 / 发消息里的文件（仅工作台）→ send_message；
@@ -120,7 +126,13 @@ export type AgentScope =
    * `focusProjectId` 不是会话归属，只是「用户此刻正看着哪个项目」：它让快照多带一段
    * 项目上下文、并放出项目专属工具（动态/留言/历史/子任务/附件）。
    */
-  | { kind: "personal"; focusProjectId?: string; conversationId?: string };
+  | {
+      kind: "personal";
+      focusProjectId?: string;
+      conversationId?: string;
+      /** 随这句话上传的文件 id（属于发话人）；只支持个人助手 */
+      attachmentIds?: string[];
+    };
 
 /**
  * 参数取联合类型而非「projectId 可选」：project 与 personal 两态**必须二选一**，
@@ -134,7 +146,12 @@ export type RunAgentTurnParams = {
   | { projectId: string; scope?: { kind: "project"; projectId: string } }
   | {
       projectId?: never;
-      scope: { kind: "personal"; focusProjectId?: string; conversationId?: string };
+      scope: {
+        kind: "personal";
+        focusProjectId?: string;
+        conversationId?: string;
+        attachmentIds?: string[];
+      };
     }
 );
 
@@ -160,6 +177,9 @@ const SCOPE_NOTES: Record<AgentScope["kind"], string> = {
 - 你还能读消息：list_message_threads（私信/群聊/邀请概览与未读数）、read_messages（peerId 或 groupId 二选一，只读）、
   search_messages（按关键词跨私信/群聊搜正文）、list_my_task_activity（工作台任务动态）。
   读消息与搜索工具**不会**把消息标为已读，不要谎称「已读完/已标已读」。
+- 用户可以随消息上传文件（本轮用户消息末尾会列出 fileId）。要内容就用 read_file 读；
+  他要求「把这个文件加到某任务 / 当成某个任务的附件」时，先取到 taskId，再拟 save_file_to_task 草案。
+  想用任务里已有的文件时，list_attachments 取 attachmentId 交给 read_file（读正文）或 open_file（预览）。
 - 用户说「找一下之前聊过 X 的消息 / 跳过去」时：先 search_messages 搜关键词，挑出最相关的一条，
   再用 open_message（messageId）把他带到那条消息；不要把搜索片段当成完整对话，也不要臆造 messageId。
 - 要发项目里的文件时，先用 list_attachments 取 attachmentId（taskId 全局唯一，无需 projectId），
@@ -218,6 +238,22 @@ const HISTORY_NOTE = `## 上文
 若这次请求带了你们前几轮对话，那是刚才聊过的内容，可据此理解指代与省略（「它」「那个项目」「再改一下」）。
 但上文**只是背景**：涉及项目数据的结论仍以工具返回与快照为准，别凭上文的记忆断言现状。`;
 
+/**
+ * 随消息上传的文件在模型侧只以「清单」出现：正文要用 read_file 现取。
+ * 这样做一是不把 10MB 文件无脑塞进上下文，二是模型能按需只读真正相关的那份。
+ */
+function attachmentBlock(attachments: MessageAttachment[]): string {
+  if (attachments.length === 0) return "";
+  const lines = attachments.map(
+    (a) => `- fileId=${a.id}；文件名=${a.filename}；大小=${a.size} 字节`,
+  );
+  return [
+    "【用户随这句话上传了以下文件】",
+    ...lines,
+    "这些文件属于用户本人。需要内容时调用 read_file（fileId）；不要臆造文件内容。",
+  ].join("\n");
+}
+
 export async function runAgentTurn(params: RunAgentTurnParams) {
   const { actorId, userText, model } = params;
 
@@ -232,6 +268,13 @@ export async function runAgentTurn(params: RunAgentTurnParams) {
     const access = await getProjectForUser(actorId, scope.focusProjectId);
     if (!access) throw new ForbiddenError();
   }
+
+  // 随消息上传的文件与焦点项目同理，也在建会话之前校一遍：
+  // 文件不属于发话人时整体拒绝，不该先落一条空的个人会话。
+  const attachments =
+    scope.kind === "personal" && scope.attachmentIds?.length
+      ? await loadAttachmentMetas(actorId, scope.attachmentIds)
+      : [];
 
   // 权限收敛：会话创建内部经 getProjectForUser 校验，非成员/不存在一律 ForbiddenError
   const { conversation, snapshot, tools }: {
@@ -269,6 +312,11 @@ export async function runAgentTurn(params: RunAgentTurnParams) {
           };
         })();
 
+  // 文件清单拼进这一轮的用户消息（正文要用 read_file 现取，不把整份文件塞进上下文）。
+  // 文件只存在于个人助手 —— 项目会话是团队共享的。
+  const block = attachmentBlock(attachments);
+  const promptText = block ? `${userText}\n\n${block}` : userText;
+
   // 上文：最近 N 条聊天记录（N 是用户自己的偏好，0 = 完全不看历史）。这一轮的用户消息
   // 尚未落库，故不在其中，拼在最前面即可 —— 助手于是能接着上一轮往下说。
   const historyLimit = await getAiHistoryLimit(actorId);
@@ -288,7 +336,7 @@ export async function runAgentTurn(params: RunAgentTurnParams) {
     stopWhen: stepCountIs(8),
     // 设计 §6.4：不自动重试——覆盖 AI SDK 默认 maxRetries=2，失败即如实呈报
     maxRetries: 0,
-    messages: [...history, { role: "user", content: userText }],
+    messages: [...history, { role: "user", content: promptText }],
   });
 
   // 工具轨迹：逐步展开 toolCalls 与对应 toolResults
@@ -349,7 +397,8 @@ export async function runAgentTurn(params: RunAgentTurnParams) {
         ].join("、")}），请在下方卡片中确认落库。`
       : "这一轮没有生成可展示的回复，请换个说法再试。";
 
-  const persisted = await persistTurn(conversation.id, userText, text, toolTrace);
+  // 落库存原始 userText（提示词块是这一轮的临时上下文），附件快照单独一列
+  const persisted = await persistTurn(conversation.id, userText, text, toolTrace, attachments);
 
   return { conversationId: conversation.id, text, toolTrace, drafts, navigations, files, ...persisted };
 }

@@ -27,6 +27,7 @@ import {
   MANAGE_WIDGETS_TOOL,
   RESPOND_INVITE_TOOL,
   SAVE_CONTEXT_TOOL,
+  SAVE_FILE_TO_TASK_TOOL,
   SEND_MESSAGE_TOOL,
   UPDATE_LABEL_TOOL,
   WRITE_TOOL_NAMES,
@@ -98,8 +99,10 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
         "open_page",
         "plan_sprint",
         "query_progress",
+        "read_file",
         "read_messages",
         "respond_group_invite",
+        "save_file_to_task",
         "search_messages",
         "save_personal_context",
         "send_message",
@@ -289,6 +292,8 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     expect(WRITE_TOOL_NAMES).not.toContain(RESPOND_INVITE_TOOL);
     // 消息附件复制同理：只有工作台助手能读消息
     expect(WRITE_TOOL_NAMES).not.toContain(ATTACH_MESSAGE_TOOL);
+    // 对话文件进任务：文件只属于个人助手，项目页没有上传口子
+    expect(WRITE_TOOL_NAMES).not.toContain(SAVE_FILE_TO_TASK_TOOL);
     // 发送 / 转发 / 建群同理：只走个人落库口，不能让项目页提交
     expect(WRITE_TOOL_NAMES).not.toContain(SEND_MESSAGE_TOOL);
     expect(WRITE_TOOL_NAMES).not.toContain(FORWARD_MESSAGE_TOOL);
@@ -309,6 +314,7 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
       SAVE_CONTEXT_TOOL,
       RESPOND_INVITE_TOOL,
       ATTACH_MESSAGE_TOOL,
+      SAVE_FILE_TO_TASK_TOOL,
       SEND_MESSAGE_TOOL,
       FORWARD_MESSAGE_TOOL,
       CREATE_GROUP_TOOL,
@@ -421,8 +427,8 @@ describe("buildPersonalTools：焦点项目的工具面", () => {
     const base = buildPersonalTools(student.id);
     const focused = buildPersonalTools(student.id, project.id);
 
-    expect(Object.keys(base)).toHaveLength(42);
-    expect(Object.keys(focused)).toHaveLength(48);
+    expect(Object.keys(base)).toHaveLength(44);
+    expect(Object.keys(focused)).toHaveLength(50);
     expect(Object.keys(focused).filter((name) => !(name in base)).sort()).toEqual(
       [...FOCUS_PROJECT_TOOL_NAMES].sort(),
     );

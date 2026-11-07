@@ -1235,6 +1235,37 @@ function DraftCard({
     );
   }
 
+  if (draft.tool === "save_file_to_task") {
+    const d = data as {
+      fileId?: string;
+      taskId?: string;
+      filename?: string;
+      size?: number;
+      taskTitle?: string;
+    };
+    const missingIds =
+      typeof d.fileId !== "string" ||
+      d.fileId === "" ||
+      typeof d.taskId !== "string" ||
+      d.taskId === "";
+    return (
+      <CardShell
+        title="对话文件添加为任务附件"
+        onConfirm={() => save("save_file_to_task", d)}
+        invalid={missingIds ? "草案缺少文件或任务 id，请让助手重拟" : undefined}
+      >
+        <p className="text-xs text-ink-soft">
+          文件「{d.filename ?? "未命名文件"}」
+          {typeof d.size === "number" ? `（${fmtSize(d.size)}）` : ""} → 任务
+          {d.taskTitle ? `「${d.taskTitle}」` : "附件"}。
+        </p>
+        <p className="text-xs text-ink-faint">
+          确认后会复制一份文件到任务附件；之后清理对话或源文件都不影响它。
+        </p>
+      </CardShell>
+    );
+  }
+
   if (draft.tool === "create_resource_usage") {
     const d = data as {
       teamId?: string;

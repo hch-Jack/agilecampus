@@ -33,6 +33,12 @@ import { listMyTaskActivities, listProjectActivities, type TaskActivityRow } fro
 import { listProjectComments, type ProjectCommentRow } from "@/lib/comment";
 import { getAttachmentMeta, listAttachments } from "@/lib/attachment";
 import {
+  getAgentFileMeta,
+  readAgentFileText,
+  readMessageAttachmentText,
+  readTaskAttachmentText,
+} from "./files";
+import {
   countUnread,
   findUserByUsername,
   getDmAttachmentMeta,
@@ -291,6 +297,21 @@ export function buildTools(actorId: string, projectId: string) {
           uploader: a.uploaderName,
           at: a.createdAt.toISOString(),
         }));
+      },
+    }),
+    read_file: tool({
+      description:
+        "读取任务附件的正文：文本/代码/CSV/JSON 直接解码，Word（.docx）与 Excel 抽成纯文本，" +
+        "PDF/PPT/旧版 .doc/图片读不了（会返回说明，改用 open_file 预览）。" +
+        "需要总结文档、看表格内容时用它；只要预览就用 open_file。attachmentId 取自 list_attachments。",
+      inputSchema: z.object({
+        attachmentId: z.uuid().describe("取自 list_attachments"),
+      }),
+      execute: async ({ attachmentId }) => {
+        // 附件必须属于当前项目：项目页的助手不该借这个口子读别处文件
+        const meta = await getAttachmentMeta(actorId, attachmentId);
+        if (meta.projectId !== projectId) throw new AppError("附件不属于该项目");
+        return readTaskAttachmentText(actorId, attachmentId);
       },
     }),
     create_subtask: tool({
@@ -621,6 +642,54 @@ function buildBasePersonalTools(actorId: string) {
       }),
       execute: async ({ attachmentId, source }) =>
         resolveFileOpen(actorId, { attachmentId, source }),
+    }),
+    read_file: tool({
+      description:
+        "读取文件**正文**（不是预览）：文本/代码/CSV/JSON 直接解码，Word（.docx）与 Excel 抽成纯文本；" +
+        "PDF/PPT/旧版 .doc/图片读不了，会返回说明（改让用户 preview 或下载）。" +
+        "三种来源：source=file 用用户随本轮消息上传的 fileId（见消息末尾的文件清单）；" +
+        "source=task 用 list_attachments 的 attachmentId；source=message 用 read_messages 的 attachmentId。",
+      inputSchema: z.object({
+        source: z
+          .enum(["file", "task", "message"])
+          .default("file")
+          .describe("file = 随消息上传的文件；task = 任务附件；message = 私信/群聊附件"),
+        fileId: z.uuid().optional().describe("source=file 时必填；取自本轮消息末尾的文件清单"),
+        attachmentId: z.uuid().optional().describe("source=task/message 时必填"),
+      }),
+      execute: async ({ source, fileId, attachmentId }) => {
+        if (source === "file") {
+          if (!fileId) throw new AppError("缺少 fileId（source=file 时要给随消息上传的文件 id）");
+          return readAgentFileText(actorId, fileId);
+        }
+        if (!attachmentId) throw new AppError("缺少 attachmentId");
+        return source === "task"
+          ? readTaskAttachmentText(actorId, attachmentId)
+          : readMessageAttachmentText(actorId, attachmentId);
+      },
+    }),
+    save_file_to_task: tool({
+      description:
+        "把用户随消息上传的文件（fileId）拟成「添加为任务附件」草案。需要对该任务有写权限。" +
+        "fileId 取自本轮消息末尾的文件清单；taskId 取自 list_tasks / get_task_detail / 快照。" +
+        "仅产草案，用户点确认后才复制进任务附件。",
+      inputSchema: z.object({
+        fileId: z.uuid().describe("随消息上传的文件 id"),
+        taskId: z.uuid().describe("目标任务 id"),
+      }),
+      execute: async ({ fileId, taskId }) => {
+        // 文件必须是发话人自己的；任务写权限先探一次，别让用户点确认才失败
+        const file = await getAgentFileMeta(actorId, fileId);
+        const task = await getTaskDetailBundle(actorId, taskId);
+        await requireTaskWrite(actorId, task.projectId);
+        return draftEnvelope("save_file_to_task", {
+          fileId,
+          taskId,
+          filename: file.filename,
+          size: file.size,
+          taskTitle: task.title,
+        });
+      },
     }),
     query_progress: tool({
       description: "查询指定项目的进度统计：各状态任务数、里程碑概况。必须给 projectId。",
@@ -1560,6 +1629,7 @@ export const RESPOND_INVITE_TOOL = "respond_group_invite" as const;
 
 // 消息文件 → 任务附件：入口在工作台助手（只有它能读消息），故不进项目写工具面。
 export const ATTACH_MESSAGE_TOOL = "attach_message_file_to_task" as const;
+export const SAVE_FILE_TO_TASK_TOOL = "save_file_to_task" as const;
 
 // 发送 / 转发 / 建群同样只属于工作台助手。它们会对外产生不可撤回的动作，
 // 但入口都是个人 scope，故不进 WRITE_TOOL_NAMES；项目页落库口天然拒收。
@@ -1594,6 +1664,7 @@ export const COMMIT_TOOL_NAMES = [
   SAVE_CONTEXT_TOOL,
   RESPOND_INVITE_TOOL,
   ATTACH_MESSAGE_TOOL,
+  SAVE_FILE_TO_TASK_TOOL,
   SEND_MESSAGE_TOOL,
   FORWARD_MESSAGE_TOOL,
   CREATE_GROUP_TOOL,

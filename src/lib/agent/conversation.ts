@@ -7,6 +7,7 @@ import { ForbiddenError, AppError, NotFoundError } from "@/lib/errors";
 import type {
   AssistantConversationSummary,
   AssistantPanelMessage,
+  MessageAttachment,
 } from "./assistant-panel-shared";
 
 /**
@@ -223,7 +224,12 @@ export async function listPersonalConversationMessages(
 
   const capped = Math.min(Math.max(Math.trunc(limit), 1), 500);
   const rows = await db
-    .select({ id: messages.id, role: messages.role, content: messages.content })
+    .select({
+      id: messages.id,
+      role: messages.role,
+      content: messages.content,
+      attachments: messages.attachments,
+    })
     .from(messages)
     .where(
       and(
@@ -237,11 +243,34 @@ export async function listPersonalConversationMessages(
     )
     .limit(capped);
 
-  return rows.reverse().map((r) => ({
-    id: r.id,
-    role: r.role as "user" | "assistant",
-    content: r.content,
-  }));
+  return rows.reverse().map((r) => {
+    const attachments = parseMessageAttachments(r.attachments);
+    return {
+      id: r.id,
+      role: r.role as "user" | "assistant",
+      content: r.content,
+      ...(attachments ? { attachments } : {}),
+    };
+  });
+}
+
+/**
+ * jsonb 列读回来是 unknown：逐条校验形状，坏数据整条丢弃而不是把 undefined
+ * 塞进面板（面板会据此渲染下载按钮，链接坏了比不显示更糟）。
+ */
+function parseMessageAttachments(value: unknown): MessageAttachment[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out = value.filter(
+    (item): item is MessageAttachment =>
+      typeof item === "object" &&
+      item !== null &&
+      typeof (item as MessageAttachment).id === "string" &&
+      typeof (item as MessageAttachment).filename === "string" &&
+      typeof (item as MessageAttachment).size === "number" &&
+      (typeof (item as MessageAttachment).mimeType === "string" ||
+        (item as MessageAttachment).mimeType === null),
+  );
+  return out.length > 0 ? out : undefined;
 }
 
 export async function renamePersonalConversation(
@@ -362,6 +391,7 @@ export async function persistTurn(
   userText: string,
   assistantText: string,
   toolTrace: ToolTraceEntry[],
+  attachments: MessageAttachment[] = [],
 ): Promise<PersistedTurn> {
   const turnId = randomUUID();
 
@@ -383,7 +413,14 @@ export async function persistTurn(
     const inserted = await tx
       .insert(messages)
       .values([
-        { conversationId, role: "user", content: userText, turnId },
+        {
+          conversationId,
+          role: "user",
+          content: userText,
+          turnId,
+          // 快照随消息存：源文件之后被清理，聊天记录里仍能显示当时带过什么
+          attachments: attachments.length > 0 ? attachments : null,
+        },
         {
           conversationId,
           role: "assistant",

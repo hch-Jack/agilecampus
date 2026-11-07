@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { runAgentTurn } from "@/lib/agent/orchestrator";
 import { collectDraftOptions } from "@/lib/agent/draft-options";
+import { ASSISTANT_ATTACHMENTS_MAX } from "@/lib/agent/assistant-panel-shared";
 import { AppError, ForbiddenError } from "@/lib/errors";
 
 // scope 决定这轮对话挂在哪儿：project 走项目共享会话（要 projectId），personal 走本人的私人会话。
@@ -15,6 +16,8 @@ const schema = z.object({
   scope: z.enum(["project", "personal"]).default("project"),
   projectId: z.uuid().optional(),
   conversationId: z.uuid().optional(),
+  // 随这句话上传的文件（只属于发话人，见 lib/agent/files.ts）；项目助手不接受
+  attachmentIds: z.array(z.uuid()).max(ASSISTANT_ATTACHMENTS_MAX).optional(),
   userText: z.string().trim().min(1, "请输入内容"),
 });
 
@@ -27,13 +30,20 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
   }
 
-  const { scope, projectId, conversationId, userText } = parsed.data;
+  const { scope, projectId, conversationId, attachmentIds, userText } = parsed.data;
   if (scope === "project" && !projectId) {
     return NextResponse.json({ error: "缺少项目 id" }, { status: 400 });
   }
   if (scope === "project" && conversationId) {
     return NextResponse.json(
       { error: "项目 scope 不接受 conversationId" },
+      { status: 400 },
+    );
+  }
+  // 项目会话是团队共享的，文件却有主人 —— 上传只开在个人助手，这里也拒掉
+  if (scope === "project" && attachmentIds?.length) {
+    return NextResponse.json(
+      { error: "项目助手不支持上传文件，请用右侧个人助手" },
       { status: 400 },
     );
   }
@@ -44,7 +54,12 @@ export async function POST(req: Request) {
         ? await runAgentTurn({
             actorId: session.user.id,
             userText,
-            scope: { kind: "personal", focusProjectId: projectId, conversationId },
+            scope: {
+              kind: "personal",
+              focusProjectId: projectId,
+              conversationId,
+              attachmentIds,
+            },
           })
         : await runAgentTurn({ actorId: session.user.id, userText, projectId: projectId! });
 
