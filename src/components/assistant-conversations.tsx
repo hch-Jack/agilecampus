@@ -3,20 +3,72 @@
 import { useMemo, useState } from "react";
 import type { AssistantConversationSummary } from "@/lib/agent/assistant-panel-shared";
 import {
+  CONVERSATION_CATEGORY_MAX,
   CONVERSATION_CATEGORY_PRESETS,
   categoryLabel,
   compareConversationCategories,
+  normalizeConversationCategory,
 } from "@/lib/agent/conversation-category";
 
-/** 当前分类是不是内置预设（导入的旧数据可能有自定义名，也要出现在下拉里） */
-function isPreset(value: string): boolean {
-  return (CONVERSATION_CATEGORY_PRESETS as readonly string[]).includes(value);
+const CATEGORY_DATALIST_ID = "ac-conversation-category-presets";
+
+/**
+ * 行内分类编辑器：**自由输入**，预设只是快捷建议（datalist），不是白名单。
+ * 回车 / 失焦提交；Escape 撤销；清空即「未分类」。
+ *
+ * 用 key 把「会话 id + 当前分类」绑在组件上，服务端值一变就重新播种，
+ * 不必在组件里同步 props → state。
+ */
+function CategoryEditor({
+  value,
+  busy,
+  onCommit,
+}: {
+  value: string | null;
+  busy: boolean;
+  onCommit: (category: string | null) => void;
+}) {
+  const [draft, setDraft] = useState(value ?? "");
+
+  function commit() {
+    const next = normalizeConversationCategory(draft);
+    setDraft(next ?? "");
+    if (next === value) return;
+    onCommit(next);
+  }
+
+  return (
+    <input
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          e.currentTarget.blur();
+        }
+        if (e.key === "Escape") {
+          // 只撤销这次分类编辑，别把整个抽屉关了
+          e.stopPropagation();
+          setDraft(value ?? "");
+          e.currentTarget.blur();
+        }
+      }}
+      list={CATEGORY_DATALIST_ID}
+      maxLength={CONVERSATION_CATEGORY_MAX}
+      placeholder="未分类"
+      aria-label="会话分类"
+      title="输入自定义分类；留空为未分类"
+      disabled={busy}
+      className="w-[6.2rem] shrink-0 truncate rounded bg-transparent px-0.5 py-1 text-[11px] text-ink-faint outline-none transition-colors placeholder:text-ink-faint/60 hover:bg-surface focus:bg-surface disabled:cursor-default disabled:opacity-50"
+    />
+  );
 }
 
 /**
  * 面板顶部的会话列表：新建、切换、行内改名、删除、分类。
  *
- * 分类有两条路：每行的小下拉手动指定；表头「自动归类」给所有未分类会话按关键词
+ * 分类有两条路：每行自由输入（预设只是建议）；表头「自动归类」给所有未分类会话按关键词
  * 归类。列表按分类分桶，桶内仍按最近使用排序 —— 分类只是「分组」，不改顺序。
  *
  * 刻意做成**正常文档流里的可折叠块**，不用 absolute/fixed 弹层：
@@ -74,6 +126,15 @@ export function AssistantConversations({
   }, [conversations]);
   // 全部都是未分类时不必显示「未分类」小标题，把高度留给消息
   const showGroupHeaders = groups.length > 1 || groups[0]?.[0] != null;
+
+  // 输入框的建议项：内置预设 + 列表里已经出现过的自定义分类（同名自然合并）
+  const categoryOptions = useMemo(() => {
+    const names = new Set<string>(CONVERSATION_CATEGORY_PRESETS);
+    for (const c of conversations) {
+      if (c.category) names.add(c.category);
+    }
+    return [...names];
+  }, [conversations]);
 
   async function changeCategory(id: string, value: string) {
     if (categorizingId) return;
@@ -182,6 +243,11 @@ export function AssistantConversations({
           id="assistant-conversation-list"
           className="mt-2 max-h-60 overflow-y-auto rounded-field border border-line bg-sunken/50 p-1.5 [scrollbar-gutter:stable]"
         >
+          <datalist id={CATEGORY_DATALIST_ID}>
+            {categoryOptions.map((name) => (
+              <option key={name} value={name} />
+            ))}
+          </datalist>
           {conversations.length === 0 ? (
             <p className="px-2 py-1.5 text-xs text-ink-faint">还没有对话</p>
           ) : (
@@ -253,24 +319,12 @@ export function AssistantConversations({
                     >
                       {c.title ?? "新对话"}
                     </button>
-                    <select
-                      value={c.category ?? ""}
-                      onChange={(e) => void changeCategory(c.id, e.target.value)}
-                      disabled={busy || categorizingId !== null}
-                      aria-label="会话分类"
-                      title="会话分类"
-                      className="w-[5.8rem] shrink-0 cursor-pointer truncate rounded bg-transparent px-0.5 py-1 text-[11px] text-ink-faint outline-none transition-colors hover:bg-surface focus:bg-surface disabled:cursor-default disabled:opacity-50"
-                    >
-                      <option value="">未分类</option>
-                      {CONVERSATION_CATEGORY_PRESETS.map((preset) => (
-                        <option key={preset} value={preset}>
-                          {preset}
-                        </option>
-                      ))}
-                      {c.category && !isPreset(c.category) && (
-                        <option value={c.category}>{c.category}</option>
-                      )}
-                    </select>
+                    <CategoryEditor
+                      key={`${c.id}:${c.category ?? ""}`}
+                      value={c.category}
+                      busy={busy || categorizingId !== null}
+                      onCommit={(next) => void changeCategory(c.id, next ?? "")}
+                    />
                     <button
                       type="button"
                       onClick={() => startEdit(c)}

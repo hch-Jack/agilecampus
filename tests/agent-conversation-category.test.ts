@@ -123,13 +123,14 @@ describe("会话分类 API", () => {
     authMock.userId = student.id;
     const conv = await startPersonalConversation(student.id);
 
+    // 分类不限于预设：用户可自由命名
     const res = await patchConversationRoute(
-      patchReq({ category: "文件与文档" }),
+      patchReq({ category: "实验记录" }),
       convCtx(conv.id),
     );
     expect(res.status).toBe(200);
     let data = (await res.json()) as { conversation: { category: string | null } };
-    expect(data.conversation.category).toBe("文件与文档");
+    expect(data.conversation.category).toBe("实验记录");
 
     const both = await patchConversationRoute(
       patchReq({ title: "导出资料", category: "项目与任务" }),
