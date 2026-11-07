@@ -118,6 +118,8 @@ export function AssistantShell({
   const switchSeq = useRef(0);
   /** 当前 AgentChat 的 viewKey；用来丢弃「重置前发出的请求」晚到的落库回调 */
   const viewKeyRef = useRef(viewKey);
+  /** 「生成文件」统计的刷新信号：助手每生成一批文件就 +1，顶部数量实时更新 */
+  const [filesVersion, setFilesVersion] = useState(0);
   useEffect(() => {
     viewKeyRef.current = viewKey;
   }, [viewKey]);
@@ -439,6 +441,7 @@ export function AssistantShell({
           <AssistantBoards
             busy={sessionBusy || switching}
             onOpenMessage={openTaggedMessage}
+            filesVersion={filesVersion}
           />
           {switchError && <p className="shrink-0 text-sm text-high">{switchError}</p>}
           <div className="min-h-0 flex-1">
@@ -452,6 +455,7 @@ export function AssistantShell({
               onBusyChange={setSessionBusy}
               onTurnPersisted={(info) => handleTurnPersisted(info, viewKey)}
               onTurnDeleted={handleTurnDeleted}
+              onFilesGenerated={() => setFilesVersion((v) => v + 1)}
               focusMessage={focusMessage ?? undefined}
               subtitle={
                 focusProjectId ? "只属于你的对话 · 已带入当前项目" : "只属于你的对话"

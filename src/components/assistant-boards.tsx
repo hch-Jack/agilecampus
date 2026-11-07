@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { GeneratedFileEntry } from "@/lib/agent/assistant-panel-shared";
 
 /**
@@ -12,8 +12,10 @@ import type { GeneratedFileEntry } from "@/lib/agent/assistant-panel-shared";
  *
  * 两块都默认收起 —— 面板高度宝贵，都是偶尔用的检索入口。每次展开都重新拉一次，
  * 因为聊天区可能刚加了标签 / 刚生成了文件。
- * 刻意不用 effect 预取：同步 setLoading 会触发 react-hooks/set-state-in-effect，
- * 展开是用户动作，直接在点击里发起最自然。
+ * 展开时在点击里同步发起请求（不写 effect 预取）：同步 setLoading 会触发
+ * react-hooks/set-state-in-effect。「生成文件」的数量另外做静默刷新：挂载时与
+ * 助手每生成一批文件后（filesVersion 变化）重拉一次，不设 loading，所以顶部
+ * 数量不用展开面板也能实时更新。
  */
 
 type BoardPanel = "tags" | "files";
@@ -104,11 +106,14 @@ const FILE_ICON = (
 export function AssistantBoards({
   onOpenMessage,
   busy,
+  filesVersion = 0,
 }: {
   /** 跳转到某条会话里的某条消息（外壳负责切换会话并定位） */
   onOpenMessage: (conversationId: string, messageId: string) => void;
   /** 外壳正在切换会话：暂时不让点结果 */
   busy: boolean;
+  /** 助手每生成一批文件就 +1：用来静默刷新「生成文件」数量 */
+  filesVersion?: number;
 }) {
   const [panel, setPanel] = useState<BoardPanel | null>(null);
 
@@ -160,6 +165,26 @@ export function AssistantBoards({
       setFilesLoading(false);
     }
   }
+
+  // 顶部「生成文件 · N 个」在不展开面板时也要准：挂载时、以及助手每生成一批文件后
+  // 静默重拉。setFiles 在 await 之后才执行，不会触发 react-hooks/set-state-in-effect；
+  // 失败也不打扰用户 —— 展开面板时会再拉一次并给出错误提示。
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/chat/files");
+        if (!res.ok) return;
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && Array.isArray(data.files)) setFiles(data.files);
+      } catch {
+        // 静默失败，见上
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [filesVersion]);
 
   function toggle(next: BoardPanel) {
     if (panel === next) {

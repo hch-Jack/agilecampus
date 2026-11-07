@@ -88,6 +88,7 @@ export function AgentChat({
   onBusyChange,
   onTurnPersisted,
   onTurnDeleted,
+  onFilesGenerated,
   focusMessage,
 }: {
   scope: ChatScope;
@@ -118,6 +119,8 @@ export function AgentChat({
     deletedIds: string[];
     lastMessageAt: string | null;
   }) => void;
+  /** 这一轮助手生成了新文件（create_file）——外壳据此刷新「生成文件」统计 */
+  onFilesGenerated?: () => void;
   /** 从「按标签查历史」跳过来时定位到的那条消息；nonce 让同一条消息也能再次触发滚动 */
   focusMessage?: { messageId: string; nonce: number };
 }) {
@@ -253,6 +256,9 @@ export function AgentChat({
             (f: AssistantFile) => f && typeof f.url === "string" && typeof f.filename === "string",
           )
         : [];
+      // 这一轮生成了文件（create_file 的 autoOpen=false；open_file 只是预览，不算）：
+      // 通知外壳重新拉「生成文件」，顶部数量不用展开面板也能实时变
+      if (files.some((f) => f.autoOpen === false)) onFilesGenerated?.();
       setMessages((m) => {
         const next = [...m];
         // 按 localId 回填服务端 id —— 这样这条提问也能成对删除
