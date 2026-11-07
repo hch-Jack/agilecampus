@@ -287,7 +287,7 @@ export function FocusTimerWidget({ instanceId }: { instanceId: string }) {
           <button
             type="button"
             onClick={() => switchPhase("focus")}
-            className={`rounded px-1.5 py-0.5 transition-colors ${
+            className={`rounded px-1.5 py-0.5 transition-colors max-sm:px-2 max-sm:py-2 ${
               phase === "focus" ? "bg-primary-soft text-primary" : "text-ink-faint hover:text-ink"
             }`}
           >
@@ -296,7 +296,7 @@ export function FocusTimerWidget({ instanceId }: { instanceId: string }) {
           <button
             type="button"
             onClick={() => switchPhase("break")}
-            className={`rounded px-1.5 py-0.5 transition-colors ${
+            className={`rounded px-1.5 py-0.5 transition-colors max-sm:px-2 max-sm:py-2 ${
               phase === "break" ? "bg-primary-soft text-primary" : "text-ink-faint hover:text-ink"
             }`}
           >

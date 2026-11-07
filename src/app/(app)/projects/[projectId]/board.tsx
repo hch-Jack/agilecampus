@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import {
   DndContext,
   DragOverlay,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useDroppable,
   useSensor,
   useSensors,
@@ -57,7 +58,7 @@ function Column({
   return (
     <div
       ref={setNodeRef}
-      className={`proj-column min-h-40 w-72 shrink-0 space-y-2 rounded-xl border border-line p-3 transition-colors ${
+      className={`proj-column min-h-40 w-72 shrink-0 space-y-2 rounded-xl border border-line p-3 transition-colors max-sm:snap-start ${
         isOver ? "drop" : ""
       }`}
     >
@@ -101,8 +102,11 @@ export function Board({
   const [activeTask, setActiveTask] = useState<BoardTask | null>(null);
   // 学生拖到「已完成」→ 完成申请弹窗（确认 + 完成情况/附件），任务留在原列
   const [completionTask, setCompletionTask] = useState<BoardTask | null>(null);
+  // 桌面：按下移动 4px 即拖（与之前完全一致）。
+  // 触屏：长按 250ms 才进入拖拽——手指一按就横滑仍然能滚看板列，不会误触发拖拽。
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 6 } }),
   );
 
   const columns = deriveColumns(groupBy, { members, milestones });
@@ -157,8 +161,17 @@ export function Board({
       onDragEnd={handleDragEnd}
     >
       {error && <p className="text-sm text-high">{error}</p>}
-      {/* 列数随分组维度而变，故横向滚动而非固定三栏 */}
-      <div className="flex gap-4 overflow-x-auto pb-2">
+      {/* 手机上给一句操作提示（桌面端不需要，隐藏） */}
+      <p className="mb-2 text-xs text-ink-faint sm:hidden">
+        左右滑动看各列，长按卡片可拖动
+      </p>
+      {/* 列数随分组维度而变，故横向滚动而非固定三栏；手机上逐列吸附，滑一列停一列。
+          拖拽中临时关掉吸附，否则自动滚动每走一步都会被吸回列边。 */}
+      <div
+        className={`flex gap-4 overflow-x-auto pb-2 ${
+          activeTask ? "max-sm:snap-none" : "max-sm:snap-x max-sm:snap-mandatory"
+        }`}
+      >
         {columns.map((col) => (
           <Column
             key={col.key}

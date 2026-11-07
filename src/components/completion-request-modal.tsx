@@ -108,7 +108,7 @@ export function CompletionRequestModal({
       aria-label="提交完成申请"
     >
       <div
-        className="w-full max-w-lg rounded-field border border-line bg-surface shadow-2xl"
+        className="w-full max-w-lg rounded-field border border-line bg-surface shadow-2xl max-sm:max-h-[85dvh] max-sm:overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {step === "confirm" ? (

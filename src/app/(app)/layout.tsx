@@ -20,6 +20,7 @@ import { DashboardEditProvider } from "./dashboard/dashboard-edit-context";
 import { AppRail } from "./rail/rail";
 import { ProjTheme } from "./proj-theme";
 import { NavLinks } from "./nav-links";
+import { MobileNav } from "./mobile-nav";
 import { TzSync } from "./tz-sync";
 import { UserMenu } from "./user-menu";
 import "./project.css";
@@ -89,21 +90,23 @@ export default async function AppLayout({
             <TzSync auto={timeZonePref === AUTO_TIMEZONE} />
             {/* app-topbar 只给宇宙主题的「顶栏深色玻璃」认（project.css）；页面里的 <header>
                 是各自的标题区，别被那条规则顺带刷成黑框。 */}
-            <header className="app-topbar sticky top-0 z-20 flex items-center justify-between border-b border-line bg-surface/85 px-6 py-3 backdrop-blur">
-              <div className="flex items-center gap-6">
+            <header className="app-topbar sticky top-0 z-20 flex items-center justify-between border-b border-line bg-surface/85 px-3 py-2 backdrop-blur sm:px-6 sm:py-3">
+              <div className="flex items-center gap-2 sm:gap-6">
+                {/* 手机端：四个分区放不下（会竖排折字），收进左上角菜单 */}
+                <MobileNav />
                 {/* 徽标回欢迎页（整屏的时钟页），不是工作台 */}
-                <Link href="/welcome" className="flex items-center gap-2">
+                <Link href="/welcome" className="ac-hit flex items-center gap-2">
                   <span
                     aria-hidden
                     className="grid h-7 w-7 place-items-center rounded-md bg-primary font-display text-sm font-bold text-white shadow-sm"
                   >
                     A
                   </span>
-                  <span className="font-display text-lg font-semibold text-ink">AgileCampus</span>
+                  <span className="hidden font-display text-lg font-semibold text-ink sm:inline">AgileCampus</span>
                 </Link>
-                <NavLinks />
+                <NavLinks className="hidden sm:flex" />
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5 sm:gap-3">
                 <AssistantToggle />
                 {/* 消息入口与 AI 助手并排：page 模式跳整页，drawer 模式开/关右侧浮窗 */}
                 <MessagesToggle />
@@ -157,7 +160,7 @@ export default async function AppLayout({
                   initialCollapsed={railCollapsed}
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="mx-auto max-w-5xl p-6">{children}</div>
+                  <div className="mx-auto max-w-5xl p-4 sm:p-6">{children}</div>
                 </div>
               </DashboardEditProvider>
             </div>

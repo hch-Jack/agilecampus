@@ -53,7 +53,7 @@ export default async function SettingsPage({
   }));
 
   return (
-    <main className="mx-auto max-w-2xl space-y-8 py-8">
+    <main className="mx-auto max-w-2xl space-y-8 py-5 sm:py-8">
       <header className="space-y-1">
         <h1 className="font-display text-2xl font-semibold text-ink">AI配置</h1>
         <p className="text-sm text-ink-soft">

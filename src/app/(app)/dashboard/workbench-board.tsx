@@ -14,7 +14,8 @@ import { useRouter } from "next/navigation";
 import {
   DndContext,
   DragOverlay,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useDraggable,
   useDroppable,
   useSensor,
@@ -244,7 +245,8 @@ function Column({
   return (
     <div
       ref={setNodeRef}
-      className={`proj-column ac-scroll-hidden min-h-40 space-y-2 rounded-xl border border-line p-3 transition-colors ${
+      // 手机上三列会竖排，空列 min-h-40 会把整块撑得很长，缩到 6rem
+      className={`proj-column ac-scroll-hidden min-h-40 space-y-2 rounded-xl border border-line p-3 transition-colors max-sm:min-h-24 ${
         isOver ? "drop" : ""
       }`}
     >
@@ -305,8 +307,10 @@ export function WorkbenchBoard({
     (current, move: { taskId: string; patch: ColumnPatch }) =>
       current.map((t) => (t.id === move.taskId ? { ...t, ...move.patch } : t)),
   );
+  // 与项目看板同一口径：鼠标按下移 4px 即拖；触屏长按 250ms 才拖，否则交给页面滚动
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 6 } }),
   );
 
   function handleDragStart(event: DragStartEvent) {

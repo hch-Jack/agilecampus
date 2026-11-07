@@ -141,7 +141,7 @@ export function ApprovalHistoryModal({
       aria-label="审批记录"
     >
       <div
-        className="flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-field border border-line bg-surface shadow-2xl"
+        className="flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-field border border-line bg-surface shadow-2xl max-sm:max-h-[85dvh]"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-center gap-2 border-b border-line px-4 py-2.5">

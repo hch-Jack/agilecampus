@@ -49,7 +49,7 @@ export function NoteWidget({
           <button
             type="button"
             onClick={() => setEditing(true)}
-            className="text-xs text-ink-faint transition-colors hover:text-primary"
+            className="ac-hit text-xs text-ink-faint transition-colors hover:text-primary"
           >
             编辑
           </button>
@@ -249,7 +249,7 @@ export function ClockWidget({
               <button
                 type="button"
                 onClick={() => setSetting(false)}
-                className="text-xs text-ink-faint hover:text-ink"
+                className="ac-hit text-xs text-ink-faint hover:text-ink"
               >
                 取消
               </button>
@@ -267,7 +267,7 @@ export function ClockWidget({
               <button
                 type="button"
                 onClick={openSetting}
-                className="shrink-0 text-xs text-ink-faint transition-colors hover:text-primary"
+                className="ac-hit shrink-0 text-xs text-ink-faint transition-colors hover:text-primary"
               >
                 设置
               </button>
@@ -394,7 +394,7 @@ export function CountdownWidget({
             <button
               type="button"
               onClick={openSetting}
-              className="shrink-0 text-xs text-ink-faint transition-colors hover:text-primary"
+              className="ac-hit shrink-0 text-xs text-ink-faint transition-colors hover:text-primary"
             >
               设置
             </button>

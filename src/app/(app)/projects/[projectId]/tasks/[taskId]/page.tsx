@@ -143,11 +143,11 @@ export default async function TaskDetailPage({
   }));
 
   return (
-    <main className="mx-auto max-w-5xl space-y-6 py-8">
+    <main className="mx-auto max-w-5xl space-y-6 py-5 sm:py-8">
       <div className="space-y-1">
         <Link
           href={`/projects/${projectId}`}
-          className="text-sm text-ink-soft hover:text-primary"
+          className="ac-hit text-sm text-ink-soft hover:text-primary"
         >
           ← 返回项目
         </Link>

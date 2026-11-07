@@ -333,7 +333,7 @@ export function TutorialModal({
               type="button"
               aria-label={`第 ${i + 1} 步：${s.title}`}
               onClick={() => setStep(i)}
-              className={`h-2 rounded-full transition-all ${
+              className={`ac-dot-hit relative h-2 rounded-full transition-all ${
                 i === step ? "w-5 bg-primary" : "w-2 bg-line hover:bg-ink-faint"
               }`}
             />
