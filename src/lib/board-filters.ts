@@ -18,6 +18,11 @@ export type FilterableTask = {
   dueDate: string | null;
   status: string;
   labels: { id: string }[];
+  /**
+   * 有未决的完成申请时存在：任务状态仍是 todo/doing，但在看板上归入「待审批」列。
+   * 纯派生字段，不落库。
+   */
+  pendingApproval?: { requestId: string; canDecide: boolean } | null;
 };
 
 const GROUPS: GroupBy[] = ["status", "assignee", "priority", "milestone"];

@@ -37,6 +37,8 @@ export type BoardTask = {
   labels: { id: string; name: string; color: string }[];
   /** 完成是否需要审批：false 时学生拖到「已完成」直接完成，不弹完成申请 */
   requireApproval: boolean;
+  /** 有未决完成申请：卡片归入「待审批」列（状态仍是 todo/doing） */
+  pendingApproval?: { requestId: string; canDecide: boolean };
   /** 直接子任务的进度；无子任务时缺省 */
   subTotal?: number;
   subDone?: number;
@@ -47,20 +49,23 @@ function Column({
   tasks,
   projectId,
   canWrite,
+  stretch,
 }: {
   column: BoardColumn;
   tasks: BoardTask[];
   projectId: string;
   canWrite: boolean;
+  /** 状态分组四列在宽屏均分整行；其他分组保持固定宽度横向滚动 */
+  stretch?: boolean;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.key });
 
   return (
     <div
       ref={setNodeRef}
-      className={`proj-column min-h-40 w-72 shrink-0 space-y-2 rounded-xl border border-line p-3 transition-colors max-sm:snap-start ${
-        isOver ? "drop" : ""
-      }`}
+      className={`proj-column min-h-40 shrink-0 space-y-2 rounded-xl border border-line p-3 transition-colors max-sm:snap-start ${
+        stretch ? "w-72 lg:w-auto lg:min-w-[13rem] lg:flex-1" : "w-72"
+      } ${isOver ? "drop" : ""}`}
     >
       <h3 className={`flex items-center gap-2 text-sm font-semibold ${column.tone}`}>
         {column.label}
@@ -96,10 +101,21 @@ export function Board({
   const router = useRouter();
   const [optimisticTasks, moveOptimistic] = useOptimistic(
     tasks,
-    (current, move: { taskId: string; patch: ColumnPatch }) =>
-      current.map((t) => (t.id === move.taskId ? { ...t, ...move.patch } : t)),
+    (current, move: { taskId: string; patch: ColumnPatch; clearPending?: boolean }) =>
+      current.map((t) =>
+        t.id === move.taskId
+          ? {
+              ...t,
+              ...move.patch,
+              // 待审批卡片拖回待办/进行中 = 撤回申请：同步摘掉派生字段，卡片立即回列
+              ...(move.clearPending ? { pendingApproval: undefined } : {}),
+            }
+          : t,
+      ),
   );
   const [activeTask, setActiveTask] = useState<BoardTask | null>(null);
+  // 浮层宽度取被拖卡片的实际宽度：状态分组下四列均分，卡片不再是固定 288px
+  const [dragWidth, setDragWidth] = useState<number | null>(null);
   // 学生拖到「已完成」→ 完成申请弹窗（确认 + 完成情况/附件），任务留在原列
   const [completionTask, setCompletionTask] = useState<BoardTask | null>(null);
   // 桌面：按下移动 4px 即拖（与之前完全一致）。
@@ -112,12 +128,16 @@ export function Board({
   const columns = deriveColumns(groupBy, { members, milestones });
 
   function handleDragStart(event: DragStartEvent) {
-    const task = optimisticTasks.find((t) => t.id === String(event.active.id));
+    const taskId = String(event.active.id);
+    const task = optimisticTasks.find((t) => t.id === taskId);
     setActiveTask(task ?? null);
+    const node = document.querySelector<HTMLElement>(`[data-task-card-id="${taskId}"]`);
+    setDragWidth(node?.offsetWidth || event.active.rect.current.initial?.width || null);
   }
 
   function handleDragEnd(event: DragEndEvent) {
     setActiveTask(null);
+    setDragWidth(null);
     const taskId = String(event.active.id);
     const over = event.over?.id;
     if (!over) return;
@@ -126,7 +146,11 @@ export function Board({
     // 已在目标列则无须提交
     if (!column || !task || column.matches(task)) return;
 
-    // 学生把任务拖到「已完成」：需要审批的才弹完成申请窗，关掉审批的直接落列完成
+    // 审批中的卡片只允许拖回待办/进行中（= 撤回申请）；拖到待审批/已完成不作为
+    if (task.pendingApproval && column.patch.status === "done") return;
+
+    // 学生把任务拖到「待审批」或「已完成」：需要审批的才弹完成申请窗，
+    // 关掉审批的直接落列完成（拖到「待审批」等同拖到「已完成」）。
     if (
       column.patch.status === "done" &&
       viewerRole === "student" &&
@@ -137,9 +161,15 @@ export function Board({
       return;
     }
 
+    // 待审批卡拖回待办/进行中：服务端 updateTask 会撤掉未决申请，客户端同步清派生字段
+    const clearPending =
+      task.pendingApproval != null &&
+      column.patch.status !== undefined &&
+      column.patch.status !== "done";
+
     startTransition(async () => {
       setError(null);
-      moveOptimistic({ taskId, patch: column.patch });
+      moveOptimistic({ taskId, patch: column.patch, clearPending });
       const res = await moveTaskAction({ taskId, projectId, patch: column.patch });
       if (res?.error) {
         setError(res.error);
@@ -179,6 +209,7 @@ export function Board({
             tasks={optimisticTasks.filter((t) => col.matches(t))}
             projectId={projectId}
             canWrite={canWrite}
+            stretch={groupBy === "status"}
           />
         ))}
       </div>
@@ -193,7 +224,10 @@ export function Board({
       {/* 拖拽浮层：卡片跟手，原位留低透明幽灵（样式见 project.css 的 proj-ghost） */}
       <DragOverlay dropAnimation={null}>
         {activeTask ? (
-          <div className="ac-card proj-card proj-ghost w-72 p-3 text-sm">
+          <div
+            className="ac-card proj-card proj-ghost w-72 p-3 text-sm"
+            style={dragWidth ? { width: dragWidth } : undefined}
+          >
             <p className="font-medium text-ink">{activeTask.title}</p>
             <p className="mt-1 text-xs text-ink-soft">
               {activeTask.assigneeName ?? "未分配"}

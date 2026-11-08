@@ -44,11 +44,11 @@ export function MilestonesWidget({
               <li key={milestone.id}>
                 <Link
                   href={`/projects/${milestone.projectId}`}
-                  className="line-clamp-2 text-sm font-medium text-ink hover:text-primary"
+                  className="dw-item line-clamp-2 font-medium text-ink hover:text-primary"
                 >
                   {milestone.title}
                 </Link>
-                <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-faint">
+                <p className="dw-meta mt-0.5 flex flex-wrap items-center gap-1.5 text-ink-faint">
                   <span className="truncate">{milestone.projectName}</span>
                   <span className={`ac-badge ${tone}`}>
                     {gap < 0
@@ -94,7 +94,7 @@ export function ResourceUsageWidget({
               <div className="flex items-baseline justify-between gap-2">
                 <Link
                   href={`/teams/${usage.teamId}/resources`}
-                  className="truncate text-sm font-medium text-ink hover:text-primary"
+                  className="dw-item truncate font-medium text-ink hover:text-primary"
                 >
                   {usage.resourceName}
                 </Link>
@@ -106,12 +106,12 @@ export function ResourceUsageWidget({
                   {usage.active ? "占用中" : "已结束"}
                 </span>
               </div>
-              <p className="mt-0.5 truncate text-[11px] text-ink-faint">
+              <p className="dw-meta mt-0.5 truncate text-ink-faint">
                 {usage.teamName} · {usage.userName} · {shortDateTime(tz, usage.startTime)} 起
                 {usage.active ? null : usage.endTime ? ` · ${shortDateTime(tz, usage.endTime)} 止` : null}
               </p>
               {usage.purpose && (
-                <p className="truncate text-[11px] text-ink-soft">{usage.purpose}</p>
+                <p className="dw-meta truncate text-ink-soft">{usage.purpose}</p>
               )}
             </li>
           ))}
@@ -146,12 +146,12 @@ export function RecentAttachmentsWidget({
             <li key={attachment.id}>
               <Link
                 href={`/projects/${attachment.projectId}/tasks/${attachment.taskId}`}
-                className="block truncate text-sm font-medium text-ink hover:text-primary"
+                className="dw-item block truncate font-medium text-ink hover:text-primary"
                 title={attachment.filename}
               >
                 {attachment.filename}
               </Link>
-              <p className="mt-0.5 truncate text-[11px] text-ink-faint">
+              <p className="dw-meta mt-0.5 truncate text-ink-faint">
                 {attachment.projectName} · {attachment.taskTitle} · {formatSize(attachment.size)}
                 {" · "}
                 {dateIn(tz, attachment.createdAt)}

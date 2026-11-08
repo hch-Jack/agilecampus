@@ -26,10 +26,10 @@ export function MyProjectsWidget({ projects }: { projects: DashboardProject[] })
               <li key={project.id}>
                 <Link href={`/projects/${project.id}`} className="group block">
                   <div className="flex items-baseline justify-between gap-2">
-                    <span className="dw-item-title truncate text-sm font-medium text-ink group-hover:text-primary">
+                    <span className="dw-item truncate font-medium text-ink group-hover:text-primary">
                       {project.name}
                     </span>
-                    <span className="shrink-0 text-[11px] tabular-nums text-ink-faint">
+                    <span className="dw-meta shrink-0 tabular-nums text-ink-faint">
                       {project.doneCount}/{project.taskTotal}
                     </span>
                   </div>
@@ -37,7 +37,7 @@ export function MyProjectsWidget({ projects }: { projects: DashboardProject[] })
                     <div className="h-1 flex-1 overflow-hidden rounded-full bg-sunken">
                       <div className="h-full rounded-full bg-done" style={{ width: `${pct}%` }} />
                     </div>
-                    <span className="max-w-[45%] truncate text-[11px] text-ink-faint">
+                    <span className="dw-meta max-w-[45%] truncate text-ink-faint">
                       {project.teamName}
                     </span>
                   </div>
@@ -68,14 +68,14 @@ export function UpcomingWidget({
             const overdue = task.dueDate < today;
             const dueToday = task.dueDate === today;
             return (
-              <li key={task.id} className="text-sm">
+              <li key={task.id}>
                 <Link
                   href={`/projects/${task.projectId}/tasks/${task.id}`}
-                  className="dw-item-title line-clamp-2 font-medium text-ink hover:text-primary"
+                  className="dw-item line-clamp-2 font-medium text-ink hover:text-primary"
                 >
                   {task.title}
                 </Link>
-                <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-ink-faint">
+                <p className="dw-meta mt-0.5 flex flex-wrap items-center gap-1.5 text-ink-faint">
                   <span>{task.projectName}</span>
                   <span
                     className={
@@ -109,16 +109,16 @@ export function MyTeamsWidget({ teams }: { teams: DashboardTeam[] }) {
             <li key={team.id}>
               <Link
                 href={`/teams/${team.id}/projects`}
-                className="flex items-center justify-between gap-2 text-sm max-sm:min-h-9"
+                className="flex items-center justify-between gap-2 max-sm:min-h-9"
               >
-                <span className="dw-item-title truncate font-medium text-ink hover:text-primary">
+                <span className="dw-item truncate font-medium text-ink hover:text-primary">
                   {team.name}
                 </span>
                 <span className="ac-badge shrink-0 bg-primary-soft text-primary">
                   {ROLE_LABEL[team.role]}
                 </span>
               </Link>
-              <p className="mt-0.5 text-[11px] tabular-nums text-ink-faint">
+              <p className="dw-meta mt-0.5 tabular-nums text-ink-faint">
                 {team.counts.projects} 项目 · {team.counts.tasks} 任务 · {team.counts.members} 成员
               </p>
             </li>
@@ -179,8 +179,8 @@ export function QuickLinksWidget() {
             href={link.href}
             className="dw-link rounded-lg border border-line bg-surface px-3 py-2 transition-colors hover:border-primary/50"
           >
-            <p className="dw-link-title text-sm font-medium text-ink">{link.label}</p>
-            <p className="dw-link-hint truncate text-[11px] text-ink-faint">{link.hint}</p>
+            <p className="dw-link-title dw-item font-medium text-ink">{link.label}</p>
+            <p className="dw-link-hint dw-meta truncate text-ink-faint">{link.hint}</p>
           </Link>
         ))}
       </div>

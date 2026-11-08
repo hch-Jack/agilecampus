@@ -9,7 +9,10 @@ import { listProjectBoardComments } from "@/lib/comment";
 import { splitBoardTasks } from "@/lib/board-tasks";
 import { getFeedUnreadCount, listProjectActivities, projectFeedScope } from "@/lib/activity";
 import { listTeamLabels } from "@/lib/label";
-import { listPendingAcceptanceProjectIds } from "@/lib/approval";
+import {
+  listPendingAcceptanceProjectIds,
+  listPendingTaskDoneApprovals,
+} from "@/lib/approval";
 import { getMyPermissions } from "@/lib/team-permissions";
 import { countProjectAttachments } from "@/lib/attachment";
 import { AcceptanceControl } from "./acceptance-control";
@@ -83,18 +86,21 @@ export default async function ProjectPage({
   const canWrite = role === "admin" || role === "student";
   const isAdmin = role === "admin";
 
-  // 结题验收：有无待审申请（徽章 + 挡掉重复发起）、我是否有验收权（直接结题 vs 发起申请）
-  const [acceptancePending, myPerms] = await Promise.all([
+  // 结题验收：有无待审申请（徽章 + 挡掉重复发起）、我是否有验收权（直接结题 vs 发起申请）；
+  // 同时取任务完成申请：看板「待审批」列据此派生（不新增任务状态）
+  const [acceptancePending, myPerms, pendingTaskApprovals] = await Promise.all([
     listPendingAcceptanceProjectIds([projectId]),
     getMyPermissions(session.user.id, project.teamId),
+    listPendingTaskDoneApprovals(projectTasks.map((t) => t.id)),
   ]);
   const pendingAcceptance = acceptancePending.has(projectId);
   const canAccept = myPerms?.project ?? false;
+  const canApproveTaskDone = myPerms?.taskDone ?? false;
   // 概览进度：项目内全部任务（含子任务）的完成数
   const taskDone = projectTasks.filter((t) => t.status === "done").length;
 
   return (
-    <main className="mx-auto max-w-5xl space-y-8 py-5 sm:py-8">
+    <main className="page-wide space-y-8 py-5 sm:py-8">
       <header>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <h1 className="min-w-0 font-display text-2xl font-semibold text-ink">
@@ -198,6 +204,7 @@ export default async function ProjectPage({
           groupBy={filters.group}
           tasks={visibleTopLevel.map((t) => {
             const p = progress.get(t.id);
+            const pending = pendingTaskApprovals.get(t.id);
             return {
               id: t.id,
               title: t.title,
@@ -214,6 +221,14 @@ export default async function ProjectPage({
               requireApproval: t.requireApproval,
               subTotal: p?.total,
               subDone: p?.done,
+              pendingApproval: pending
+                ? {
+                    requestId: pending.requestId,
+                    // 申请人自己看不到通过/拒绝按钮（decideApproval 同样拒绝自批）
+                    canDecide:
+                      canApproveTaskDone && pending.requesterId !== session.user.id,
+                  }
+                : undefined,
             };
           })}
           canWrite={canWrite}

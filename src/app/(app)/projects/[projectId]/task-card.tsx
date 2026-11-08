@@ -1,10 +1,14 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useDraggable } from "@dnd-kit/core";
 import { LABEL_COLOR_CLASS } from "@/lib/board-columns";
 import { SubtaskProgress } from "@/components/subtask-progress";
+import { RejectReasonDialog } from "@/components/reject-reason-dialog";
+import { ACTIVITY_NEW_EVENT } from "@/components/activity-feed";
+import { decideApprovalAction } from "@/app/(app)/dashboard/actions";
 import type { BoardTask } from "./board";
 
 const PRIORITY_BADGE: Record<string, string> = {
@@ -27,6 +31,34 @@ export function TaskCard({
     id: task.id,
     disabled: !canWrite,
   });
+  const router = useRouter();
+  const [approvalPending, startTransition] = useTransition();
+  const [approvalError, setApprovalError] = useState("");
+  const [rejecting, setRejecting] = useState(false);
+
+  // 有 task_done 审批权者可直接在待审批卡片上决定；权限与「不能批自己」由服务端再校验
+  function decide(decision: "approved" | "rejected", note?: string) {
+    const pendingApproval = task.pendingApproval;
+    if (!pendingApproval) return;
+    startTransition(async () => {
+      setApprovalError("");
+      const res = await decideApprovalAction({
+        requestId: pendingApproval.requestId,
+        decision,
+        note,
+      });
+      if ("error" in res) {
+        setApprovalError(res.error);
+        return;
+      }
+      setRejecting(false);
+      // 与拖拽成功同口径：动态流立即 +1，随后整页回流带出任务新列
+      window.dispatchEvent(
+        new CustomEvent<string>(ACTIVITY_NEW_EVENT, { detail: `project:${projectId}` }),
+      );
+      router.refresh();
+    });
+  }
 
   // 标题链去详情页，但拖拽结束浏览器会补发一次 click，须拦下避免误导航
   const suppressClickRef = useRef(false);
@@ -43,6 +75,7 @@ export function TaskCard({
   return (
     <div
       ref={setNodeRef}
+      data-task-card-id={task.id}
       onMouseMove={(e) => {
         const el = e.currentTarget;
         const r = el.getBoundingClientRect();
@@ -86,6 +119,9 @@ export function TaskCard({
           {(task.startDate || task.dueDate) && (
             <span>· {task.startDate ?? "…"}→{task.dueDate ?? "…"}</span>
           )}
+          {task.pendingApproval && (
+            <span className="ac-badge bg-medium-soft text-medium">待审批</span>
+          )}
           <span className={`ac-badge ${PRIORITY_BADGE[task.priority] ?? "bg-low-soft text-low"}`}>
             {task.priority}
           </span>
@@ -108,13 +144,52 @@ export function TaskCard({
         {task.description && (
           <p className="mt-1 text-xs text-ink-soft line-clamp-2">{task.description}</p>
         )}
-        {task.status === "done" && task.completionNote && (
+        {(task.status === "done" || task.pendingApproval) && task.completionNote && (
           <p className="mt-1 rounded bg-done/10 px-2 py-1 text-xs text-done">
             完成情况：{task.completionNote}
           </p>
         )}
         <SubtaskProgress total={task.subTotal ?? 0} done={task.subDone ?? 0} />
       </div>
+
+      {/* 审批操作放在拖拽监听区之外：点按钮不会启动拖拽 */}
+      {task.pendingApproval?.canDecide && (
+        <div className="mt-2 border-t border-line pt-2">
+          <div className="flex gap-1.5">
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              disabled={approvalPending}
+              onClick={() => decide("approved")}
+              className="ac-btn px-2.5 py-1 text-xs disabled:opacity-50"
+            >
+              通过
+            </button>
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              disabled={approvalPending}
+              onClick={() => {
+                setApprovalError("");
+                setRejecting(true);
+              }}
+              className="ac-btn-ghost px-2.5 py-1 text-xs disabled:opacity-50"
+            >
+              拒绝
+            </button>
+          </div>
+          {approvalError && <p className="mt-1 text-xs text-high">{approvalError}</p>}
+          {rejecting && (
+            <RejectReasonDialog
+              subject={task.title}
+              busy={approvalPending}
+              error={approvalError}
+              onCancel={() => setRejecting(false)}
+              onConfirm={(note) => decide("rejected", note)}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }

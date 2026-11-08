@@ -132,7 +132,11 @@ export async function moveTaskAction(input: {
   if (Object.keys(parsed.data.patch).length === 0) return { error: "参数无效" };
 
   try {
-    await updateTask(session.user.id, parsed.data.taskId, parsed.data.patch);
+    // 落列即表态：拖回待办/进行中 = 撤回完成申请。待审批卡的原状态可能恰是目标状态，
+    // 光靠「status 有变化」判断撤不干净，故显式带上 withdrawPending。
+    await updateTask(session.user.id, parsed.data.taskId, parsed.data.patch, {
+      withdrawPending: true,
+    });
   } catch (e) {
     if (e instanceof AppError) return { error: e.message };
     throw e;

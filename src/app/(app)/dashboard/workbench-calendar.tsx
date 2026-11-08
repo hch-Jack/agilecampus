@@ -293,7 +293,7 @@ export function WorkbenchCalendar({
         </div>
         {/* 新排期的颜色（"自动" = 跟随任务状态） */}
         <div className="flex items-center gap-1.5">
-          <span className="text-[11px] text-ink-faint">新排期颜色</span>
+          <span className="dw-meta text-ink-faint">新排期颜色</span>
           <PlanColorPicker value={planColor} onChange={setPlanColor} />
         </div>
         {/* 已有段：点 × 移除 */}
@@ -353,7 +353,7 @@ export function WorkbenchCalendar({
     <div className="dw-cal">
       <div className="dw-cal-toolbar flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-baseline gap-2">
-          <p className="font-display text-sm tabular-nums text-ink">
+          <p className="dw-item font-display tabular-nums text-ink">
             {view.year} 年 {view.month} 月
           </p>
           <div className="flex items-center gap-1.5">
@@ -382,7 +382,7 @@ export function WorkbenchCalendar({
             </button>
           </div>
         </div>
-        <p className="text-xs text-ink-faint">
+        <p className="dw-meta text-ink-faint">
           {selected
             ? canPlan
               ? mode === "range" && rangeAnchor
@@ -395,7 +395,7 @@ export function WorkbenchCalendar({
         </p>
       </div>
 
-      {error && <p className="text-sm text-high">{error}</p>}
+      {error && <p className="dw-body text-high">{error}</p>}
 
       <div
         className="dw-cal-body"
@@ -404,7 +404,7 @@ export function WorkbenchCalendar({
         {/* 任务池：窄卡里横排成一条可左右滑的 chip 带，宽卡才恢复左侧竖栏 */}
         {showPool && (
           <div className="ac-card dw-cal-pool p-2">
-            <h3 className="text-xs font-semibold text-ink-soft">任务池（{pool.length}）</h3>
+            <h3 className="dw-meta font-semibold text-ink-soft">任务池（{pool.length}）</h3>
             <ul className="dw-cal-pool-list">
               {pool.map((t) => {
                 const canWrite = WRITE_ROLES.includes(t.role);
@@ -418,7 +418,7 @@ export function WorkbenchCalendar({
                       type="button"
                       onClick={() => canWrite && (isSel ? deselect() : setSelectedId(t.id))}
                       disabled={!canWrite}
-                      className={`dw-cal-pool-item flex items-center gap-1.5 rounded px-2 py-1 text-left text-xs transition ${
+                      className={`dw-cal-pool-item dw-meta flex items-center gap-1.5 rounded px-2 py-1 text-left transition ${
                         isSel
                           ? "bg-primary-soft text-primary ring-1 ring-primary/50"
                           : canWrite
@@ -434,7 +434,7 @@ export function WorkbenchCalendar({
                         style={dotStyle}
                       />
                       <span className="truncate">{t.title}</span>
-                      <span className="dw-cal-pool-meta ml-auto shrink-0 tabular-nums text-[10px] text-ink-faint">
+                      <span className="dw-cal-pool-meta dw-micro ml-auto shrink-0 tabular-nums text-ink-faint">
                         {segs.length ? `${segs.length} 段` : "未计划"}
                       </span>
                     </button>
@@ -467,7 +467,7 @@ export function WorkbenchCalendar({
 
         {/* 月历网格 */}
         <div className="ac-card dw-cal-grid flex-1 p-3">
-          <div className="mb-1 grid grid-cols-7 gap-px text-center text-[11px] text-ink-faint">
+          <div className="dw-meta mb-1 grid grid-cols-7 gap-px text-center text-ink-faint">
             {WEEKDAYS.map((w) => (
               <span key={w} className="py-1">
                 {w}
@@ -505,7 +505,7 @@ export function WorkbenchCalendar({
                   } ${inMonth ? "bg-transparent" : "bg-sunken/30 text-ink-faint"}`}
                 >
                   <span
-                    className={`mb-0.5 inline-block text-[11px] tabular-nums ${
+                    className={`dw-meta mb-0.5 inline-block tabular-nums ${
                       isToday
                         ? "rounded-full bg-primary px-1.5 text-white"
                         : inMonth
@@ -525,7 +525,7 @@ export function WorkbenchCalendar({
                         <span
                           key={t.id}
                           style={planColorChipStyle(seg.color)}
-                          className={`block truncate rounded px-1 text-[10px] ${
+                          className={`dw-micro block truncate rounded px-1 ${
                             seg.color
                               ? overdue
                                 ? "ring-1 ring-high/50"
@@ -543,7 +543,7 @@ export function WorkbenchCalendar({
                       );
                     })}
                     {extraPlans > 0 && (
-                      <span className="block text-[10px] text-ink-faint">+{extraPlans}</span>
+                      <span className="dw-micro block text-ink-faint">+{extraPlans}</span>
                     )}
                   </div>
                   {/* 官方起止细条：横跨区间每天都露一段，连起来即跨度 */}
@@ -557,7 +557,7 @@ export function WorkbenchCalendar({
                         />
                       ))}
                       {official.length > 2 && (
-                        <span className="text-[9px] leading-none text-ink-faint">
+                        <span className="dw-micro leading-none text-ink-faint">
                           +{official.length - 2}
                         </span>
                       )}

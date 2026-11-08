@@ -22,6 +22,17 @@
   position: relative;
 }
 
+/* 宽屏网格里，屏幕外的卡片跳过渲染：抽屉挤压正文、常驻栏开合都会让整页宽度在
+   180–300ms 里连续变化，屏幕外的卡片没必要每帧参与重排与重绘。
+   卡片尺寸由网格轨道决定（不依赖内容），跳过渲染不会造成高度跳变或滚动条抖动；
+   堆叠布局（容器 < 720px）高度由内容撑开，不能跳过，所以规则只写在宽屏分支。
+   屏幕外的内容一旦滚进视口就正常渲染，画面与之前完全一致。 */
+@container dashboard (min-width: 720px) {
+  .dashboard-widget {
+    content-visibility: auto;
+  }
+}
+
 .dashboard-widget-inner {
   position: relative;
   display: flex;
@@ -94,6 +105,9 @@
 
 .dashboard-widget-content {
   --dw-pad: 12px;
+  /* 全局文字大小 × 单卡内容缩放：卡片内所有字号都乘这个因子。
+     两个变量分别由 LayoutGrid（全局）与 WidgetFrame（单卡）内联提供。 */
+  --dw-fs-factor: calc(var(--dw-text-scale, 1) * var(--dw-card-scale, 1));
 }
 
 .dw-shell,
@@ -105,8 +119,10 @@
   padding: var(--dw-pad);
 }
 
-.dw-shell-title {
-  font-size: 0.8125rem;
+/* 卡片标题：统一 13px（宽卡 14px / 矮卡 12px），所有卡片共用 */
+.dw-shell-title,
+.dw-title {
+  font-size: calc(0.8125rem * var(--dw-fs-factor));
   line-height: 1.35;
 }
 
@@ -117,12 +133,12 @@
 /* 统计卡的字号同时跟卡片的宽、高走：拖宽按宽度系数放大，拖高按高度系数放大，
    取两者较小值 —— 卡片怎么变都既铺满又不溢出。标签也按同一套轴缩放。 */
 .dw-stat-label {
-  font-size: clamp(0.75rem, min(5cqi, 11cqh), 1.25rem);
+  font-size: calc(clamp(0.75rem, min(5cqi, 11cqh), 1.25rem) * var(--dw-fs-factor));
   line-height: 1.35;
 }
 
 .dw-stat-value {
-  font-size: clamp(1.5rem, min(22cqi, 64cqh), 7rem);
+  font-size: calc(clamp(1.5rem, min(22cqi, 64cqh), 7rem) * var(--dw-fs-factor));
   line-height: 1.05;
   font-variant-numeric: tabular-nums;
 }
@@ -130,7 +146,7 @@
 .dw-clock-time,
 .dw-countdown-value,
 .dw-focus-time {
-  font-size: clamp(1.5rem, 9cqi, 2.75rem);
+  font-size: calc(clamp(1.5rem, 9cqi, 2.75rem) * var(--dw-fs-factor));
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
 }
@@ -141,8 +157,27 @@
   gap: 10px;
 }
 
-.dw-item-title {
-  font-size: 0.875rem;
+/* 卡片内条目 / 正文 / 辅助 / 密集标注四档：所有卡片统一走这组 token */
+.dw-item-title,
+.dw-item {
+  font-size: calc(0.875rem * var(--dw-fs-factor));
+}
+
+.dw-body {
+  font-size: calc(0.875rem * var(--dw-fs-factor));
+}
+
+.dw-meta {
+  font-size: calc(0.6875rem * var(--dw-fs-factor));
+}
+
+.dw-micro {
+  font-size: calc(0.625rem * var(--dw-fs-factor));
+}
+
+/* 卡片里的徽章也跟随文字缩放（全局样式是固定的 11px） */
+.dashboard-widget-content .ac-badge {
+  font-size: calc(0.6875rem * var(--dw-fs-factor));
 }
 
 /* 私信 / 群聊 / 群邀请 / 系统消息 四个瓦片。
@@ -212,14 +247,14 @@
 /* 数字按瓦片高度长，同时被瓦片宽度卡住：三位数（128）在最大字号下也要放得下，
    所以宽度系数取 50cqi（三字约 1.8 个字号宽，仍留得出内边距）。 */
 .dw-tile-value {
-  font-size: clamp(1.125rem, min(58cqh, 50cqi), 4rem);
+  font-size: calc(clamp(1.125rem, min(58cqh, 50cqi), 4rem) * var(--dw-fs-factor));
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
 /* 「系统消息」四个字要一行放得下：22cqi 在 4 列瓦片里刚好留出边距 */
 .dw-tile-label {
-  font-size: clamp(0.75rem, min(28cqh, 22cqi), 1.25rem);
+  font-size: calc(clamp(0.75rem, min(28cqh, 22cqi), 1.25rem) * var(--dw-fs-factor));
   line-height: 1.15;
 }
 
@@ -234,16 +269,18 @@
     padding: 14px 16px;
   }
 
-  .dw-shell-title {
-    font-size: 0.875rem;
+  .dw-shell-title,
+  .dw-title {
+    font-size: calc(0.875rem * var(--dw-fs-factor));
   }
 
   .dw-shell-body {
     margin-top: 10px;
   }
 
-  .dw-item-title {
-    font-size: 0.9375rem;
+  .dw-item-title,
+  .dw-item {
+    font-size: calc(0.9375rem * var(--dw-fs-factor));
   }
 }
 
@@ -263,7 +300,7 @@
 
   .dw-link-title {
     width: 100%;
-    font-size: 0.6875rem;
+    font-size: calc(0.6875rem * var(--dw-fs-factor));
   }
 
   .dw-link-hint {
@@ -282,8 +319,9 @@
     padding: 9px 10px;
   }
 
-  .dw-shell-title {
-    font-size: 0.75rem;
+  .dw-shell-title,
+  .dw-title {
+    font-size: calc(0.75rem * var(--dw-fs-factor));
   }
 
   .dw-shell-body {
@@ -300,21 +338,21 @@
   }
 
   .dw-clock-time {
-    font-size: clamp(1.375rem, 8cqi, 1.75rem);
+    font-size: calc(clamp(1.375rem, 8cqi, 1.75rem) * var(--dw-fs-factor));
   }
 
   .dw-clock-lunar,
   .dw-clock-date,
   .dw-clock-zones {
-    font-size: 0.6875rem;
+    font-size: calc(0.6875rem * var(--dw-fs-factor));
   }
 
   .dw-countdown-value {
-    font-size: clamp(1.25rem, 7cqi, 1.75rem);
+    font-size: calc(clamp(1.25rem, 7cqi, 1.75rem) * var(--dw-fs-factor));
   }
 
   .dw-focus-time {
-    font-size: 1.875rem;
+    font-size: calc(1.875rem * var(--dw-fs-factor));
   }
 
   .dw-focus-hint {
@@ -383,7 +421,7 @@
   }
 
   .dw-link-title {
-    font-size: 0.6875rem;
+    font-size: calc(0.6875rem * var(--dw-fs-factor));
   }
 
   .dw-link-hint {
@@ -392,7 +430,7 @@
 
   /* 时钟：时间与日期一行，农历 / 世界时钟留给更高的卡片 */
   .dw-clock-time {
-    font-size: clamp(1.25rem, 11cqi, 1.625rem);
+    font-size: calc(clamp(1.25rem, 11cqi, 1.625rem) * var(--dw-fs-factor));
   }
 
   .dw-clock-lunar,
@@ -401,7 +439,7 @@
   }
 
   .dw-countdown-value {
-    font-size: 1.25rem;
+    font-size: calc(1.25rem * var(--dw-fs-factor));
   }
 
   .dw-countdown-target {
@@ -428,7 +466,7 @@
   .dw-focus-time {
     order: 2;
     margin: 0;
-    font-size: 1.5rem;
+    font-size: calc(1.5rem * var(--dw-fs-factor));
   }
 
   .dw-focus-actions {
@@ -483,7 +521,7 @@
   border-radius: 999px;
   background: transparent;
   padding: 0 8px;
-  font-size: 11px;
+  font-size: calc(0.6875rem * var(--dw-fs-factor));
   line-height: 18px;
   color: var(--color-ink-faint);
   transition:
@@ -840,8 +878,50 @@
   line-height: 1;
 }
 
+/* 单卡内容缩放：编辑态左下角的小胶囊，层级高于拖拽覆盖层 */
+.dashboard-widget-scale {
+  position: absolute;
+  bottom: 2px;
+  left: 4px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  border-radius: 6px;
+  padding: 1px 2px;
+  background: color-mix(in srgb, var(--color-surface) 82%, transparent);
+  color: var(--color-ink-soft);
+  font-size: 11px;
+  line-height: 18px;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+
+.dashboard-widget-scale button {
+  border-radius: 4px;
+  padding: 0 5px;
+  color: var(--color-ink-soft);
+  cursor: pointer;
+}
+
+.dashboard-widget-scale button:hover:not(:disabled) {
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+}
+
+.dashboard-widget-scale button:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.dashboard-widget-scale span {
+  min-width: 34px;
+  text-align: center;
+}
+
 .dashboard-widget-overlay:focus-visible,
-.dashboard-widget-resize:focus-visible {
+.dashboard-widget-resize:focus-visible,
+.dashboard-widget-scale button:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: -2px;
 }
@@ -971,24 +1051,25 @@ body.proj-cosmic .dashboard-widget-alert .dashboard-widget-inner {
     grid-auto-rows: auto;
   }
   .dw-tile-value {
-    font-size: 1.5rem;
+    font-size: calc(1.5rem * var(--dw-fs-factor));
   }
   .dw-tile-label {
-    font-size: 0.8125rem;
+    font-size: calc(0.8125rem * var(--dw-fs-factor));
   }
   /* 没有高度尺寸容器时 cqh 会回落到视口高度，会把统计数字撑得过大；
      堆叠态只按宽度缩放，标签回到固定字号。 */
   .dw-stat-value {
-    font-size: clamp(1.5rem, 9cqi, 2.75rem);
+    font-size: calc(clamp(1.5rem, 9cqi, 2.75rem) * var(--dw-fs-factor));
   }
   .dw-stat-label {
-    font-size: 0.75rem;
+    font-size: calc(0.75rem * var(--dw-fs-factor));
   }
   .dashboard-edit-frame,
   .dashboard-edit-toggle,
   .dashboard-widget-overlay,
   .dashboard-widget-remove,
-  .dashboard-widget-resize {
+  .dashboard-widget-resize,
+  .dashboard-widget-scale {
     display: none;
   }
 }
@@ -1230,24 +1311,25 @@ body.proj-cosmic .app-rail .dashboard-widget-remove {
     grid-auto-rows: auto;
   }
   .dw-tile-value {
-    font-size: 1.5rem;
+    font-size: calc(1.5rem * var(--dw-fs-factor));
   }
   .dw-tile-label {
-    font-size: 0.8125rem;
+    font-size: calc(0.8125rem * var(--dw-fs-factor));
   }
   /* 没有高度尺寸容器时 cqh 会回落到视口高度，会把统计数字撑得过大；
      堆叠态只按宽度缩放，标签回到固定字号。 */
   .dw-stat-value {
-    font-size: clamp(1.5rem, 9cqi, 2.75rem);
+    font-size: calc(clamp(1.5rem, 9cqi, 2.75rem) * var(--dw-fs-factor));
   }
   .dw-stat-label {
-    font-size: 0.75rem;
+    font-size: calc(0.75rem * var(--dw-fs-factor));
   }
   .dashboard-edit-frame,
   .dashboard-edit-toggle,
   .dashboard-widget-overlay,
   .dashboard-widget-remove,
-  .dashboard-widget-resize {
+  .dashboard-widget-resize,
+  .dashboard-widget-scale {
     display: none;
   }
 }

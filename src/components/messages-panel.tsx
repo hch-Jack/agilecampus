@@ -3,6 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -100,7 +101,25 @@ export function MessagesPanelShell({
   // 浮窗可见性是派生的：只在 drawer 模式且不在 /messages 上（后者是跳转过渡态）。
   // 这样两种消息形态天然不共存，也避免「路由回消息页关浮窗」这类 effect 里 setState。
   const visible = mode === "drawer" && open && pathname !== "/messages";
-  const renderContent = visible || keepMounted;
+  // 打开抽屉的同一拍挂载整个消息界面（含首次拉取）会占住首帧，滑入动画起步就卡一下。
+  // 让抽屉先滑出第一帧、下一帧再挂内容：那时抽屉才走到 ~5%，肉眼无差；而 transform
+  // 过渡跑在合成线程上，主线程在挂载期间动画照常流畅。
+  // 收起 300ms 后复位（与 keepMounted 同节拍），下次打开重新享受这一帧的缓冲。
+  const [paintReady, setPaintReady] = useState(false);
+  useEffect(() => {
+    if (visible) {
+      const raf = requestAnimationFrame(() => setPaintReady(true));
+      return () => cancelAnimationFrame(raf);
+    }
+    const timer = setTimeout(() => setPaintReady(false), 300);
+    return () => clearTimeout(timer);
+  }, [visible]);
+  const renderContent = (visible && paintReady) || keepMounted;
+  // 内容元素本身也是稳定的：外壳因开关/模式变化重渲染时，不去重算整套消息列表
+  const content = useMemo(
+    () => <MessagesClient timeZone={timeZone} variant="panel" />,
+    [timeZone],
+  );
 
   // 「进消息系统之前的页面」：layout 的客户端组件跨路由常驻，每次落到非消息页记一笔；
   // 直接打开/刷新时没有来路，弹回/切换兜底去工作台。
@@ -237,7 +256,7 @@ export function MessagesPanelShell({
         {/* 不加内边距：浮窗里是左右两栏的界面，左栏要贴着抽屉左边框、
             头部条要贴着上边框，留白交给各栏自己控制（页头 px-3、列表 p-3）。 */}
         <div className="flex min-h-0 flex-1 flex-col">
-          {renderContent && <MessagesClient timeZone={timeZone} variant="panel" />}
+          {renderContent && content}
         </div>
       </aside>
     </MessagesPanelContext.Provider>

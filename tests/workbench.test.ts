@@ -23,7 +23,7 @@ import {
   projectChips,
 } from "@/lib/workbench-filters";
 import { db } from "@/db";
-import { feedReads, taskActivities, tasks as tasksTable } from "@/db/schema";
+import { approvalRequests, feedReads, taskActivities, tasks as tasksTable } from "@/db/schema";
 import {
   addTaskPlanSegmentAction,
   clearTaskPlanAction,
@@ -204,6 +204,27 @@ describe("moveTaskAction 经工作台复用", () => {
       await moveTaskAction({ taskId: task.id, projectId: project.id, patch: { status: "doing" } }),
     ).toEqual({ error: "没有权限执行此操作" });
     expect(await taskStatus(task.id)).toBe("todo");
+  });
+
+  it("待审批卡拖回原状态列：经 moveTaskAction 撤回完成申请", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    authMock.userId = student.id;
+    await moveTaskAction({ taskId: task.id, projectId: project.id, patch: { status: "doing" } });
+
+    // 学生申请完成：被拦截，申请落库、状态仍留在进行中
+    expect(
+      await moveTaskAction({ taskId: task.id, projectId: project.id, patch: { status: "done" } }),
+    ).toEqual({ error: expect.stringContaining("完成申请") });
+    const pendingRows = () =>
+      db.select().from(approvalRequests).where(eq(approvalRequests.taskId, task.id));
+    expect(await pendingRows()).toHaveLength(1);
+
+    // 拖回「进行中」：patch 与库中状态相同（待审批是派生列），仍要撤回
+    expect(
+      await moveTaskAction({ taskId: task.id, projectId: project.id, patch: { status: "doing" } }),
+    ).toBeNull();
+    expect(await pendingRows()).toHaveLength(0);
   });
 
   it("非法 status 与空补丁均报参数无效", async () => {
