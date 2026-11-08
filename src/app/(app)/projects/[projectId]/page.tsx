@@ -11,6 +11,7 @@ import { getFeedUnreadCount, listProjectActivities, projectFeedScope } from "@/l
 import { listTeamLabels } from "@/lib/label";
 import { listPendingAcceptanceProjectIds } from "@/lib/approval";
 import { getMyPermissions } from "@/lib/team-permissions";
+import { countProjectAttachments } from "@/lib/attachment";
 import { AcceptanceControl } from "./acceptance-control";
 import { parseFilters, applyFilters } from "@/lib/board-filters";
 import { todayIn } from "@/lib/time";
@@ -18,6 +19,8 @@ import { resolveUserTimeZone } from "@/lib/time-pref";
 import { ActivityFeed } from "@/components/activity-feed";
 import { MilestoneSection } from "./milestone-section";
 import { NewTaskForm } from "./new-task-form";
+import { ProjectOverview } from "./project-overview";
+import { TaskDatabase } from "./task-database";
 import { Board } from "./board";
 import { FilterBar } from "./filter-bar";
 import { ProjectCommentList } from "./project-comment-list";
@@ -47,6 +50,7 @@ export default async function ProjectPage({
     members,
     teamLabels,
     projectBoardComments,
+    attachmentCount,
   ] = await Promise.all([
     listProjectMilestones(session.user.id, projectId),
     listProjectTasks(session.user.id, projectId),
@@ -55,6 +59,7 @@ export default async function ProjectPage({
     listTeamMembers(project.teamId),
     listTeamLabels(session.user.id, project.teamId),
     listProjectBoardComments(session.user.id, projectId),
+    countProjectAttachments(projectId),
   ]);
 
   const filters = parseFilters(
@@ -85,6 +90,8 @@ export default async function ProjectPage({
   ]);
   const pendingAcceptance = acceptancePending.has(projectId);
   const canAccept = myPerms?.project ?? false;
+  // 概览进度：项目内全部任务（含子任务）的完成数
+  const taskDone = projectTasks.filter((t) => t.status === "done").length;
 
   return (
     <main className="mx-auto max-w-5xl space-y-8 py-5 sm:py-8">
@@ -140,25 +147,23 @@ export default async function ProjectPage({
             </Link>
           </div>
         </div>
-        {project.description && (
-          <p className="mt-1 text-sm text-ink-soft">{project.description}</p>
-        )}
-        <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-ink-faint">
-          {project.startDate ?? "?"} ~ {project.endDate ?? "?"} ·{" "}
-          {project.status === "active" ? (
-            <span className="ac-badge bg-doing/10 text-doing">进行中</span>
-          ) : project.status === "completed" ? (
-            <span className="ac-badge bg-done/10 text-done">已结题</span>
-          ) : (
-            <span className="ac-badge bg-sunken text-ink-soft">已归档</span>
-          )}
-          {pendingAcceptance && (
-            <span className="ac-badge border border-medium bg-medium-soft font-medium text-medium">
-              ⏳ 结题审批中
-            </span>
-          )}
-        </p>
       </header>
+
+      {/* 项目概览：Notion 属性面板式信息卡，集中呈现状态/周期/进度/成员/里程碑/描述 */}
+      <ProjectOverview
+        project={{
+          description: project.description,
+          status: project.status,
+          startDate: project.startDate,
+          endDate: project.endDate,
+        }}
+        taskTotal={projectTasks.length}
+        taskDone={taskDone}
+        members={members.map((m) => ({ id: m.id, name: m.name }))}
+        milestoneCount={projectMilestones.length}
+        pendingAcceptance={pendingAcceptance}
+      />
+
       {/* 结题入口：有验收权=直接结题；无权=发起申请（全部任务完成后可提交） */}
       <AcceptanceControl
         projectId={projectId}
@@ -218,15 +223,54 @@ export default async function ProjectPage({
         />
       </section>
 
-      {canWrite && (
-        <NewTaskForm
-          projectId={projectId}
-          members={members}
-          milestones={projectMilestones.map((m) => ({ id: m.id, title: m.title }))}
-          projectStart={project.startDate}
-          projectEnd={project.endDate}
-        />
-      )}
+      {/* 任务数据库：Notion 数据库式的任务总览（只读，操作在看板/详情页） */}
+      <TaskDatabase
+        projectId={projectId}
+        tasks={projectTasks}
+        milestones={projectMilestones.map((m) => ({ id: m.id, title: m.title }))}
+        progress={progress}
+      />
+
+      {/* 新建任务与附件中心并排一行：任务卡收窄，附件中心做固定宽度的入口卡 */}
+      <div
+        className={`grid items-stretch gap-4 ${
+          canWrite ? "lg:grid-cols-[minmax(0,1fr)_15rem]" : ""
+        }`}
+      >
+        {canWrite && (
+          <NewTaskForm
+            projectId={projectId}
+            members={members}
+            milestones={projectMilestones.map((m) => ({ id: m.id, title: m.title }))}
+            projectStart={project.startDate}
+            projectEnd={project.endDate}
+          />
+        )}
+        <Link
+          href={`/projects/${projectId}/attachments`}
+          className="ac-card flex flex-col justify-center gap-1.5 p-4 transition-colors hover:border-primary/60 hover:bg-primary-soft/30"
+        >
+          <span className="flex items-center gap-2 font-medium text-ink">
+            <svg
+              viewBox="0 0 16 16"
+              className="h-4 w-4 shrink-0 text-ink-soft"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.3"
+              strokeLinecap="round"
+              aria-hidden="true"
+            >
+              <path d="M13 7.5 8.6 12a3.2 3.2 0 0 1-4.6-4.6l4.6-4.6a2.1 2.1 0 0 1 3 3L7 10.2a1.05 1.05 0 0 1-1.5-1.5l4.1-4.1" />
+            </svg>
+            附件中心
+          </span>
+          <span className="text-xs text-ink-faint">
+            {attachmentCount > 0
+              ? `已归档 ${attachmentCount} 个文件`
+              : "按任务上传与查看项目文件"}
+          </span>
+        </Link>
+      </div>
 
       {/* 项目留言板：对标任务留言板，挂在新任务与最新记录之间 */}
       <section className="ac-card p-5">
