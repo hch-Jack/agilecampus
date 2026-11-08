@@ -519,18 +519,24 @@ export function WorkbenchCalendar({
                     {shownPlans.map(({ task: t, seg }) => {
                       const overdue =
                         t.status !== "done" && t.dueDate !== null && t.dueDate < today;
+                      // 用户自己挑的颜色优先于逾期红：逾期只用一圈红边提示，
+                      // 否则逾期任务的玫红/青/紫等颜色全被红色盖掉，看起来「只有几种颜色」。
                       return (
                         <span
                           key={t.id}
-                          style={overdue ? undefined : planColorChipStyle(seg.color)}
+                          style={planColorChipStyle(seg.color)}
                           className={`block truncate rounded px-1 text-[10px] ${
-                            overdue
-                              ? "bg-high-soft text-high"
-                              : seg.color
-                                ? ""
+                            seg.color
+                              ? overdue
+                                ? "ring-1 ring-high/50"
+                                : ""
+                              : overdue
+                                ? "bg-high-soft text-high"
                                 : planStatusChipClass(t.status)
                           }`}
-                          title={`计划：${t.title}（${planColorLabel(seg.color) ?? "跟随状态"}）`}
+                          title={`计划：${t.title}（${planColorLabel(seg.color) ?? "跟随状态"}）${
+                            overdue ? " · 已逾期" : ""
+                          }`}
                         >
                           {t.title}
                         </span>

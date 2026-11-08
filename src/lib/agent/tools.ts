@@ -573,7 +573,7 @@ export const taskPlanOpSchema = z.discriminatedUnion("action", [
       .enum(TASK_PLAN_COLOR_KEYS)
       .optional()
       .describe(
-        "这一段日历 chip 的颜色：blue/green/amber/violet/rose/slate；省略 = 跟随任务状态",
+        `这一段日历 chip 的颜色：${TASK_PLAN_COLOR_KEYS.join("/")}；省略 = 跟随任务状态`,
       ),
   }),
   z.object({

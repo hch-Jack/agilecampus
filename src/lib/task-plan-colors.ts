@@ -4,19 +4,25 @@
  * 只存**色板键或 #rrggbb**、不存任意 CSS：配色跟着主题（浅色 / 项目页深色）自适应，
  * 也杜绝把用户输入当样式注入。缺省 / `null` = 跟随任务状态，兼容旧数据。
  *
- * 色板刻意挑六个色相拉开的颜色——早先的琥珀 / 橙 / 红太接近，色点看起来像重复。
+ * 色板按色相排开（12 色），覆盖常见需求；不够还有自定义取色。
  * 旧的 orange / red / gray 仍可读可写（历史数据），只是不再出现在选择器里。
  */
 
 import type { CSSProperties } from "react";
 
-/** 选择器里展示的色板：六个色相明确区分的颜色 */
+/** 选择器里展示的色板：按色相排开，相邻色差足够分辨 */
 export const TASK_PLAN_COLORS = [
-  { key: "blue", label: "蓝", hex: "#3b82f6" },
-  { key: "green", label: "绿", hex: "#10b981" },
-  { key: "amber", label: "黄", hex: "#f59e0b" },
-  { key: "violet", label: "紫", hex: "#8b5cf6" },
   { key: "rose", label: "玫红", hex: "#f43f5e" },
+  { key: "pink", label: "粉", hex: "#ec4899" },
+  { key: "fuchsia", label: "紫红", hex: "#d946ef" },
+  { key: "violet", label: "紫", hex: "#8b5cf6" },
+  { key: "indigo", label: "靛", hex: "#4f46e5" },
+  { key: "blue", label: "蓝", hex: "#3b82f6" },
+  { key: "cyan", label: "青", hex: "#06b6d4" },
+  { key: "teal", label: "蓝绿", hex: "#14b8a6" },
+  { key: "green", label: "绿", hex: "#10b981" },
+  { key: "lime", label: "黄绿", hex: "#84cc16" },
+  { key: "amber", label: "黄", hex: "#f59e0b" },
   { key: "slate", label: "灰", hex: "#64748b" },
 ] as const;
 

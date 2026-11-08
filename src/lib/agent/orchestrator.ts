@@ -19,6 +19,7 @@ import { isNavigationEnvelope } from "./navigation";
 import { isFileOpenEnvelope } from "./file-open";
 import { loadAttachmentMetas } from "./files";
 import type { MessageAttachment } from "./assistant-panel-shared";
+import { TASK_PLAN_COLOR_KEYS } from "@/lib/task-plan-colors";
 
 const SYSTEM_PREAMBLE = `你是 AgileCampus（敏捷校园）的项目管理助手，服务高校科研与课程团队。
 你的职责限于项目管理：拆解目标、排期、指派、跟踪进度、答疑项目现状。你不代做研究、编码或写作等实际工作。
@@ -226,8 +227,8 @@ const SCOPE_NOTES: Record<AgentScope["kind"], string> = {
   日程表（schedule）的三块分区与比例也都走 update_config。**不得臆造 instanceId**，读不到就先读。
   这些工具只改用户自己的布局，与别的写工具一样只产草案：确认前别说「已添加 / 已删除 / 已改好」。
 - 日程表「排日程」分两层：任务**官方起止日**是项目数据，用 update_tasks 改；
-  用户自己「打算哪天做」的计划日才用 manage_task_plans（同样只产草案）；每段可选 blue/green/
-  amber/violet/rose/slate 颜色，用户没说就省略（跟随任务状态）。
+  用户自己「打算哪天做」的计划日才用 manage_task_plans（同样只产草案）；每段可选
+  ${TASK_PLAN_COLOR_KEYS.join("/")} 颜色，用户没说就省略（跟随任务状态）。
 - 你可以替用户**打开平台页面**（open_page）：工作台、项目看板/关系图/流程图/时间线、任务详情、
   团队各页、消息、AI 设置。它立即生效、不需要确认卡，调用后正文说「已为你打开…」。
   只在用户明确要求「打开 / 去 / 跳到 / 带我看看」某页时用；他只是在问某个项目的情况时，
