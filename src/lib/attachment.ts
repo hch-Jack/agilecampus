@@ -1,4 +1,5 @@
 import { and, desc, eq } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
 import { projects, taskAttachments, tasks, teamMembers, users } from "@/db/schema";
 import { AppError, ForbiddenError } from "./errors";
@@ -49,6 +50,84 @@ export async function listAttachments(actorId: string, taskId: string) {
     .leftJoin(users, eq(taskAttachments.uploaderId, users.id))
     .where(eq(taskAttachments.taskId, taskId))
     .orderBy(desc(taskAttachments.createdAt));
+}
+
+export type AttachmentCenterFile = {
+  id: string;
+  filename: string;
+  mimeType: string | null;
+  size: number;
+  createdAt: Date;
+  uploaderId: string;
+  uploaderName: string | null;
+};
+
+export type AttachmentCenterTask = {
+  id: string;
+  title: string;
+  status: "todo" | "doing" | "done";
+  parentTaskId: string | null;
+  assigneeName: string | null;
+  creatorId: string | null;
+  creatorName: string | null;
+  attachments: AttachmentCenterFile[];
+};
+
+/**
+ * 项目「附件中心」：全项目任务的附件一览（不含文件内容）。
+ *
+ * 任务分配者 = 任务创建人（tasks.createdById）；客户端据此把附件分成
+ * 「分配者提供的文件」与「成员上传的文件」两组。所有项目成员可读。
+ */
+export async function listProjectAttachmentCenter(
+  actorId: string,
+  projectId: string,
+): Promise<AttachmentCenterTask[]> {
+  await requireProjectAccess(actorId, projectId);
+
+  const creator = alias(users, "creator");
+  const [taskRows, fileRows] = await Promise.all([
+    db
+      .select({
+        id: tasks.id,
+        title: tasks.title,
+        status: tasks.status,
+        parentTaskId: tasks.parentTaskId,
+        assigneeName: users.name,
+        creatorId: tasks.createdById,
+        creatorName: creator.name,
+      })
+      .from(tasks)
+      .leftJoin(users, eq(tasks.assigneeId, users.id))
+      .leftJoin(creator, eq(tasks.createdById, creator.id))
+      .where(eq(tasks.projectId, projectId))
+      .orderBy(tasks.sortOrder),
+    db
+      .select({
+        id: taskAttachments.id,
+        taskId: taskAttachments.taskId,
+        filename: taskAttachments.filename,
+        mimeType: taskAttachments.mimeType,
+        size: taskAttachments.size,
+        createdAt: taskAttachments.createdAt,
+        uploaderId: taskAttachments.uploaderId,
+        uploaderName: users.name,
+      })
+      .from(taskAttachments)
+      .innerJoin(tasks, eq(taskAttachments.taskId, tasks.id))
+      .leftJoin(users, eq(taskAttachments.uploaderId, users.id))
+      .where(eq(tasks.projectId, projectId))
+      .orderBy(desc(taskAttachments.createdAt)),
+  ]);
+
+  const byTask = new Map<string, AttachmentCenterFile[]>();
+  for (const f of fileRows) {
+    const { taskId, ...file } = f;
+    const list = byTask.get(taskId);
+    if (list) list.push(file);
+    else byTask.set(taskId, [file]);
+  }
+  return taskRows.map((t) => ({ ...t, attachments: byTask.get(t.id) ?? [] }));
 }
 
 /**

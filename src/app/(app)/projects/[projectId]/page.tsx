@@ -95,6 +95,23 @@ export default async function ProjectPage({
           </h1>
           <div className="flex shrink-0 items-center gap-2">
             <Link
+              href={`/projects/${projectId}/attachments`}
+              className="ac-btn-ghost whitespace-nowrap"
+            >
+              <svg
+                viewBox="0 0 16 16"
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                strokeLinecap="round"
+                aria-hidden="true"
+              >
+                <path d="M13 7.5 8.6 12a3.2 3.2 0 0 1-4.6-4.6l4.6-4.6a2.1 2.1 0 0 1 3 3L7 10.2a1.05 1.05 0 0 1-1.5-1.5l4.1-4.1" />
+              </svg>
+              附件中心
+            </Link>
+            <Link
               href={`/projects/${projectId}/timeline`}
               className="ac-btn-ghost whitespace-nowrap"
             >
