@@ -41,7 +41,7 @@ export function RejectReasonDialog({
       aria-label="填写拒绝原因"
     >
       <div
-        className="w-full max-w-md rounded-field border border-line bg-surface shadow-2xl"
+        className="w-full max-w-md rounded-field border border-line bg-surface shadow-2xl max-sm:max-h-[85dvh] max-sm:overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <form

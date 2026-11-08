@@ -109,7 +109,7 @@ export function MyTeamsWidget({ teams }: { teams: DashboardTeam[] }) {
             <li key={team.id}>
               <Link
                 href={`/teams/${team.id}/projects`}
-                className="flex items-center justify-between gap-2 text-sm"
+                className="flex items-center justify-between gap-2 text-sm max-sm:min-h-9"
               >
                 <span className="dw-item-title truncate font-medium text-ink hover:text-primary">
                   {team.name}

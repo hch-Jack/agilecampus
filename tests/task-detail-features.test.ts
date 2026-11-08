@@ -100,15 +100,16 @@ describe("附件 lib", () => {
     expect((list[0] as unknown as Record<string, unknown>).data).toBeUndefined();
   });
 
-  it("超过 10MB 拒收", async () => {
+  it("超过 1GB 拒收", async () => {
     const { student, parent } = await scene();
+    // 不真分配 1GB：声明体积超限就够了（persistBlob 先按 size 拦，校验在分配之前）
     await expect(
       uploadAttachment(student.id, parent.id, {
         filename: "big.bin",
         size: ATTACHMENT_MAX_SIZE + 1,
-        data: Buffer.alloc(ATTACHMENT_MAX_SIZE + 1),
+        data: Buffer.alloc(1),
       }),
-    ).rejects.toThrow("附件不能超过 10MB");
+    ).rejects.toThrow("文件不能超过 1GB");
   });
 
   it("teacher 不可上传、可下载；非成员全被拒", async () => {

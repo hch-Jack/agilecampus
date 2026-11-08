@@ -414,3 +414,12 @@ body.proj-cosmic .ac-file-preview {
   /* 纯色不透明：预览窗口要读文字，不该透出背后的星空 */
   background-color: #0e1322;
 }
+
+/* —— 14. 手机端导航菜单 —— */
+/* 同第 12 / 13 节：宇宙主题的 --color-surface 只有 45% 不透明度，
+   菜单浮在正文上方会透出底下的标题和卡片，字也糊。 */
+body.proj-cosmic .mobile-nav-sheet {
+  background-color: rgba(14, 19, 34, 0.97);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}

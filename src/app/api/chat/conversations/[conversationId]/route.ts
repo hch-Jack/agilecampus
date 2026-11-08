@@ -6,7 +6,9 @@ import {
   getPersonalConversation,
   listPersonalConversationMessages,
   renamePersonalConversation,
+  setPersonalConversationCategory,
   toAssistantConversationSummary,
+  type ConversationSummary,
 } from "@/lib/agent/conversation";
 import { chatErrorResponse } from "@/lib/agent/chat-http";
 
@@ -14,9 +16,15 @@ type Ctx = { params: Promise<{ conversationId: string }> };
 
 // Next 16：动态段参数是 Promise，必须 await。
 
-const renameSchema = z.object({
-  title: z.string().trim().min(1, "请输入标题").max(60, "标题最多 60 字"),
-});
+// 改名与分类可单独改，也可一次改两样；category=null 表示恢复「未分类」
+const patchSchema = z
+  .object({
+    title: z.string().trim().min(1, "请输入标题").max(60, "标题最多 60 字").optional(),
+    category: z.string().trim().max(20, "分类最多 20 字").nullable().optional(),
+  })
+  .refine((d) => d.title !== undefined || d.category !== undefined, {
+    message: "没有要修改的内容",
+  });
 
 /** 切换会话：取这条会话的基本信息与最近 200 条消息 */
 export async function GET(_req: Request, ctx: Ctx) {
@@ -44,7 +52,7 @@ export async function GET(_req: Request, ctx: Ctx) {
   }
 }
 
-/** 改名；只能改自己的个人会话 */
+/** 改名 / 改分类；只能改自己的个人会话 */
 export async function PATCH(req: Request, ctx: Ctx) {
   const session = await auth();
   if (!session?.user) return NextResponse.json({ error: "请先登录" }, { status: 401 });
@@ -53,21 +61,34 @@ export async function PATCH(req: Request, ctx: Ctx) {
   const parsedId = z.uuid().safeParse(raw);
   if (!parsedId.success) return NextResponse.json({ error: "会话 id 无效" }, { status: 400 });
 
-  const parsed = renameSchema.safeParse(await req.json().catch(() => ({})));
+  const parsed = patchSchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
   }
 
   try {
-    const conv = await renamePersonalConversation(
-      session.user.id,
-      parsedId.data,
-      parsed.data.title,
-    );
+    const conv = await getPersonalConversation(session.user.id, parsedId.data);
     if (!conv) return NextResponse.json({ error: "会话不存在" }, { status: 404 });
 
+    let updated: ConversationSummary | null = null;
+    if (parsed.data.title !== undefined) {
+      updated = await renamePersonalConversation(
+        session.user.id,
+        parsedId.data,
+        parsed.data.title,
+      );
+    }
+    if (parsed.data.category !== undefined) {
+      updated = await setPersonalConversationCategory(
+        session.user.id,
+        parsedId.data,
+        parsed.data.category,
+      );
+    }
+    if (!updated) return NextResponse.json({ error: "会话不存在" }, { status: 404 });
+
     return NextResponse.json({
-      conversation: toAssistantConversationSummary(conv),
+      conversation: toAssistantConversationSummary(updated),
     });
   } catch (e) {
     return chatErrorResponse(e, "[PATCH /api/chat/conversations/:id]");

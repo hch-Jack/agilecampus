@@ -128,8 +128,9 @@ export const users = pgTable(
   (t) => [uniqueIndex("users_name_unique").on(t.name)],
 );
 
-// 私信附件：与任务附件同构，内容（bytea）直存库内，单文件上限由应用层校验（lib/dm.ts，10MB）。
-// 附件随消息先落库再被消息引用；站内无删除入口，留档即永久。
+// 私信附件：与任务附件同构，单文件上限 1GB（lib/dm.ts）。
+// `storageKey` 非空 = 正文在磁盘上（见 lib/blob-store.ts），`data` 留空 Buffer；
+// 历史附件仍是库内 bytea。附件随消息先落库再被消息引用；站内无删除入口，留档即永久。
 export const dmAttachments = pgTable("dm_attachments", {
   id: uuid("id").primaryKey().defaultRandom(),
   uploaderId: uuid("uploader_id")
@@ -139,6 +140,7 @@ export const dmAttachments = pgTable("dm_attachments", {
   mimeType: text("mime_type"),
   size: integer("size").notNull(),
   data: bytea("data").notNull(),
+  storageKey: text("storage_key"),
   createdAt: dbTimestampNow("created_at").notNull(),
 });
 
@@ -402,6 +404,9 @@ export const conversations = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     title: text("title"),
+    // 会话分类：预设名或用户自定义短标签（应用层归一化，≤20 字符）；null = 未分类。
+    // 自动归类只在为空时写入，用户手动改过的不会被下一轮对话覆盖。
+    category: text("category"),
     // 最近一次落消息的时间，会话列表据此按「最近用过」排序；
     // 可空 —— 老数据没有，回落到 createdAt（见 lib/agent/conversation.ts 的排序）。
     lastMessageAt: dbTimestamp("last_message_at"),
@@ -429,6 +434,10 @@ export const messages = pgTable(
     role: messageRoleEnum("role").notNull(),
     content: text("content").notNull(),
     toolCalls: jsonb("tool_calls"),
+    // 用户随这句话上传的文件（`{ id, filename, mimeType, size }[]`，指向 agent_files）。
+    // 与 tool_calls 一样刻意不标类型：结构属于应用层，schema 由 drizzle-kit 独立加载。
+    // 文件名/大小在这里留快照 —— 源文件被清理后，聊天记录里仍能显示它当时叫什么。
+    attachments: jsonb("attachments"),
     // 一轮问答（user + assistant）共用这个 id：删一条就能精确删掉整轮。
     // 可空 —— 老数据没有，删除时退回按原始 created_at 配对（微秒只存在于库里，别经 JS Date）。
     turnId: uuid("turn_id"),
@@ -437,6 +446,31 @@ export const messages = pgTable(
   (t) => [
     index("messages_conversation_idx").on(t.conversationId),
     index("messages_turn_idx").on(t.conversationId, t.turnId),
+  ],
+);
+
+// 用户给助手消息打的私有标签：标签属于「这个人」，不是消息本身的属性 ——
+// 同一条消息在不同用户眼里可以是不同的标签集合。因此不能存在 messages 行上。
+// 只允许给 role=assistant 的消息打标（应用层校验，见 lib/agent/message-tags.ts）。
+export const messageTags = pgTable(
+  "message_tags",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // 归一化后的短标签（≤20 码点）；同名标签可跨消息复用
+    tag: text("tag").notNull(),
+    createdAt: dbTimestampNow("created_at").notNull(),
+  },
+  (t) => [
+    // 同一用户给同一条消息重复打同一个标签视为幂等，不落第二行
+    uniqueIndex("message_tags_message_user_tag_unique").on(t.messageId, t.userId, t.tag),
+    // 「按标签查我的历史消息」与「列我的标签」都走这个前缀
+    index("message_tags_user_tag_idx").on(t.userId, t.tag),
   ],
 );
 
@@ -578,8 +612,9 @@ export const taskLabels = pgTable(
   ],
 );
 
-// 任务附件：文件内容（bytea）直存库内，单文件上限由应用层校验（lib/attachment.ts，10MB）。
-// 任务删除时附件级联消失。
+// 任务附件：单文件上限 1GB（lib/attachment.ts）。`storageKey` 非空 = 正文在磁盘上，
+// `data` 留空 Buffer；历史附件仍是库内 bytea。任务删除时附件行级联消失（磁盘文件
+// 由删除路径尽力清理，不做级联）。
 export const taskAttachments = pgTable(
   "task_attachments",
   {
@@ -594,9 +629,31 @@ export const taskAttachments = pgTable(
     mimeType: text("mime_type"),
     size: integer("size").notNull(),
     data: bytea("data").notNull(),
+    storageKey: text("storage_key"),
     createdAt: dbTimestampNow("created_at").notNull(),
   },
   (t) => [index("task_attachments_task_idx").on(t.taskId)],
+);
+
+// AI 助手对话里上传/生成的文件：与任务附件同构，单文件上限 1GB（lib/agent/files.ts），
+// `storageKey` 非空 = 正文在磁盘上。**只属于上传者本人**——项目助手会话是团队共享的，
+// 所以上传功能也只开在个人助手（工作台右侧面板），避免队友看到自己无权下载的文件。
+// 用户可让助手把这些文件读进上下文，或复制成某个任务的附件（复制字节、各存一份）。
+export const agentFiles = pgTable(
+  "agent_files",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    filename: text("filename").notNull(),
+    mimeType: text("mime_type"),
+    size: integer("size").notNull(),
+    data: bytea("data").notNull(),
+    storageKey: text("storage_key"),
+    createdAt: dbTimestampNow("created_at").notNull(),
+  },
+  (t) => [index("agent_files_owner_idx").on(t.ownerId)],
 );
 
 // 任务动态：谁在何时对任务做了什么（创建/字段变更/子任务增改/附件增删）。

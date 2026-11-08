@@ -32,16 +32,16 @@ export default async function RelationshipGraphPage({
   const todayMs = parseDay(todayIn(tz))!;
 
   return (
-    <main className="mx-auto max-w-5xl space-y-6 py-8">
+    <main className="mx-auto max-w-5xl space-y-6 py-5 sm:py-8">
       <header className="space-y-1">
         <div className="flex items-center gap-3 text-xs text-ink-soft">
-          <Link href={`/projects/${projectId}`} className="hover:text-primary">
+          <Link href={`/projects/${projectId}`} className="ac-hit hover:text-primary">
             ← 返回项目
           </Link>
-          <Link href={`/projects/${projectId}/timeline`} className="hover:text-primary">
+          <Link href={`/projects/${projectId}/timeline`} className="ac-hit hover:text-primary">
             时间线 →
           </Link>
-          <Link href={`/projects/${projectId}/flow`} className="hover:text-primary">
+          <Link href={`/projects/${projectId}/flow`} className="ac-hit hover:text-primary">
             流程图 →
           </Link>
         </div>

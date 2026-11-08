@@ -18,6 +18,7 @@ import {
   GROUP_MEMBER_CAP,
 } from "@/lib/group-chat";
 import { createUser } from "@/lib/user";
+import { MAX_FILE_SIZE } from "@/lib/file-limits";
 import { ForbiddenError } from "@/lib/errors";
 import { db } from "@/db";
 import { dmGroupMembers, users } from "@/db/schema";
@@ -293,11 +294,11 @@ describe("sendGroupMessage / 未读", () => {
         file: {
           filename: "大.bin",
           mimeType: null,
-          size: 10 * 1024 * 1024 + 1,
+          size: MAX_FILE_SIZE + 1,
           data: Buffer.alloc(1),
         },
       }),
-    ).rejects.toThrow("文件不能超过 10MB");
+    ).rejects.toThrow("文件不能超过 1GB");
 
     await sendGroupMessage(owner.id, groupId, { content: "长".repeat(6000) });
     const { messages } = await openGroupConversation(owner.id, groupId);

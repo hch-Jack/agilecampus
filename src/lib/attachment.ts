@@ -6,10 +6,17 @@ import { getProjectForUser } from "./project";
 import { requireTaskWrite } from "./task";
 import { recordTaskActivity } from "./activity";
 import { getDmAttachmentForDownload } from "./dm";
+import {
+  deleteBlob,
+  persistBlob,
+  readStoredContent,
+  type FileContentInput,
+} from "./blob-store";
+import { MAX_FILE_SIZE } from "./file-limits";
 
-// 单文件大小上限：10MB。上传走 server action，体积限制须与 next.config 的
-// experimental.serverActions.bodySizeLimit（12mb，含 multipart 开销余量）配套。
-export const ATTACHMENT_MAX_SIZE = 10 * 1024 * 1024;
+// 单文件大小上限：1GB。真正的上传走 route handler 流式写盘（/api/attachments/upload），
+// server action 只保留给小文件的兼容路径（其 body 上限仍受 next.config 约束）。
+export const ATTACHMENT_MAX_SIZE = MAX_FILE_SIZE;
 
 async function requireProjectAccess(actorId: string, projectId: string) {
   const access = await getProjectForUser(actorId, projectId);
@@ -75,29 +82,51 @@ export async function listMyRecentAttachments(actorId: string, limit = 8) {
     .limit(limit);
 }
 
+/** 上传前的权限预检：先校写权限，再收 1GB 的字节流，别让无权的人白传一遍 */
+export async function assertCanUploadAttachment(actorId: string, taskId: string) {
+  await requireTaskWrite(actorId, await getTaskProjectId(taskId));
+}
+
+/**
+ * 落一条任务附件。内容二选一：
+ * - `storageKey`：磁盘上的源文件，复制一份新 blob（大文件走这条）；
+ * - `data`：内存字节，直接进库（历史路径、测试、小文件复制）。
+ */
 export async function uploadAttachment(
   actorId: string,
   taskId: string,
-  input: { filename: string; mimeType?: string | null; size: number; data: Buffer },
+  input: {
+    filename: string;
+    mimeType?: string | null;
+    size?: number;
+  } & FileContentInput,
 ) {
   const projectId = await getTaskProjectId(taskId);
   await requireTaskWrite(actorId, projectId);
-  if (input.size > ATTACHMENT_MAX_SIZE) throw new AppError("附件不能超过 10MB");
-  if (input.size === 0) throw new AppError("不能上传空文件");
+
+  const blob = await persistBlob(input, ATTACHMENT_MAX_SIZE);
   // 文件名截断到 200 字符，防超长名炸库列/响应头
   const filename = input.filename.slice(0, 200) || "未命名文件";
 
-  const [row] = await db
-    .insert(taskAttachments)
-    .values({
-      taskId,
-      uploaderId: actorId,
-      filename,
-      mimeType: input.mimeType ?? null,
-      size: input.size,
-      data: input.data,
-    })
-    .returning({ id: taskAttachments.id });
+  let row;
+  try {
+    [row] = await db
+      .insert(taskAttachments)
+      .values({
+        taskId,
+        uploaderId: actorId,
+        filename,
+        mimeType: input.mimeType ?? null,
+        size: blob.size,
+        data: blob.data,
+        storageKey: blob.storageKey,
+      })
+      .returning({ id: taskAttachments.id });
+  } catch (e) {
+    // 行没落成，磁盘副本别留着
+    await deleteBlob(blob.storageKey);
+    throw e;
+  }
 
   await recordTaskActivity(db, [
     { taskId, actorId, type: "attachment_added", newValue: filename },
@@ -105,7 +134,7 @@ export async function uploadAttachment(
   return row;
 }
 
-// 下载取回：项目成员即可读；内容随行返回，仅此路径取 data 列
+// 下载取回：项目成员即可读；内容随行返回（磁盘路径只带 storageKey，不读字节）
 export async function getAttachmentForDownload(actorId: string, attachmentId: string) {
   const [row] = await db
     .select({
@@ -114,6 +143,7 @@ export async function getAttachmentForDownload(actorId: string, attachmentId: st
       mimeType: taskAttachments.mimeType,
       size: taskAttachments.size,
       data: taskAttachments.data,
+      storageKey: taskAttachments.storageKey,
       projectId: tasks.projectId,
     })
     .from(taskAttachments)
@@ -162,6 +192,7 @@ export async function deleteAttachment(
       id: taskAttachments.id,
       taskId: taskAttachments.taskId,
       filename: taskAttachments.filename,
+      storageKey: taskAttachments.storageKey,
       projectId: tasks.projectId,
     })
     .from(taskAttachments)
@@ -173,6 +204,7 @@ export async function deleteAttachment(
   await requireTaskWrite(actorId, row.projectId);
 
   await db.delete(taskAttachments).where(eq(taskAttachments.id, attachmentId));
+  await deleteBlob(row.storageKey);
   await recordTaskActivity(db, [
     { taskId: row.taskId, actorId, type: "attachment_deleted", newValue: row.filename },
   ]);
@@ -181,10 +213,9 @@ export async function deleteAttachment(
 /**
  * 把消息里的文件复制成任务附件。
  *
- * `dm_attachments` 与 `task_attachments` 是两张互不关联的表（都能存 blob），
- * 故这里**复制字节**新建一行，而不是引用共享同一行：消息删除/附件清理不会连带
- * 弄丢任务附件，任务附件删除也不影响聊天记录。代价是同一文件存两份 —— 单文件
- * 上限 10MB，可接受。
+ * `dm_attachments` 与 `task_attachments` 是两张互不关联的表，故这里**各存一份**
+ * 新建一行，而不是引用共享同一行：消息删除/附件清理不会连带弄丢任务附件，任务
+ * 附件删除也不影响聊天记录。磁盘上的源文件按 blob 复制，不整份读进内存。
  */
 export async function copyMessageAttachmentToTask(
   actorId: string,
@@ -197,7 +228,9 @@ export async function copyMessageAttachmentToTask(
     filename: source.filename,
     mimeType: source.mimeType,
     size: source.size,
-    data: Buffer.from(source.data),
+    ...(source.storageKey
+      ? { storageKey: source.storageKey }
+      : { data: await readStoredContent(source) }),
   });
   return { id: row.id, filename: source.filename };
 }

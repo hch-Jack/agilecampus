@@ -27,7 +27,7 @@ export default async function AllProjectsPage() {
   const projects = await listMyProjects(session.user.id);
 
   return (
-    <main className="mx-auto max-w-3xl space-y-8 py-8">
+    <main className="mx-auto max-w-3xl space-y-8 py-5 sm:py-8">
       <h1 className="font-display text-2xl font-semibold text-ink">所有项目</h1>
       {projects.length === 0 ? (
         <div className="ac-card p-8 text-center text-sm text-ink-soft">

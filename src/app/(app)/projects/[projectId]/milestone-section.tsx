@@ -42,7 +42,11 @@ export function MilestoneSection({
         )}
       </ul>
       {isAdmin && (
-        <form action={formAction} className="flex items-end gap-2">
+        // 手机上三件套竖排：横排时「添加」会被挤成两行小方块
+        <form
+          action={formAction}
+          className="flex flex-wrap items-end gap-2 max-sm:flex-col max-sm:items-stretch"
+        >
           <input type="hidden" name="projectId" value={projectId} />
           <input
             name="title"
@@ -50,7 +54,7 @@ export function MilestoneSection({
             className="ac-field w-auto text-sm"
           />
           <input type="date" name="targetDate" className="ac-field w-auto text-sm" />
-          <button disabled={pending} className="ac-btn px-3 py-2 text-sm">
+          <button disabled={pending} className="ac-btn shrink-0 whitespace-nowrap px-3 py-2 text-sm">
             添加
           </button>
           {state?.error && <p className="text-sm text-high">{state.error}</p>}
