@@ -12,6 +12,7 @@ const registerSchema = z.object({
   identity: z.enum(["teacher", "student"], "请选择身份"),
   email: z.email("邮箱格式不正确"),
   password: z.string().min(8, "密码至少 8 位").max(64, "密码最长 64 位"),
+  confirmPassword: z.string(),
 });
 
 export type FormState = { error: string } | null;
@@ -22,6 +23,9 @@ export async function registerAction(
 ): Promise<FormState> {
   const parsed = registerSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: parsed.error.issues[0].message };
+  // 两次密码一致（防绕过前端的兜底；前端只依赖这条错误文案回显）
+  if (parsed.data.password !== parsed.data.confirmPassword)
+    return { error: "两次输入的密码不一致" };
 
   try {
     await createUser(parsed.data);

@@ -8,7 +8,7 @@ export async function createTeam(userId: string, name: string) {
   return db.transaction(async (tx) => {
     const [team] = await tx
       .insert(teams)
-      .values({ name, inviteCode: nanoid(10) })
+      .values({ name, inviteCode: nanoid(10), createdById: userId })
       .returning();
     await tx.insert(teamMembers).values({
       teamId: team.id,
@@ -402,6 +402,7 @@ export async function listMyTeams(userId: string) {
       name: teams.name,
       inviteCode: teams.inviteCode,
       role: teamMembers.role,
+      createdById: teams.createdById,
     })
     .from(teamMembers)
     .innerJoin(teams, eq(teamMembers.teamId, teams.id))

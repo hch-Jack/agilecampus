@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { listMyProjects } from "@/lib/project";
 import { CardSparkles } from "@/components/card-sparkles";
+import { ProjectsFilter } from "./projects-filter";
 
 // 进度色相：0% 橙 → 100% 天蓝（色相 30 → 200），返回深/浅两端用于渐变
 function progressColors(pct: number): { deep: string; light: string } {
@@ -21,21 +22,46 @@ const STATUS_BADGE = {
 } as const;
 const STATUS_LABEL = { active: "进行中", completed: "已结题", archived: "已归档" } as const;
 
-export default async function AllProjectsPage() {
+export default async function AllProjectsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string; team?: string; q?: string }>;
+}) {
   const session = await auth();
   if (!session?.user) redirect("/login");
   const projects = await listMyProjects(session.user.id);
+  const filters = await searchParams;
+
+  // 状态/团队精确匹配，名称大小写不敏感包含；非法状态值视作未筛
+  const q = filters.q?.trim().toLowerCase() ?? "";
+  const status =
+    filters.status === "active" || filters.status === "completed" || filters.status === "archived"
+      ? filters.status
+      : null;
+  const filtered = projects.filter(
+    (p) =>
+      (!status || p.status === status) &&
+      (!filters.team || p.teamId === filters.team) &&
+      (!q || p.name.toLowerCase().includes(q)),
+  );
+  const filteredView = Boolean(status || filters.team || q);
+
+  // 团队下拉：去重 + 按出现顺序
+  const teamOptions = [...new Map(projects.map((p) => [p.teamId, { id: p.teamId, name: p.teamName }])).values()];
 
   return (
     <main className="mx-auto max-w-3xl space-y-8 py-5 sm:py-8">
       <h1 className="font-display text-2xl font-semibold text-ink">所有项目</h1>
-      {projects.length === 0 ? (
+      {projects.length > 0 && (
+        <ProjectsFilter teams={teamOptions} total={projects.length} visible={filtered.length} />
+      )}
+      {filtered.length === 0 ? (
         <div className="ac-card p-8 text-center text-sm text-ink-soft">
-          暂无项目——先在团队中创建。
+          {filteredView ? "没有符合筛选条件的项目。" : "暂无项目——先在团队中创建。"}
         </div>
       ) : (
         <ul className="grid gap-3 sm:grid-cols-2">
-          {projects.map((p) => {
+          {filtered.map((p) => {
             const pct = p.taskTotal > 0 ? (p.doneCount / p.taskTotal) * 100 : 0;
             const R = 20;
             const C = 2 * Math.PI * R;

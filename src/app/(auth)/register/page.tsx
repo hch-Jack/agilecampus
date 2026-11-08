@@ -90,6 +90,29 @@ export default function RegisterPage() {
               </span>
             </div>
 
+            {/* 确认密码：共享同一显隐状态，贴入时两框同看；一致性提交时校验 */}
+            <div className="field">
+              <label htmlFor="confirmPassword">确认密码</label>
+              <span className="pw">
+                <input
+                  id="confirmPassword"
+                  name="confirmPassword"
+                  type={showPw ? "text" : "password"}
+                  placeholder="再输入一遍密码"
+                  className="input"
+                  autoComplete="new-password"
+                />
+                <button
+                  type="button"
+                  className="eye"
+                  onClick={() => setShowPw((v) => !v)}
+                  aria-label={showPw ? "隐藏密码" : "显示密码"}
+                >
+                  <EyeIcon off={!showPw} />
+                </button>
+              </span>
+            </div>
+
             {state?.error && <p className="msg-err">{state.error}</p>}
 
             <button type="submit" disabled={pending} className="submit">

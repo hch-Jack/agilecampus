@@ -275,6 +275,10 @@ export const teams = pgTable("teams", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   inviteCode: text("invite_code").notNull().unique(),
+  // 建团者（「我创建的」筛选用）。存量团队为 NULL：不加在任何人头上。
+  createdById: uuid("created_by_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
   createdAt: dbTimestampNow("created_at").notNull(),
 });
 
