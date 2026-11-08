@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
 import { projects, taskAttachments, tasks, teamMembers, users } from "@/db/schema";
@@ -84,7 +84,6 @@ export async function listProjectAttachmentCenter(
   projectId: string,
 ): Promise<AttachmentCenterTask[]> {
   await requireProjectAccess(actorId, projectId);
-
   const creator = alias(users, "creator");
   const [taskRows, fileRows] = await Promise.all([
     db
@@ -128,6 +127,16 @@ export async function listProjectAttachmentCenter(
     else byTask.set(taskId, [file]);
   }
   return taskRows.map((t) => ({ ...t, attachments: byTask.get(t.id) ?? [] }));
+}
+
+/** 项目附件总数（项目页「附件中心」入口卡片用）：一次 count，不取内容 */
+export async function countProjectAttachments(projectId: string) {
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(taskAttachments)
+    .innerJoin(tasks, eq(taskAttachments.taskId, tasks.id))
+    .where(eq(tasks.projectId, projectId));
+  return row?.count ?? 0;
 }
 
 /**

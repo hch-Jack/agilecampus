@@ -11,6 +11,7 @@ import { getFeedUnreadCount, listProjectActivities, projectFeedScope } from "@/l
 import { listTeamLabels } from "@/lib/label";
 import { listPendingAcceptanceProjectIds } from "@/lib/approval";
 import { getMyPermissions } from "@/lib/team-permissions";
+import { countProjectAttachments } from "@/lib/attachment";
 import { AcceptanceControl } from "./acceptance-control";
 import { parseFilters, applyFilters } from "@/lib/board-filters";
 import { todayIn } from "@/lib/time";
@@ -47,6 +48,7 @@ export default async function ProjectPage({
     members,
     teamLabels,
     projectBoardComments,
+    attachmentCount,
   ] = await Promise.all([
     listProjectMilestones(session.user.id, projectId),
     listProjectTasks(session.user.id, projectId),
@@ -55,6 +57,7 @@ export default async function ProjectPage({
     listTeamMembers(project.teamId),
     listTeamLabels(session.user.id, project.teamId),
     listProjectBoardComments(session.user.id, projectId),
+    countProjectAttachments(projectId),
   ]);
 
   const filters = parseFilters(
@@ -94,23 +97,6 @@ export default async function ProjectPage({
             {project.name}
           </h1>
           <div className="flex shrink-0 items-center gap-2">
-            <Link
-              href={`/projects/${projectId}/attachments`}
-              className="ac-btn-ghost whitespace-nowrap"
-            >
-              <svg
-                viewBox="0 0 16 16"
-                className="h-3.5 w-3.5"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.3"
-                strokeLinecap="round"
-                aria-hidden="true"
-              >
-                <path d="M13 7.5 8.6 12a3.2 3.2 0 0 1-4.6-4.6l4.6-4.6a2.1 2.1 0 0 1 3 3L7 10.2a1.05 1.05 0 0 1-1.5-1.5l4.1-4.1" />
-              </svg>
-              附件中心
-            </Link>
             <Link
               href={`/projects/${projectId}/timeline`}
               className="ac-btn-ghost whitespace-nowrap"
@@ -235,15 +221,46 @@ export default async function ProjectPage({
         />
       </section>
 
-      {canWrite && (
-        <NewTaskForm
-          projectId={projectId}
-          members={members}
-          milestones={projectMilestones.map((m) => ({ id: m.id, title: m.title }))}
-          projectStart={project.startDate}
-          projectEnd={project.endDate}
-        />
-      )}
+      {/* 新建任务与附件中心并排一行：任务卡收窄，附件中心做固定宽度的入口卡 */}
+      <div
+        className={`grid items-stretch gap-4 ${
+          canWrite ? "lg:grid-cols-[minmax(0,1fr)_15rem]" : ""
+        }`}
+      >
+        {canWrite && (
+          <NewTaskForm
+            projectId={projectId}
+            members={members}
+            milestones={projectMilestones.map((m) => ({ id: m.id, title: m.title }))}
+            projectStart={project.startDate}
+            projectEnd={project.endDate}
+          />
+        )}
+        <Link
+          href={`/projects/${projectId}/attachments`}
+          className="ac-card flex flex-col justify-center gap-1.5 p-4 transition-colors hover:border-primary/60 hover:bg-primary-soft/30"
+        >
+          <span className="flex items-center gap-2 font-medium text-ink">
+            <svg
+              viewBox="0 0 16 16"
+              className="h-4 w-4 shrink-0 text-ink-soft"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.3"
+              strokeLinecap="round"
+              aria-hidden="true"
+            >
+              <path d="M13 7.5 8.6 12a3.2 3.2 0 0 1-4.6-4.6l4.6-4.6a2.1 2.1 0 0 1 3 3L7 10.2a1.05 1.05 0 0 1-1.5-1.5l4.1-4.1" />
+            </svg>
+            附件中心
+          </span>
+          <span className="text-xs text-ink-faint">
+            {attachmentCount > 0
+              ? `已归档 ${attachmentCount} 个文件`
+              : "按任务上传与查看项目文件"}
+          </span>
+        </Link>
+      </div>
 
       {/* 项目留言板：对标任务留言板，挂在新任务与最新记录之间 */}
       <section className="ac-card p-5">
