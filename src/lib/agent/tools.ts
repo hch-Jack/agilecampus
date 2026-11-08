@@ -572,7 +572,9 @@ export const taskPlanOpSchema = z.discriminatedUnion("action", [
     color: z
       .enum(TASK_PLAN_COLOR_KEYS)
       .optional()
-      .describe("这一段日历 chip 的颜色：blue/green/amber/orange/red/gray；省略 = 跟随任务状态"),
+      .describe(
+        "这一段日历 chip 的颜色：blue/green/amber/violet/rose/slate；省略 = 跟随任务状态",
+      ),
   }),
   z.object({
     action: z.literal("remove"),

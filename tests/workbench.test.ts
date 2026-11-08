@@ -430,11 +430,29 @@ describe("个人计划段（add/remove/clear）", () => {
       projectId: project.id,
       start: "2026-02-02",
       end: "2026-02-02",
-      // @ts-expect-error 故意给不在色板里的键
-      color: "#ff0000",
+      // 故意给非 6 位 hex 的颜色串
+      color: "#ff00",
     });
     expect(res).toEqual({ error: "参数无效" });
     expect(await listMyTaskPlans(student.id, [task.id])).toEqual({});
+  });
+
+  it("自定义 #rrggbb 颜色可存可取", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    authMock.userId = student.id;
+    const color = "#12ab34";
+    const added = await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-03-02",
+      end: "2026-03-02",
+      color,
+    });
+    expect(added).toBeNull();
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({
+      [task.id]: [{ start: "2026-03-02", end: "2026-03-02", color }],
+    });
   });
 
   it("teacher 被拒且不写库", async () => {

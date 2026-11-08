@@ -194,7 +194,7 @@ export function AssistantShell({
     return () => window.removeEventListener(MESSAGES_PANEL_OPEN_EVENT, close);
   }, []);
 
-  // 页面里「带着一句话」唤起助手：开面板 + 自动发这一句（见 lib/right-panels.ts）
+  // 页面里「带着一句话」唤起助手：开面板，这句话在对话里显示为提示（不代发，见 lib/right-panels.ts）
   useEffect(() => {
     const onPrompt = (event: Event) => {
       const detail = (event as CustomEvent<AssistantPromptDetail>).detail;

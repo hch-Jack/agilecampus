@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { formatMonthDay, parseDay } from "@/lib/gantt";
 import type { TaskPlanSegment } from "@/lib/task-plan";
-import { TASK_STATUS_PLAN_CHIP, planColorDot } from "@/lib/task-plan-colors";
+import { planColorDotStyle, planStatusChipClass } from "@/lib/task-plan-colors";
 import type { WorkbenchTask } from "./workbench-board";
 import { PlanColorPicker, type PlanColorValue } from "./plan-color-picker";
 
@@ -65,17 +65,26 @@ export function ScheduleDayModal({
   onRecolor: (task: WorkbenchTask, seg: TaskPlanSegment, color: PlanColorValue) => void;
   onClose: () => void;
 }) {
-  // Esc 关闭 + 锁背景滚动（记住原值，别覆盖别处写的 overflow）
+  // Esc 关闭 + 锁背景滚动。
+  // 锁滚动会让滚动条消失、页面横向抖一下；用等宽的 padding 补回来。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKey);
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const body = document.body;
+    const previousOverflow = body.style.overflow;
+    const previousPadding = body.style.paddingRight;
+    const scrollbarGap = window.innerWidth - document.documentElement.clientWidth;
+    body.style.overflow = "hidden";
+    if (scrollbarGap > 0) {
+      const current = Number.parseFloat(getComputedStyle(body).paddingRight) || 0;
+      body.style.paddingRight = `${current + scrollbarGap}px`;
+    }
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = previous;
+      body.style.overflow = previousOverflow;
+      body.style.paddingRight = previousPadding;
     };
   }, [onClose]);
 
@@ -84,14 +93,14 @@ export function ScheduleDayModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-5"
+      className="ac-modal-backdrop fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3 sm:p-5"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-label={`${day} 的安排详情`}
     >
       <div
-        className="flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-2xl"
+        className="ac-modal-panel schedule-day-modal flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-xl border border-line shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-2.5">
@@ -127,6 +136,7 @@ export function ScheduleDayModal({
               <ul className="space-y-1.5">
                 {planned.map(({ task, seg }) => {
                   const writable = canWriteTask(task);
+                  const dotStyle = planColorDotStyle(seg.color);
                   return (
                     <li
                       key={`${task.id}~${seg.start}~${seg.end}`}
@@ -135,10 +145,9 @@ export function ScheduleDayModal({
                       <div className="flex items-start gap-2">
                         <span
                           className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-sm ${
-                            planColorDot(seg.color) ??
-                            TASK_STATUS_PLAN_CHIP[task.status] ??
-                            TASK_STATUS_PLAN_CHIP.todo
+                            dotStyle ? "" : planStatusChipClass(task.status)
                           }`}
+                          style={dotStyle}
                           aria-hidden
                         />
                         <div className="min-w-0 flex-1">

@@ -10,7 +10,7 @@ import {
   removeTaskPlanSegment,
   setTaskPlanSegmentColor,
 } from "@/lib/task-plan";
-import { TASK_PLAN_COLOR_KEYS, type TaskPlanColor } from "@/lib/task-plan-colors";
+import { isTaskPlanColor, type TaskPlanColor } from "@/lib/task-plan-colors";
 import { setTaskLabels } from "@/lib/label";
 import { createMilestone } from "@/lib/project";
 import { AppError, ApprovalRequestedError, ForbiddenError } from "@/lib/errors";
@@ -143,7 +143,8 @@ export async function moveTaskAction(input: {
 
 // 个人任务计划段：日历里给自己排「打算什么时候做这任务」，可多段（区间或单天）。
 // 注意这不是改任务官方起止日——任务排期不动，这里只动个人记录。
-const planColorSchema = z.enum(TASK_PLAN_COLOR_KEYS, { message: "颜色无效" });
+/** 色板键（含历史键）或自定义 #rrggbb —— 与存储层的判定共用一份实现 */
+const planColorSchema = z.string().refine(isTaskPlanColor, { message: "颜色无效" });
 
 const planSegmentSchema = z.object({
   taskId: z.uuid(),

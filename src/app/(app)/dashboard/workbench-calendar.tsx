@@ -13,10 +13,10 @@ import {
 } from "@/app/(app)/projects/[projectId]/actions";
 import type { TaskPlanSegment } from "@/lib/task-plan";
 import {
-  TASK_STATUS_PLAN_CHIP,
-  planChipClass,
-  planColorDot,
+  planColorChipStyle,
+  planColorDotStyle,
   planColorLabel,
+  planStatusChipClass,
   type TaskPlanColor,
 } from "@/lib/task-plan-colors";
 import type { WorkbenchTask } from "./workbench-board";
@@ -260,6 +260,80 @@ export function WorkbenchCalendar({
   }
 
   const selectedSegs = selected ? optimisticPlans[selected.id] ?? [] : [];
+
+  // 选中任务的排期设置。同一个元素渲染两处：宽卡插在选中任务正下方，
+  // 窄卡（chip 带）放回池底——靠 dashboard.css 里的容器查询二选一显示。
+  const poolControls =
+    selected && canPlan ? (
+      <div className="space-y-2">
+        {/* 单天 / 区间 模式 */}
+        <div className="flex gap-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              setMode("day");
+              setRangeAnchor(null);
+            }}
+            aria-pressed={mode === "day"}
+            className={`ac-badge ${mode === "day" ? "bg-primary text-white" : "bg-surface text-ink-soft hover:bg-primary-soft"}`}
+          >
+            单天
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMode("range");
+              setRangeAnchor(null);
+            }}
+            aria-pressed={mode === "range"}
+            className={`ac-badge ${mode === "range" ? "bg-primary text-white" : "bg-surface text-ink-soft hover:bg-primary-soft"}`}
+          >
+            区间
+          </button>
+        </div>
+        {/* 新排期的颜色（"自动" = 跟随任务状态） */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-ink-faint">新排期颜色</span>
+          <PlanColorPicker value={planColor} onChange={setPlanColor} />
+        </div>
+        {/* 已有段：点 × 移除 */}
+        {selectedSegs.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {selectedSegs.map((s) => (
+              <button
+                type="button"
+                key={segKey(s)}
+                onClick={() => removeSegment(selected, s)}
+                style={planColorChipStyle(s.color)}
+                className={`ac-badge ${s.color ? "" : planStatusChipClass(selected.status)} hover:brightness-95`}
+                title="移除这段"
+              >
+                {fmtSeg(s)} ×
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex flex-wrap gap-2">
+          {selectedSegs.length > 0 && (
+            <button
+              type="button"
+              onClick={clearAll}
+              className="ac-badge bg-high-soft text-high hover:brightness-95"
+            >
+              清除全部
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={deselect}
+            className="ac-badge bg-surface text-ink-soft hover:bg-primary-soft"
+          >
+            取消
+          </button>
+        </div>
+      </div>
+    ) : null;
+
   const openDayIndex = openDay ? grid.indexOf(openDay) : -1;
   const openDayEntries = openDayIndex >= 0 ? plannedEntriesOnDay[openDayIndex] : [];
   const openDayOfficial: DayOfficialEntry[] =
@@ -336,11 +410,8 @@ export function WorkbenchCalendar({
                 const canWrite = WRITE_ROLES.includes(t.role);
                 const isSel = t.id === selectedId;
                 const segs = optimisticPlans[t.id] ?? [];
-                // 已有计划段时，用它的自定义颜色作圆点；没挑颜色才回落到状态色
-                const dot =
-                  planColorDot(segs.find((s) => s.color)?.color) ??
-                  TASK_STATUS_PLAN_CHIP[t.status] ??
-                  "bg-low-soft";
+                // 已有计划段时，用它的颜色作圆点；没挑颜色才回落到状态色
+                const dotStyle = planColorDotStyle(segs.find((s) => s.color)?.color);
                 return (
                   <li key={t.id}>
                     <button
@@ -356,84 +427,27 @@ export function WorkbenchCalendar({
                       }`}
                       title={t.title}
                     >
-                      <span className={`h-2 w-2 shrink-0 rounded-sm ${dot}`} />
+                      <span
+                        className={`h-2 w-2 shrink-0 rounded-sm ${
+                          dotStyle ? "" : planStatusChipClass(t.status)
+                        }`}
+                        style={dotStyle}
+                      />
                       <span className="truncate">{t.title}</span>
                       <span className="dw-cal-pool-meta ml-auto shrink-0 tabular-nums text-[10px] text-ink-faint">
                         {segs.length ? `${segs.length} 段` : "未计划"}
                       </span>
                     </button>
+                    {/* 宽卡竖栏：排期设置直接插在选中任务的正下方 */}
+                    {isSel && poolControls && (
+                      <div className="dw-cal-controls-inline">{poolControls}</div>
+                    )}
                   </li>
                 );
               })}
             </ul>
-            {selected && canPlan && (
-              <div className="dw-cal-controls space-y-2 pt-2">
-                {/* 单天 / 区间 模式 */}
-                <div className="flex gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMode("day");
-                      setRangeAnchor(null);
-                    }}
-                    aria-pressed={mode === "day"}
-                    className={`ac-badge ${mode === "day" ? "bg-primary text-white" : "bg-surface text-ink-soft hover:bg-primary-soft"}`}
-                  >
-                    单天
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMode("range");
-                      setRangeAnchor(null);
-                    }}
-                    aria-pressed={mode === "range"}
-                    className={`ac-badge ${mode === "range" ? "bg-primary text-white" : "bg-surface text-ink-soft hover:bg-primary-soft"}`}
-                  >
-                    区间
-                  </button>
-                </div>
-                {/* 新排期的颜色（"自动" = 跟随任务状态） */}
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] text-ink-faint">新排期颜色</span>
-                  <PlanColorPicker value={planColor} onChange={setPlanColor} />
-                </div>
-                {/* 已有段：点 × 移除 */}
-                {selectedSegs.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {selectedSegs.map((s) => (
-                      <button
-                        type="button"
-                        key={segKey(s)}
-                        onClick={() => removeSegment(selected, s)}
-                        className={`ac-badge ${planChipClass(s.color, selected.status)} hover:brightness-95`}
-                        title="移除这段"
-                      >
-                        {fmtSeg(s)} ×
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <div className="flex gap-2">
-                  {selectedSegs.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={clearAll}
-                      className="ac-badge bg-high-soft text-high hover:brightness-95"
-                    >
-                      清除全部
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={deselect}
-                    className="ac-badge bg-surface text-ink-soft hover:bg-primary-soft"
-                  >
-                    取消
-                  </button>
-                </div>
-              </div>
-            )}
+            {/* 窄卡 chip 带：放不下内联控件，仍收在任务池底部 */}
+            {poolControls && <div className="dw-cal-controls-bottom">{poolControls}</div>}
           </div>
         )}
 
@@ -508,10 +522,13 @@ export function WorkbenchCalendar({
                       return (
                         <span
                           key={t.id}
+                          style={overdue ? undefined : planColorChipStyle(seg.color)}
                           className={`block truncate rounded px-1 text-[10px] ${
                             overdue
                               ? "bg-high-soft text-high"
-                              : planChipClass(seg.color, t.status)
+                              : seg.color
+                                ? ""
+                                : planStatusChipClass(t.status)
                           }`}
                           title={`计划：${t.title}（${planColorLabel(seg.color) ?? "跟随状态"}）`}
                         >

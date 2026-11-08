@@ -44,17 +44,21 @@ const DEFAULT_POOL_RATIO = 0.3;
 const roundRatio = (ratio: number) => Math.round(ratio * 1000) / 1000;
 
 /**
- * 「AI 排期」按钮发出去的第一句话。
+ * 「AI 排期」按钮放进对话里的提示。
  *
- * 先让助手反问要求（时间范围、每天强度、优先级、必须避开的日期），拿到回答后再结合
- * 个人上下文与待办产出 manage_task_plans 草案——草案卡确认后才落库。
+ * 注意这不是发给模型的用户消息：点按钮只是在助手气泡里说明能力与需要哪些信息，
+ * 由用户自己写下要求、自己点发送，助手才开始排期——避免把提示词当用户指令直接执行。
  */
-const SCHEDULE_AI_PROMPT = [
-  "帮我用 AI 排一下工作台日程表（只改我自己的「打算哪天做」，不要动任务的官方起止日）。",
+const SCHEDULE_AI_HINT = [
+  "想让我帮你排工作台日程表？把你的要求告诉我就行，大概说说也可以：",
   "",
-  "先别急着排，先问清我的要求：计划从哪天到哪天、每天最多排几个任务或大概能投入多少时间、",
-  "哪些任务优先、有没有必须避开的日子。等我回答后，再结合我的待办任务和个人上下文自动排期，",
-  "用 manage_task_plans 产出一份草案（每段可以指定颜色），我确认后再落库。",
+  "- 计划排在哪个时间段（从哪天到哪天）",
+  "- 每天大概能投入多少时间，或最多排几个任务",
+  "- 哪些任务优先，哪些可以往后放",
+  "- 有没有必须避开的日子",
+  "",
+  "我会结合你的待办任务排一份草案——只改你自己的「打算哪天做」，不动任务的官方起止日；",
+  "每段颜色也可以指定。草案确认后才落库。",
 ].join("\n");
 
 type Bar = {
@@ -170,9 +174,9 @@ export function WorkbenchSchedule({
         <h2 className="font-display text-sm font-semibold text-ink">日程表</h2>
         <button
           type="button"
-          onClick={() => openAssistantWithPrompt(SCHEDULE_AI_PROMPT)}
+          onClick={() => openAssistantWithPrompt(SCHEDULE_AI_HINT)}
           className="ac-btn-ghost inline-flex shrink-0 items-center gap-1 px-2 py-0.5 text-[11px]"
-          title="让 AI 助手先问你要怎么排，再自动生成排期草案"
+          title="让 AI 助手说明排期需要哪些要求，你写完要求再发送"
         >
           <svg
             viewBox="0 0 24 24"

@@ -662,9 +662,24 @@
   padding-bottom: 2px;
 }
 
-.dw-cal-controls {
+/* 排期控件：窄卡（chip 带）放在任务池下面；宽卡（竖栏）插到选中任务的正下方 */
+.dw-cal-controls-bottom {
   flex: 1 1 100%;
   padding-top: 4px;
+}
+
+.dw-cal-controls-inline {
+  display: none;
+}
+
+@container (min-width: 600px) {
+  .dw-cal-controls-inline {
+    display: block;
+    padding-top: 6px;
+  }
+  .dw-cal-controls-bottom {
+    display: none;
+  }
 }
 
 .dw-cal-pool-list > li {
@@ -1234,5 +1249,51 @@ body.proj-cosmic .app-rail .dashboard-widget-remove {
   .dashboard-widget-remove,
   .dashboard-widget-resize {
     display: none;
+  }
+}
+
+/* —— 当天安排详情弹窗 —— */
+/* 卡片背景必须不透明。任务页（body.proj-cosmic）把 --color-surface 设成 45% 透明度，
+   bg-surface 会把底下的正文透上来——弹窗里要读字，不能透。 */
+.schedule-day-modal {
+  background-color: #ffffff;
+}
+
+body.proj-cosmic .schedule-day-modal {
+  background-color: #0e1322;
+}
+
+.ac-modal-backdrop {
+  animation: ac-modal-backdrop-in 160ms ease-out both;
+}
+
+.ac-modal-panel {
+  animation: ac-modal-panel-in 200ms cubic-bezier(0.2, 0.8, 0.3, 1) both;
+}
+
+@keyframes ac-modal-backdrop-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ac-modal-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ac-modal-backdrop,
+  .ac-modal-panel {
+    animation: none;
   }
 }

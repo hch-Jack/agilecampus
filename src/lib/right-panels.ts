@@ -13,14 +13,14 @@ export const MESSAGES_PANEL_OPEN_EVENT = "ac:messages-panel-open";
 export const ASSISTANT_PANEL_OPEN_EVENT = "ac:assistant-panel-open";
 
 /**
- * 从页面里「带着一句话」唤起 AI 助手：助手面板打开，并自动把这句话发出去
- * （日程表的「AI 排期」按钮用它，让助手先反问排期要求）。
+ * 从页面里「带着一句话」唤起 AI 助手：助手面板打开，这句话作为一条助手提示出现在
+ * 对话里（**不代发**，用户看完自己写要求再发送）——日程表的「AI 排期」按钮用它。
  */
 export const ASSISTANT_PROMPT_EVENT = "ac:assistant-prompt";
 
 export type AssistantPromptDetail = { text: string };
 
-/** 唤起助手并自动发送一句话（不依赖助手面板的实现细节，靠 window 事件解耦）。 */
+/** 唤起助手并在对话里显示一条提示（不依赖助手面板的实现细节，靠 window 事件解耦）。 */
 export function openAssistantWithPrompt(text: string) {
   if (typeof window === "undefined") return;
   const detail: AssistantPromptDetail = { text };
