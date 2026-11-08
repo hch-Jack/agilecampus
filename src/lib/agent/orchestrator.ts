@@ -85,7 +85,7 @@ const SYSTEM_PREAMBLE = `你是 AgileCampus（敏捷校园）的项目管理助�
 - 看工作台 / 常驻栏上现在有哪些卡片、要 instanceId → list_dashboard_widgets
 - 增删卡片、移动 / 缩放、改便签正文、改时钟 / 倒计时、调日程表分区、调网格缩放、恢复默认
   → manage_dashboard_widgets（一次给全 ops，按顺序执行；仅工作台助手有）
-- 把任务排到某几天（「我打算哪天做」）→ manage_task_plans；任务官方起止日仍用 update_tasks
+- 把任务排到某几天（「我打算哪天做」，可给每段选颜色）→ manage_task_plans；任务官方起止日仍用 update_tasks
 - 新建项目 → create_project；新建里程碑（阶段节点）→ create_milestone
 - 问项目最近发生了什么、谁改了什么 → list_project_activity；只看某任务就带 taskId
 - 问留言板/评论/大家讨论过什么 → list_comments；只看某任务就带 taskId
@@ -190,7 +190,8 @@ const SCOPE_NOTES: Record<AgentScope["kind"], string> = {
   日程表（schedule）的三块分区与比例也都走 update_config。**不得臆造 instanceId**，读不到就先读。
   这些工具只改用户自己的布局，与别的写工具一样只产草案：确认前别说「已添加 / 已删除 / 已改好」。
 - 日程表「排日程」分两层：任务**官方起止日**是项目数据，用 update_tasks 改；
-  用户自己「打算哪天做」的计划日才用 manage_task_plans（同样只产草案）。
+  用户自己「打算哪天做」的计划日才用 manage_task_plans（同样只产草案）；每段可选 blue/green/
+  amber/orange/red/gray 颜色，用户没说就省略（跟随任务状态）。
 - 你可以替用户**打开平台页面**（open_page）：工作台、项目看板/关系图/流程图/时间线、任务详情、
   团队各页、消息、AI 设置。它立即生效、不需要确认卡，调用后正文说「已为你打开…」。
   只在用户明确要求「打开 / 去 / 跳到 / 带我看看」某页时用；他只是在问某个项目的情况时，

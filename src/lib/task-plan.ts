@@ -1,11 +1,13 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { tasks, taskPlans } from "@/db/schema";
 import { AppError } from "./errors";
 import { requireTaskWrite } from "./task";
+import { isTaskPlanColor, type TaskPlanColor } from "./task-plan-colors";
 
 // 个人计划的一段：闭区间 [start, end]，单天即起=止。一个任务可有多段。
-export type TaskPlanSegment = { start: string; end: string };
+// color 缺省 = 跟随任务状态（旧数据与「自动」选项都长这样）。
+export type TaskPlanSegment = { start: string; end: string; color?: TaskPlanColor };
 
 /**
  * 取当前用户在给定任务集上的全部计划段（taskId → 段数组，按起始日升序）。
@@ -21,13 +23,17 @@ export async function listMyTaskPlans(
       taskId: taskPlans.taskId,
       start: taskPlans.plannedStart,
       end: taskPlans.plannedEnd,
+      color: taskPlans.color,
     })
     .from(taskPlans)
     .where(and(eq(taskPlans.userId, actorId), inArray(taskPlans.taskId, taskIds)))
     .orderBy(taskPlans.plannedStart);
   const map: Record<string, TaskPlanSegment[]> = {};
   for (const r of rows) {
-    (map[r.taskId] ??= []).push({ start: r.start, end: r.end });
+    // 未挑颜色时不带 color 键：老客户端 / 老测试看到的形状与改造前一致
+    const seg: TaskPlanSegment = { start: r.start, end: r.end };
+    if (isTaskPlanColor(r.color)) seg.color = r.color;
+    (map[r.taskId] ??= []).push(seg);
   }
   return map;
 }
@@ -62,6 +68,7 @@ export async function addTaskPlanSegment(
   projectId: string,
   start: string,
   end: string,
+  color?: TaskPlanColor | null,
 ) {
   await requirePlanWrite(actorId, taskId, projectId);
   const range = normalizeRange(start, end);
@@ -72,8 +79,33 @@ export async function addTaskPlanSegment(
       taskId,
       plannedStart: range.start,
       plannedEnd: range.end,
+      color: color ?? null,
     })
     .onConflictDoNothing({ target: [taskPlans.userId, taskPlans.taskId, taskPlans.plannedStart, taskPlans.plannedEnd] });
+}
+
+/** 给已存在的一段换色；color=null 即恢复「跟随状态」。 */
+export async function setTaskPlanSegmentColor(
+  actorId: string,
+  taskId: string,
+  projectId: string,
+  start: string,
+  end: string,
+  color: TaskPlanColor | null,
+) {
+  await requirePlanWrite(actorId, taskId, projectId);
+  const range = normalizeRange(start, end);
+  await db
+    .update(taskPlans)
+    .set({ color, updatedAt: sql`now()` })
+    .where(
+      and(
+        eq(taskPlans.userId, actorId),
+        eq(taskPlans.taskId, taskId),
+        eq(taskPlans.plannedStart, range.start),
+        eq(taskPlans.plannedEnd, range.end),
+      ),
+    );
 }
 
 /** 删除指定那一段（起止须完全匹配）。 */

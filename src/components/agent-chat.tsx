@@ -63,6 +63,8 @@ export function AgentChat({
   placeholder = "问点什么…",
   disabled = false,
   actions,
+  autoPrompt,
+  onAutoPromptDone,
   onBusyChange,
   onTurnPersisted,
   onTurnDeleted,
@@ -81,6 +83,12 @@ export function AgentChat({
   disabled?: boolean;
   /** 标题行右侧的按钮（设置链接、收起按钮） */
   actions?: ReactNode;
+  /**
+   * 从页面按钮带进来的自动提问（如日程表「AI 排期」）：nonce 变化时自动发送一次。
+   * 发完回调外壳清空，切换会话导致的重挂载不会重复发。
+   */
+  autoPrompt?: { text: string; nonce: number };
+  onAutoPromptDone?: () => void;
   /** 发送/删除期间为 true，外壳据此禁用会话切换 */
   onBusyChange?: (busy: boolean) => void;
   onTurnPersisted?: (info: {
@@ -226,6 +234,22 @@ export function AgentChat({
     setInput("");
     void sendText(text);
   }
+
+  // 自动提问：写进 ref 再发，效果只在 nonce 变化时触发一次。
+  // 正在切会话/上一轮还没回来时先不动，等 disabled / pending 回落再发。
+  const sendTextRef = useRef(sendText);
+  useEffect(() => {
+    sendTextRef.current = sendText;
+  });
+  const autoPromptNonce = useRef(0);
+  useEffect(() => {
+    if (!autoPrompt || pending || disabled) return;
+    if (autoPrompt.nonce === autoPromptNonce.current) return;
+    autoPromptNonce.current = autoPrompt.nonce;
+    // 先清掉外壳里的待发项：切换会话重挂载时不会重复发
+    onAutoPromptDone?.();
+    void sendTextRef.current(autoPrompt.text);
+  }, [autoPrompt, pending, disabled, onAutoPromptDone]);
 
   async function deleteTurn(m: ChatMessage) {
     if (pending || deletingId || disabled) return;

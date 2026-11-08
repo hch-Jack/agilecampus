@@ -359,6 +359,32 @@ describe("manage_task_plans：日程表里的「我打算哪天做」", () => {
     expect(await listMyTaskPlans(student.id, [task.id])).toEqual({});
   });
 
+  it("排期可带颜色：摘要标出颜色，确认落库后按段保存", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, {
+      title: "写开题报告",
+      assigneeId: student.id,
+    });
+    const tools = buildPersonalTools(student.id);
+
+    const env = (await tools.manage_task_plans.execute!(
+      {
+        ops: [
+          { action: "add", taskId: task.id, start: "2026-11-02", end: "2026-11-03", color: "green" },
+        ],
+      },
+      opts,
+    )) as { draft: { ops: unknown[]; summary: string[] } };
+
+    expect(env.draft.summary).toEqual(["「写开题报告」排到 2026-11-02 → 2026-11-03（绿色）"]);
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({});
+
+    await commitPersonalDraft(student.id, "manage_task_plans", env.draft);
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({
+      [task.id]: [{ start: "2026-11-02", end: "2026-11-03", color: "green" }],
+    });
+  });
+
   it("只动计划日，不碰任务官方起止日", async () => {
     const { owner, student, project } = await scene();
     const task = await createTask(owner.id, project.id, {

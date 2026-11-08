@@ -106,7 +106,7 @@ export async function buildPersonalSnapshot(actorId: string): Promise<string> {
     "看现有卡片、取 instanceId → list_dashboard_widgets；\n" +
     "增删卡片、移动 / 缩放、改便签正文、改时钟 / 倒计时 / 日程表设置、调网格缩放、恢复默认 → " +
     "manage_dashboard_widgets（草案）。\n" +
-    "日程表排期：任务官方起止日用 update_tasks；「我打算哪天做」的计划日用 manage_task_plans（草案）。";
+    "日程表排期：任务官方起止日用 update_tasks；「我打算哪天做」的计划日用 manage_task_plans（草案，可给每段选颜色）。";
 
   // 项目段也近乎恒留：没有它，任何涉及具体项目的工具都无从填 projectId
   const projectBlock =

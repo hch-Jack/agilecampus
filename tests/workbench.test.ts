@@ -29,6 +29,7 @@ import {
   clearTaskPlanAction,
   moveTaskAction,
   removeTaskPlanSegmentAction,
+  setTaskPlanColorAction,
 } from "@/app/(app)/projects/[projectId]/actions";
 import { clearFeedAction, deleteActivityAction, markFeedReadAction } from "@/app/(app)/actions";
 import { listMyTaskPlans } from "@/lib/task-plan";
@@ -375,6 +376,64 @@ describe("个人计划段（add/remove/clear）", () => {
     });
     const res = await clearTaskPlanAction({ taskId: task.id, projectId: project.id });
     expect(res).toBeNull();
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({});
+  });
+
+  it("排期时可指定颜色，换色与恢复「跟随状态」都只动这一段", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    authMock.userId = student.id;
+
+    const added = await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-02-02",
+      end: "2026-02-04",
+      color: "blue",
+    });
+    expect(added).toBeNull();
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({
+      [task.id]: [{ start: "2026-02-02", end: "2026-02-04", color: "blue" }],
+    });
+
+    const recolored = await setTaskPlanColorAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-02-02",
+      end: "2026-02-04",
+      color: "orange",
+    });
+    expect(recolored).toBeNull();
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({
+      [task.id]: [{ start: "2026-02-02", end: "2026-02-04", color: "orange" }],
+    });
+
+    // null = 恢复跟随任务状态；未设颜色的段不带 color 键（与旧数据形状一致）
+    await setTaskPlanColorAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-02-02",
+      end: "2026-02-04",
+      color: null,
+    });
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({
+      [task.id]: [{ start: "2026-02-02", end: "2026-02-04" }],
+    });
+  });
+
+  it("非法颜色按参数无效处理", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    authMock.userId = student.id;
+    const res = await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-02-02",
+      end: "2026-02-02",
+      // @ts-expect-error 故意给不在色板里的键
+      color: "#ff0000",
+    });
+    expect(res).toEqual({ error: "参数无效" });
     expect(await listMyTaskPlans(student.id, [task.id])).toEqual({});
   });
 

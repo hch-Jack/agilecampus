@@ -17,6 +17,7 @@ import {
   type DashboardWidgetConfig,
 } from "@/lib/dashboard-layout";
 import type { TaskPlanSegment } from "@/lib/task-plan";
+import { openAssistantWithPrompt } from "@/lib/right-panels";
 import type { WorkbenchTask } from "./workbench-board";
 import { WorkbenchCalendar } from "./workbench-calendar";
 import { TrackSplitter } from "./track-splitter";
@@ -41,6 +42,20 @@ const DEFAULT_GANTT_RATIO = 0.38;
 const DEFAULT_POOL_RATIO = 0.3;
 
 const roundRatio = (ratio: number) => Math.round(ratio * 1000) / 1000;
+
+/**
+ * 「AI 排期」按钮发出去的第一句话。
+ *
+ * 先让助手反问要求（时间范围、每天强度、优先级、必须避开的日期），拿到回答后再结合
+ * 个人上下文与待办产出 manage_task_plans 草案——草案卡确认后才落库。
+ */
+const SCHEDULE_AI_PROMPT = [
+  "帮我用 AI 排一下工作台日程表（只改我自己的「打算哪天做」，不要动任务的官方起止日）。",
+  "",
+  "先别急着排，先问清我的要求：计划从哪天到哪天、每天最多排几个任务或大概能投入多少时间、",
+  "哪些任务优先、有没有必须避开的日子。等我回答后，再结合我的待办任务和个人上下文自动排期，",
+  "用 manage_task_plans 产出一份草案（每段可以指定颜色），我确认后再落库。",
+].join("\n");
 
 type Bar = {
   task: WorkbenchTask;
@@ -151,7 +166,30 @@ export function WorkbenchSchedule({
 
   return (
     <section aria-label="任务日程" className="dw-schedule">
-      <h2 className="font-display text-sm font-semibold text-ink">日程表</h2>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-display text-sm font-semibold text-ink">日程表</h2>
+        <button
+          type="button"
+          onClick={() => openAssistantWithPrompt(SCHEDULE_AI_PROMPT)}
+          className="ac-btn-ghost inline-flex shrink-0 items-center gap-1 px-2 py-0.5 text-[11px]"
+          title="让 AI 助手先问你要怎么排，再自动生成排期草案"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            className="h-3.5 w-3.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <path d="M12 3l1.8 4.9 4.9 1.8-4.9 1.8L12 16.4l-1.8-4.9L5.3 9.7l4.9-1.8L12 3Z" />
+            <path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z" />
+          </svg>
+          AI 排期
+        </button>
+      </div>
       {/* 模块开关：随时关掉不看的部分，比例与开关都按卡片保存 */}
       <div className="dw-schedule-tools" role="group" aria-label="日程表显示模块">
         <ModuleToggle pressed={showGantt} onClick={() => toggleModule("showGantt")}>

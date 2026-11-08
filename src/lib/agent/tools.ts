@@ -26,6 +26,10 @@ import {
 } from "@/lib/resource";
 import { formatDateTime, formatInputValue, zonedWallClockToInstant } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
+import {
+  planColorLabel,
+  TASK_PLAN_COLOR_KEYS,
+} from "@/lib/task-plan-colors";
 import { NAV_TARGETS, resolveMessageNavigation, resolveNavigation } from "./navigation";
 import { resolveFileOpen } from "./file-open";
 import { AppError, ForbiddenError } from "@/lib/errors";
@@ -537,6 +541,10 @@ export const taskPlanOpSchema = z.discriminatedUnion("action", [
     taskId: z.uuid().describe("任务 id，取自 list_tasks / 快照「我的待办」/ get_task_detail"),
     start: planDateSchema.describe("计划起始日"),
     end: planDateSchema.optional().describe("计划结束日（含）；省略 = 只排 start 当天"),
+    color: z
+      .enum(TASK_PLAN_COLOR_KEYS)
+      .optional()
+      .describe("这一段日历 chip 的颜色：blue/green/amber/orange/red/gray；省略 = 跟随任务状态"),
   }),
   z.object({
     action: z.literal("remove"),
@@ -570,9 +578,11 @@ async function planTaskDaysDraft(actorId: string, ops: TaskPlanOp[]) {
     if (op.action === "clear") return `清空「${title}」的全部计划日`;
     const range =
       op.end && op.end !== op.start ? `${op.start} → ${op.end}` : op.start;
-    return op.action === "add"
-      ? `「${title}」排到 ${range}`
-      : `删掉「${title}」的计划 ${range}`;
+    if (op.action === "add") {
+      const label = planColorLabel(op.color);
+      return `「${title}」排到 ${range}${label ? `（${label}色）` : ""}`;
+    }
+    return `删掉「${title}」的计划 ${range}`;
   });
 
   return draftEnvelope(MANAGE_TASK_PLANS_TOOL, { ops, summary });
@@ -1470,7 +1480,8 @@ function buildBasePersonalTools(actorId: string) {
     }),
     manage_task_plans: tool({
       description:
-        "拟一份「日程表」个人计划草案：把任务排到具体日期（我打算哪天做）、删掉某一段或清空某任务的全部计划日。" +
+        "拟一份「日程表」个人计划草案：把任务排到具体日期（我打算哪天做，可给每段指定颜色）、" +
+        "删掉某一段或清空某任务的全部计划日。" +
         "只动我自己的计划日，不改任务官方起止日（那用 update_tasks）。taskId 取自 list_tasks / 快照 / get_task_detail。仅产草案，需确认。",
       inputSchema: taskPlanDraftSchema,
       execute: async ({ ops }) => planTaskDaysDraft(actorId, ops),

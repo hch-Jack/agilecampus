@@ -20,7 +20,9 @@ import {
 import { projectIdFromPathname } from "@/lib/project-path";
 import {
   ASSISTANT_PANEL_OPEN_EVENT,
+  ASSISTANT_PROMPT_EVENT,
   MESSAGES_PANEL_OPEN_EVENT,
+  type AssistantPromptDetail,
 } from "@/lib/right-panels";
 
 /**
@@ -97,6 +99,12 @@ export function AssistantShell({
 }) {
   const [open, setOpen] = useState(false);
   const focusProjectId = projectIdFromPathname(usePathname());
+  /**
+   * 页面按钮（如日程表「AI 排期」）带进来的自动提问：打开面板并让 AgentChat 发一次。
+   * nonce 递增保证同一句话只发一次；发完由 AgentChat 回调清空，切会话重挂载也不会重发。
+   */
+  const [autoPrompt, setAutoPrompt] = useState<{ text: string; nonce: number } | null>(null);
+  const autoPromptSeq = useRef(0);
 
   const [conversations, setConversations] = useState(initialConversations);
   const [activeId, setActiveId] = useState<string | null>(initialActiveId);
@@ -167,6 +175,20 @@ export function AssistantShell({
     const close = () => setOpen(false);
     window.addEventListener(MESSAGES_PANEL_OPEN_EVENT, close);
     return () => window.removeEventListener(MESSAGES_PANEL_OPEN_EVENT, close);
+  }, []);
+
+  // 页面里「带着一句话」唤起助手：开面板 + 自动发这一句（见 lib/right-panels.ts）
+  useEffect(() => {
+    const onPrompt = (event: Event) => {
+      const detail = (event as CustomEvent<AssistantPromptDetail>).detail;
+      const text = typeof detail?.text === "string" ? detail.text.trim() : "";
+      if (!text) return;
+      setOpen(true);
+      autoPromptSeq.current += 1;
+      setAutoPrompt({ text, nonce: autoPromptSeq.current });
+    };
+    window.addEventListener(ASSISTANT_PROMPT_EVENT, onPrompt);
+    return () => window.removeEventListener(ASSISTANT_PROMPT_EVENT, onPrompt);
   }, []);
 
   /** 把一条会话的内容装进 AgentChat（只由显式切换/新建/删除当前会话调用） */
@@ -388,6 +410,8 @@ export function AssistantShell({
               conversationId={activeId ?? undefined}
               initialMessages={seedMessages}
               disabled={switching}
+              autoPrompt={autoPrompt ?? undefined}
+              onAutoPromptDone={() => setAutoPrompt(null)}
               onBusyChange={setSessionBusy}
               onTurnPersisted={(info) => handleTurnPersisted(info, viewKey)}
               onTurnDeleted={handleTurnDeleted}
