@@ -19,6 +19,8 @@ import { resolveUserTimeZone } from "@/lib/time-pref";
 import { ActivityFeed } from "@/components/activity-feed";
 import { MilestoneSection } from "./milestone-section";
 import { NewTaskForm } from "./new-task-form";
+import { ProjectOverview } from "./project-overview";
+import { TaskDatabase } from "./task-database";
 import { Board } from "./board";
 import { FilterBar } from "./filter-bar";
 import { ProjectCommentList } from "./project-comment-list";
@@ -88,6 +90,8 @@ export default async function ProjectPage({
   ]);
   const pendingAcceptance = acceptancePending.has(projectId);
   const canAccept = myPerms?.project ?? false;
+  // 概览进度：项目内全部任务（含子任务）的完成数
+  const taskDone = projectTasks.filter((t) => t.status === "done").length;
 
   return (
     <main className="mx-auto max-w-5xl space-y-8 py-5 sm:py-8">
@@ -143,25 +147,23 @@ export default async function ProjectPage({
             </Link>
           </div>
         </div>
-        {project.description && (
-          <p className="mt-1 text-sm text-ink-soft">{project.description}</p>
-        )}
-        <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-ink-faint">
-          {project.startDate ?? "?"} ~ {project.endDate ?? "?"} ·{" "}
-          {project.status === "active" ? (
-            <span className="ac-badge bg-doing/10 text-doing">进行中</span>
-          ) : project.status === "completed" ? (
-            <span className="ac-badge bg-done/10 text-done">已结题</span>
-          ) : (
-            <span className="ac-badge bg-sunken text-ink-soft">已归档</span>
-          )}
-          {pendingAcceptance && (
-            <span className="ac-badge border border-medium bg-medium-soft font-medium text-medium">
-              ⏳ 结题审批中
-            </span>
-          )}
-        </p>
       </header>
+
+      {/* 项目概览：Notion 属性面板式信息卡，集中呈现状态/周期/进度/成员/里程碑/描述 */}
+      <ProjectOverview
+        project={{
+          description: project.description,
+          status: project.status,
+          startDate: project.startDate,
+          endDate: project.endDate,
+        }}
+        taskTotal={projectTasks.length}
+        taskDone={taskDone}
+        members={members.map((m) => ({ id: m.id, name: m.name }))}
+        milestoneCount={projectMilestones.length}
+        pendingAcceptance={pendingAcceptance}
+      />
+
       {/* 结题入口：有验收权=直接结题；无权=发起申请（全部任务完成后可提交） */}
       <AcceptanceControl
         projectId={projectId}
@@ -220,6 +222,14 @@ export default async function ProjectPage({
           milestones={projectMilestones.map((m) => ({ id: m.id, name: m.title }))}
         />
       </section>
+
+      {/* 任务数据库：Notion 数据库式的任务总览（只读，操作在看板/详情页） */}
+      <TaskDatabase
+        projectId={projectId}
+        tasks={projectTasks}
+        milestones={projectMilestones.map((m) => ({ id: m.id, title: m.title }))}
+        progress={progress}
+      />
 
       {/* 新建任务与附件中心并排一行：任务卡收窄，附件中心做固定宽度的入口卡 */}
       <div
