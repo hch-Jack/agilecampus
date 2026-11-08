@@ -17,10 +17,11 @@ import { AppError, ForbiddenError } from "@/lib/errors";
 export type FormState = { error: string } | null;
 
 // 子任务/附件的增改删都要同时刷新详情页与看板（看板上的子任务卡片、任务卡片的
-// 完成情况/优先级等也会随之变化）
+// 完成情况/优先级等也会随之变化）；附件中心按任务汇总附件，也要跟着刷新
 function revalidateTaskPaths(projectId: string, taskId: string) {
   revalidatePath(`/projects/${projectId}/tasks/${taskId}`);
   revalidatePath(`/projects/${projectId}`);
+  revalidatePath(`/projects/${projectId}/attachments`);
 }
 
 const toggleSubtaskSchema = z.object({
