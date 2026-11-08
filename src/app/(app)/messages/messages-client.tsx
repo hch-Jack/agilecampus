@@ -7,6 +7,8 @@ import { FilePreviewModal } from "@/components/file-preview";
 import { RejectReasonDialog } from "@/components/reject-reason-dialog";
 import { useMessagesPanel } from "@/components/messages-panel-context";
 import { detectPreviewKind } from "@/lib/file-preview";
+import { MAX_FILE_SIZE, MAX_FILE_SIZE_LABEL } from "@/lib/file-limits";
+import { uploadFileRaw } from "@/lib/upload-client";
 import { approvalDetailHref, approvalSubject } from "@/lib/approval-view";
 import {
   readMessagesHandoff,
@@ -45,8 +47,8 @@ import { decideApprovalAction } from "@/app/(app)/dashboard/actions";
 import type { SystemMessageRow } from "@/lib/approval";
 import { SystemApprovalModal } from "./system-approval-modal";
 
-// 单文件上限与 lib/dm.ts 的 DM_ATTACHMENT_MAX_SIZE 一致，客户端先拦一道省一次往返
-const FILE_MAX_SIZE = 10 * 1024 * 1024;
+// 单文件上限与 lib/dm.ts 的 DM_ATTACHMENT_MAX_SIZE 一致，客户端先拦一道省一次往返。
+// 真正的上传走 /api/dm/attachments/upload（流式落盘），server action 只带附件 id。
 const POLL_MS = 4000;
 
 // 时间按**用户设置的时区**显示，不看浏览器本地时区 —— 选了中国时间的人身在国外时，
@@ -60,7 +62,8 @@ function fmtTime(tz: string, iso: string): string {
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
 function Avatar({
@@ -862,15 +865,26 @@ export function MessagesClient({
     if (sending || !a || a.kind === "system") return;
     const content = draft.trim();
     if (!content && !file) return;
-    if (file && file.size > FILE_MAX_SIZE) {
-      setSendError("文件不能超过 10MB");
+    if (file && file.size > MAX_FILE_SIZE) {
+      setSendError(`文件不能超过 ${MAX_FILE_SIZE_LABEL}`);
       return;
     }
     setSending(true);
     setSendError("");
+    let attachmentId: string | null = null;
+    if (file) {
+      // 先把文件流式传到服务端（不经过 server action 的 body 上限），再只带 id 发消息
+      const up = await uploadFileRaw<{ id: string }>("/api/dm/attachments/upload", file);
+      if (!up.ok) {
+        setSending(false);
+        setSendError(up.error);
+        return;
+      }
+      attachmentId = up.data.id;
+    }
     const fd = new FormData();
     fd.set("content", content);
-    if (file) fd.set("file", file);
+    if (attachmentId) fd.set("attachmentId", attachmentId);
     const r = await (a.kind === "dm"
       ? sendMessageAction(a.id, fd)
       : sendGroupMessageAction(a.id, fd)
@@ -898,7 +912,7 @@ export function MessagesClient({
 
   function pickFile(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0] ?? null;
-    setSendError(f && f.size > FILE_MAX_SIZE ? "文件不能超过 10MB" : "");
+    setSendError(f && f.size > MAX_FILE_SIZE ? `文件不能超过 ${MAX_FILE_SIZE_LABEL}` : "");
     setFile(f);
   }
 
@@ -1015,7 +1029,7 @@ export function MessagesClient({
           type="button"
           onClick={() => fileInputRef.current?.click()}
           className="ac-btn-ghost px-2.5 py-2 text-sm"
-          title="传文件（≤10MB）"
+          title="传文件（≤1GB）"
         >
           📎
         </button>
@@ -1055,8 +1069,50 @@ export function MessagesClient({
           }}
         />
       )}
+      {variant === "panel" ? (
+        // 浮窗自己的头部条：左「消息」，右侧模式切换与关闭。
+        // 以前这里只有一枚靠右的「切换为整页」，独占一行、左边全空，
+        // 抽屉顶部于是空出两条留白；现在头部条贴住抽屉上沿，两栏内容顶到边。
+        <header className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2">
+          <span
+            aria-hidden
+            className="grid h-7 w-7 place-items-center rounded-full bg-primary-soft text-sm"
+          >
+            💬
+          </span>
+          <span className="text-sm font-semibold text-ink">消息</span>
+          {modeToggle && <div className="ml-auto flex items-center gap-1">{modeToggle}</div>}
+          {panel && (
+            <button
+              type="button"
+              onClick={() => panel.toggleDrawer()}
+              aria-label="关闭消息浮窗"
+              title="关闭"
+              className="grid h-8 w-8 place-items-center rounded-field text-ink-faint transition-colors hover:bg-sunken hover:text-ink"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                aria-hidden
+              >
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
+          )}
+        </header>
+      ) : (
+        modeToggle && <div className="mb-2 flex justify-end">{modeToggle}</div>
+      )}
       {notice && (
-        <div className="mb-2 flex items-center justify-between rounded-field border border-line bg-sunken px-3 py-1.5 text-xs text-ink-soft">
+        <div
+          className={`flex items-center justify-between rounded-field border border-line bg-sunken px-3 py-1.5 text-xs text-ink-soft ${
+            variant === "panel" ? "mx-3 mt-2" : "mb-2"
+          }`}
+        >
           <span>{notice}</span>
           <button
             type="button"
@@ -1068,7 +1124,6 @@ export function MessagesClient({
           </button>
         </div>
       )}
-      {modeToggle && <div className="mb-2 flex justify-end">{modeToggle}</div>}
       <div
         className={
           variant === "panel"
@@ -1351,7 +1406,7 @@ export function MessagesClient({
               >
                 {msgs.length === 0 && (
                   <p className="pt-8 text-center text-xs text-ink-faint">
-                    还没有消息，发送第一条吧（支持传文件，单个 ≤ 10MB）
+                    还没有消息，发送第一条吧（支持传文件，单个 ≤ 1GB）
                   </p>
                 )}
                 {msgs.map((m) => {
@@ -1497,7 +1552,7 @@ export function MessagesClient({
               >
                 {msgs.length === 0 && (
                   <p className="pt-8 text-center text-xs text-ink-faint">
-                    还没有消息，发第一条吧（支持传文件，单个 ≤ 10MB）
+                    还没有消息，发第一条吧（支持传文件，单个 ≤ 1GB）
                   </p>
                 )}
                 {msgs.map((m) => (

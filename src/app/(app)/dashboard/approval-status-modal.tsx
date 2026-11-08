@@ -57,7 +57,7 @@ export function WorkbenchApprovalModal({
       aria-label="完成审批情况"
     >
       <div
-        className="w-full max-w-md rounded-field border border-line bg-surface shadow-2xl"
+        className="w-full max-w-md rounded-field border border-line bg-surface shadow-2xl max-sm:max-h-[85dvh] max-sm:overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-line px-5 py-3">

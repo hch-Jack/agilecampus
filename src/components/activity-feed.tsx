@@ -256,7 +256,7 @@ export function ActivityFeed({
               </span>
               <button
                 onClick={handleMarkRead}
-                className="text-xs font-normal text-ink-faint transition-colors hover:text-primary"
+                className="ac-hit text-xs font-normal text-ink-faint transition-colors hover:text-primary"
               >
                 标记已读
               </button>
@@ -267,7 +267,7 @@ export function ActivityFeed({
           <button
             onClick={handleClear}
             disabled={clearPending}
-            className="shrink-0 text-xs text-ink-faint transition-colors hover:text-high disabled:opacity-50"
+            className="ac-hit shrink-0 text-xs text-ink-faint transition-colors hover:text-high disabled:opacity-50"
           >
             {clearPending ? "清除中…" : "清除记录"}
           </button>
@@ -323,7 +323,8 @@ export function ActivityFeed({
                         ? "管理员：从所有人的动态流中删除"
                         : "仅从自己的动态流中隐藏"
                     }
-                    className="ml-1.5 align-middle text-xs leading-none text-ink-faint transition-colors hover:text-high disabled:opacity-40"
+                    // 手机上用伪元素外扩点击区（ac-dot-hit），行内占位不变，避免 × 被挤到下一行
+                    className="ac-dot-hit relative ml-1.5 align-middle text-xs leading-none text-ink-faint transition-colors hover:text-high disabled:opacity-40"
                   >
                     ×
                   </button>

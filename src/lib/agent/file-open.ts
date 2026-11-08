@@ -14,6 +14,11 @@ export type FileOpenEnvelope = {
   filename: string;
   mimeType: string | null;
   size: number;
+  /**
+   * 面板收到后是否自动弹预览。`open_file` 是「用户让我打开」→ 默认弹；
+   * `create_file` 只是生成并给下载入口 → 标 false，别拿全屏弹窗挡住刚生成的文件卡。
+   */
+  __autoOpen?: boolean;
 };
 
 export async function resolveFileOpen(
@@ -21,7 +26,12 @@ export async function resolveFileOpen(
   input: ChatAttachmentSource,
 ): Promise<FileOpenEnvelope> {
   const info = await getChatAttachmentInfo(actorId, input);
-  const base = input.source === "task" ? "/api/attachments" : "/api/dm/attachments";
+  const base =
+    input.source === "task"
+      ? "/api/attachments"
+      : input.source === "file"
+        ? "/api/assistant/files"
+        : "/api/dm/attachments";
   return {
     __showFile: true as const,
     url: `${base}/${info.attachmentId}`,

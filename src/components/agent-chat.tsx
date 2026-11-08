@@ -6,9 +6,19 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { DraftCards, type ChatScope, type Draft, type OptionMap } from "@/components/draft-cards";
 import { continuationOriginalText, isContinuationText } from "@/lib/agent/continuation";
-import type { AssistantFile, AssistantNavigation } from "@/lib/agent/assistant-panel-shared";
+import {
+  ASSISTANT_ATTACHMENTS_MAX,
+  ASSISTANT_FILE_MAX_SIZE,
+  type AssistantFile,
+  type AssistantNavigation,
+  type MessageAttachment,
+} from "@/lib/agent/assistant-panel-shared";
+import { MAX_FILE_SIZE_LABEL } from "@/lib/file-limits";
+import { MESSAGE_TAG_MAX, normalizeMessageTag } from "@/lib/message-tag";
+import { uploadFileRaw } from "@/lib/upload-client";
 import { Markdown } from "@/components/markdown";
 import { FilePreviewModal } from "@/components/file-preview";
+import { AssistantFileCards } from "@/components/assistant-file-cards";
 
 /**
  * AI 助手对话区 —— 右侧常驻面板（`assistant-shell.tsx`）的唯一使用者。
@@ -44,7 +54,19 @@ export type ChatMessage = {
   navigations?: AssistantNavigation[];
   /** 助手替用户打开的附件；收到即弹预览，并留一个可点重开的入口 */
   files?: AssistantFile[];
+  /** 这条提问随行上传的文件（落库后服务端回读，刷新仍在） */
+  attachments?: MessageAttachment[];
+  /** 本人给这条助手消息打的标签（私有，服务端按用户过滤） */
+  tags?: string[];
 };
+
+/** 文件胶囊上的大小提示；只用于 title，不需要更精细 */
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
 
 let localSeq = 0;
 function nextLocalId(): string {
@@ -68,6 +90,8 @@ export function AgentChat({
   onBusyChange,
   onTurnPersisted,
   onTurnDeleted,
+  onFilesGenerated,
+  focusMessage,
 }: {
   scope: ChatScope;
   /** 当前页面所在项目；有值时后端把它当焦点项目（会话仍是个人会话） */
@@ -94,6 +118,7 @@ export function AgentChat({
   onTurnPersisted?: (info: {
     conversationId: string;
     conversationTitle: string | null;
+    conversationCategory: string | null;
     conversationCreatedAt: string;
     lastMessageAt: string;
   }) => void;
@@ -102,14 +127,31 @@ export function AgentChat({
     deletedIds: string[];
     lastMessageAt: string | null;
   }) => void;
+  /** 这一轮助手生成了新文件（create_file）——外壳据此刷新「生成文件」统计 */
+  onFilesGenerated?: () => void;
+  /** 从「按标签查历史」跳过来时定位到的那条消息；nonce 让同一条消息也能再次触发滚动 */
+  focusMessage?: { messageId: string; nonce: number };
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** 正在编辑标签的消息 id（一次只开一个行内编辑器） */
+  const [tagEditorId, setTagEditorId] = useState<string | null>(null);
+  const [tagDraft, setTagDraft] = useState("");
+  /** 标签请求在飞的消息 id：只禁这一条的按钮，不影响继续聊天 */
+  const [tagBusyId, setTagBusyId] = useState<string | null>(null);
+  const [tagError, setTagError] = useState<string | null>(null);
+  /** 从标签检索跳转过来的目标消息：滚动到位后短暂高亮 */
+  const [highlightId, setHighlightId] = useState<string | null>(null);
   /** 当前正在预览的附件（助手 open_file 自动弹出，或用户点消息里的入口） */
   const [previewFile, setPreviewFile] = useState<AssistantFile | null>(null);
+  /** 已上传、还没随消息发出去的文件（文件主人只有自己，见 /api/assistant/files） */
+  const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   // 翻历史时别被后续消息（答复、删除、pending 切换）拽回底部：
   // 只有本来就贴着底、或自己刚发出一条时才自动跟到底
@@ -136,6 +178,33 @@ export function AgentChat({
     }
   }, [messages, pending]);
 
+  // 「按标签查历史」跳过来：滚到目标消息并短暂高亮。目标可能已不在最近 200 条里 ——
+  // 那就只是切到了那条会话，不硬报错。nonce 保证同一条消息连点两次也会再次滚动。
+  const lastFocusNonce = useRef(-1);
+  useEffect(() => {
+    if (!focusMessage || lastFocusNonce.current === focusMessage.nonce) return;
+    lastFocusNonce.current = focusMessage.nonce;
+    const target = document.getElementById(`ac-msg-${focusMessage.messageId}`);
+    if (!target) return;
+    // 用户在翻历史：别让后续消息把人拽回底部
+    atBottomRef.current = false;
+    forceBottomRef.current = false;
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    // setState 放进定时器回调：既躲开 react-hooks/set-state-in-effect，
+    // 也让高亮从下一拍开始，不和滚动同一帧抢渲染
+    const highlightTimer = window.setTimeout(
+      () => setHighlightId(focusMessage.messageId),
+      0,
+    );
+    const clearTimer = window.setTimeout(() => {
+      setHighlightId((id) => (id === focusMessage.messageId ? null : id));
+    }, 2400);
+    return () => {
+      window.clearTimeout(highlightTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [focusMessage]);
+
   function handleListScroll() {
     const el = listRef.current;
     if (!el) return;
@@ -147,7 +216,11 @@ export function AgentChat({
    * 发送一句话。`focus` 是这一轮带的项目上下文 —— 默认取屏幕上的当前项目；
    * 「继续处理后续动作」会显式传入**出卡时**的项目，避免切页后续做到别的项目上。
    */
-  async function sendText(text: string, focus = projectId): Promise<boolean> {
+  async function sendText(
+    text: string,
+    focus = projectId,
+    withFiles: MessageAttachment[] = [],
+  ): Promise<boolean> {
     const trimmed = text.trim();
     if (!trimmed || pending || disabled) return false;
     setError(null);
@@ -155,7 +228,15 @@ export function AgentChat({
     // 自己刚发出一条：即便刚才在翻历史，也要把这条与随后的答复带进视野
     atBottomRef.current = true;
     forceBottomRef.current = true;
-    setMessages((m) => [...m, { role: "user", content: trimmed, localId }]);
+    setMessages((m) => [
+      ...m,
+      {
+        role: "user",
+        content: trimmed,
+        localId,
+        ...(withFiles.length > 0 ? { attachments: withFiles } : {}),
+      },
+    ]);
     setPending(true);
     try {
       const res = await fetch("/api/chat", {
@@ -167,6 +248,7 @@ export function AgentChat({
           projectId: focus,
           userText: trimmed,
           ...(conversationId ? { conversationId } : {}),
+          ...(withFiles.length > 0 ? { attachmentIds: withFiles.map((f) => f.id) } : {}),
         }),
       });
       const data = await res.json();
@@ -182,6 +264,9 @@ export function AgentChat({
             (f: AssistantFile) => f && typeof f.url === "string" && typeof f.filename === "string",
           )
         : [];
+      // 这一轮生成了文件（create_file 的 autoOpen=false；open_file 只是预览，不算）：
+      // 通知外壳重新拉「生成文件」，顶部数量不用展开面板也能实时变
+      if (files.some((f) => f.autoOpen === false)) onFilesGenerated?.();
       setMessages((m) => {
         const next = [...m];
         // 按 localId 回填服务端 id —— 这样这条提问也能成对删除
@@ -207,14 +292,16 @@ export function AgentChat({
       // 面板挂在 layout 里，换页不会把这段对话连同未确认的草案卡一起卸载。
       const navTarget = navigations.at(-1);
       if (navTarget) router.push(navTarget.href);
-      // 「打开某文件」同理：直接弹预览，消息下仍留一个可重开的入口
-      const fileTarget = files.at(-1);
+      // 「打开某文件」同理：直接弹预览，消息下仍留一个可重开的入口。
+      // 生成的文件（autoOpen=false）不弹 —— 别让全屏预览挡住刚生成的文件卡。
+      const fileTarget = [...files].reverse().find((f) => f.autoOpen !== false);
       if (fileTarget) setPreviewFile(fileTarget);
       // 外壳据此把「懒建出的会话」放进列表；**不**触发 remount，否则刚发的消息会消失
       if (data.conversationId) {
         onTurnPersisted?.({
           conversationId: data.conversationId,
           conversationTitle: data.conversationTitle ?? null,
+          conversationCategory: data.conversationCategory ?? null,
           conversationCreatedAt: data.conversationCreatedAt,
           lastMessageAt: data.lastMessageAt,
         });
@@ -230,9 +317,132 @@ export function AgentChat({
 
   function send() {
     const text = input.trim();
-    if (!text || pending || disabled) return;
+    if (!text || pending || disabled || uploading) return;
     setInput("");
-    void sendText(text);
+    const files = attachments;
+    setAttachments([]);
+    void sendText(text, projectId, files);
+  }
+
+  /** 选中的文件逐个传上去：一个失败不影响其余，失败原因留在输入框上方 */
+  async function uploadFiles(fileList: FileList | null) {
+    if (!fileList || fileList.length === 0) return;
+    setUploadError(null);
+    const room = ASSISTANT_ATTACHMENTS_MAX - attachments.length;
+    const picked = [...fileList];
+    if (room <= 0) {
+      setUploadError(`一句话最多带 ${ASSISTANT_ATTACHMENTS_MAX} 个文件`);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+    if (picked.length > room) setUploadError(`最多再加 ${room} 个文件，多余的已忽略`);
+
+    setUploading(true);
+    for (const file of picked.slice(0, room)) {
+      // 超限的本地先拦：不必把大文件白传一遍，服务端还会再校一次
+      if (file.size > ASSISTANT_FILE_MAX_SIZE) {
+        setUploadError(`「${file.name}」超过 ${MAX_FILE_SIZE_LABEL}，未上传`);
+        continue;
+      }
+      const up = await uploadFileRaw<{
+        id: string;
+        filename: string;
+        mimeType: string | null;
+        size: number;
+      }>("/api/assistant/files", file);
+      if (!up.ok) {
+        setUploadError(`「${file.name}」上传失败：${up.error}`);
+        continue;
+      }
+      const uploaded: MessageAttachment = {
+        id: up.data.id,
+        filename: up.data.filename,
+        mimeType: up.data.mimeType,
+        size: up.data.size,
+      };
+      setAttachments((list) => [...list, uploaded]);
+    }
+    setUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  /** 发送前撤掉一个文件：顺手删掉服务端那份，别留下没人引用的孤儿 */
+  function removeAttachment(id: string) {
+    setAttachments((list) => list.filter((f) => f.id !== id));
+    void fetch(`/api/assistant/files/${id}`, { method: "DELETE" }).catch(() => {});
+  }
+
+  function toggleTagEditor(messageId: string) {
+    setTagEditorId((prev) => (prev === messageId ? null : messageId));
+    setTagDraft("");
+    setTagError(null);
+  }
+
+  function applyMessageTags(messageId: string, tags: string[]) {
+    setMessages((ms) =>
+      ms.map((m) =>
+        m.id === messageId ? { ...m, tags: tags.length > 0 ? tags : undefined } : m,
+      ),
+    );
+  }
+
+  /** 给助手消息加一个标签；重复添加由服务端幂等处理 */
+  async function addTag(messageId: string) {
+    const tag = normalizeMessageTag(tagDraft);
+    if (!tag) {
+      setTagError("请输入标签");
+      return;
+    }
+    if (tagBusyId) return;
+    setTagBusyId(messageId);
+    setTagError(null);
+    try {
+      const res = await fetch(`/api/chat/messages/${messageId}/tags`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tag }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setTagError(data.error ?? "添加标签失败");
+        return;
+      }
+      applyMessageTags(messageId, Array.isArray(data.tags) ? data.tags : []);
+      setTagDraft("");
+    } catch {
+      setTagError("网络异常，请重试");
+    } finally {
+      setTagBusyId(null);
+    }
+  }
+
+  async function removeTag(messageId: string, tag: string) {
+    if (tagBusyId) return;
+    setTagBusyId(messageId);
+    setTagError(null);
+    try {
+      const res = await fetch(
+        `/api/chat/messages/${messageId}/tags?tag=${encodeURIComponent(tag)}`,
+        { method: "DELETE" },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setTagError(data.error ?? "移除标签失败");
+        return;
+      }
+      // 服务端不回整表；本地按已知标签过滤即可（撤回是幂等的）
+      setMessages((ms) =>
+        ms.map((m) => {
+          if (m.id !== messageId) return m;
+          const tags = (m.tags ?? []).filter((t) => t !== tag);
+          return { ...m, tags: tags.length > 0 ? tags : undefined };
+        }),
+      );
+    } catch {
+      setTagError("网络异常，请重试");
+    } finally {
+      setTagBusyId(null);
+    }
   }
 
   // 自动提问：写进 ref 再发，效果只在 nonce 变化时触发一次。
@@ -358,8 +568,47 @@ export function AgentChat({
               </svg>
             </button>
           );
+          // 只有落库后的助手消息才有 id，也才谈得上打标签
+          const tagButton =
+            m.role === "assistant" && m.id ? (
+              <button
+                type="button"
+                onClick={() => toggleTagEditor(m.id!)}
+                aria-label="添加标签"
+                aria-expanded={tagEditorId === m.id}
+                title="标签"
+                className={`grid h-7 w-7 shrink-0 place-items-center rounded transition-colors hover:bg-surface ${
+                  tagEditorId === m.id || (m.tags?.length ?? 0) > 0
+                    ? "text-primary"
+                    : "text-ink-faint/70 hover:text-ink"
+                }`}
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-3.5 w-3.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="M20.6 13.4 11 3.8H4v7l9.6 9.6a2 2 0 0 0 2.8 0l4.2-4.2a2 2 0 0 0 0-2.8Z" />
+                  <circle cx="7.5" cy="7.5" r="1" />
+                </svg>
+              </button>
+            ) : null;
+
           return (
-            <div key={m.localId ?? m.id ?? `idx-${i}`}>
+            <div
+              key={m.localId ?? m.id ?? `idx-${i}`}
+              id={m.id ? `ac-msg-${m.id}` : undefined}
+              className={
+                highlightId && highlightId === m.id
+                  ? "-m-1 rounded-lg p-1 ring-2 ring-primary/50 transition-shadow"
+                  : undefined
+              }
+            >
               {continuation ? (
                 <div
                   className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-xs ${
@@ -398,8 +647,69 @@ export function AgentChat({
                 >
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-xs text-ink-faint">{m.role === "user" ? "我" : "助手"}</span>
-                    <div className="-mt-1">{deleteButton}</div>
+                    <div className="-mt-1 flex items-center">
+                      {tagButton}
+                      {deleteButton}
+                    </div>
                   </div>
+                  {/* 标签编辑器紧贴右上角的标签按钮：长答复里不用滚到底部才能输入 */}
+                  {m.role === "assistant" && m.id && tagEditorId === m.id && (
+                    <div className="mt-1.5 space-y-1.5 rounded-field border border-line bg-surface/80 p-2">
+                      {m.tags && m.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5">
+                          {m.tags.map((tag) => (
+                            <button
+                              key={tag}
+                              type="button"
+                              onClick={() => void removeTag(m.id!, tag)}
+                              disabled={tagBusyId === m.id}
+                              title="点击移除这个标签"
+                              className="ac-badge bg-primary-soft text-primary hover:bg-high hover:text-white disabled:opacity-50"
+                            >
+                              {tag} <span aria-hidden>×</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          value={tagDraft}
+                          onChange={(e) => setTagDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              void addTag(m.id!);
+                            }
+                            if (e.key === "Escape") {
+                              // 只关标签编辑器，别把整个抽屉关了
+                              e.stopPropagation();
+                              toggleTagEditor(m.id!);
+                            }
+                          }}
+                          maxLength={MESSAGE_TAG_MAX}
+                          placeholder="标签名，回车添加"
+                          aria-label="消息标签"
+                          className="ac-field min-w-0 flex-1 px-2 py-1 text-xs"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void addTag(m.id!)}
+                          disabled={tagBusyId === m.id || !tagDraft.trim()}
+                          className="ac-btn shrink-0 px-2 py-1 text-xs disabled:opacity-50"
+                        >
+                          添加
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleTagEditor(m.id!)}
+                          className="ac-btn-ghost shrink-0 px-2 py-1 text-xs"
+                        >
+                          关闭
+                        </button>
+                      </div>
+                      {tagError && <p className="text-[11px] text-high">{tagError}</p>}
+                    </div>
+                  )}
                   {/* 助手按 Markdown 渲染；用户自己敲的字保持原样，别把 * 和 # 也吃进去 */}
                   <div className="mt-1 text-ink">
                     {m.role === "assistant" ? (
@@ -408,6 +718,30 @@ export function AgentChat({
                       <p className="whitespace-pre-wrap">{m.content}</p>
                     )}
                   </div>
+                  {m.tags && m.tags.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {m.tags.map((tag) => (
+                        <span key={tag} className="ac-badge bg-surface text-ink-soft">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {m.attachments && m.attachments.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {m.attachments.map((a) => (
+                        <a
+                          key={a.id}
+                          href={`/api/assistant/files/${a.id}`}
+                          download={a.filename}
+                          title={`${a.filename}（${formatFileSize(a.size)}）`}
+                          className="ac-badge max-w-full truncate bg-surface text-ink-soft hover:bg-primary-soft hover:text-primary"
+                        >
+                          {a.filename}
+                        </a>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
               {m.navigations && m.navigations.length > 0 && (
@@ -425,20 +759,8 @@ export function AgentChat({
                 </div>
               )}
               {m.files && m.files.length > 0 && (
-                <div className="mt-1 flex flex-wrap gap-1.5">
-                  {m.files.map((f) => (
-                    <button
-                      key={f.url}
-                      type="button"
-                      onClick={() => setPreviewFile(f)}
-                      title={f.filename}
-                      // 已经自动弹过一次；关掉后从这里可以重新打开
-                      className="ac-badge max-w-full truncate bg-primary-soft text-primary hover:bg-primary hover:text-white"
-                    >
-                      预览 {f.filename}
-                    </button>
-                  ))}
-                </div>
+                // 已经自动弹过一次预览；关掉后这里可以再预览，也可以直接下载
+                <AssistantFileCards files={m.files} onPreview={setPreviewFile} />
               )}
               {m.drafts && m.drafts.length > 0 && (
                 <DraftCards
@@ -485,16 +807,88 @@ export function AgentChat({
         )}
       </div>
       {error && <p className="shrink-0 text-sm text-high">{error}</p>}
+      {(uploadError || (scope === "personal" && attachments.length > 0)) && (
+        <div className="shrink-0 space-y-1">
+          {scope === "personal" && attachments.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {attachments.map((a) => (
+                <span
+                  key={a.id}
+                  className="ac-badge max-w-full bg-surface text-ink-soft"
+                  title={`${a.filename}（${formatFileSize(a.size)}）`}
+                >
+                  <span className="max-w-[10rem] truncate">{a.filename}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(a.id)}
+                    aria-label={`移除 ${a.filename}`}
+                    className="text-ink-faint transition-colors hover:text-high"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          {uploadError && <p className="text-xs text-high">{uploadError}</p>}
+        </div>
+      )}
       <div className="flex shrink-0 gap-2">
+        {/* 上传只开在个人助手：项目助手会话是团队共享的，文件却有主人 */}
+        {scope === "personal" && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => void uploadFiles(e.target.files)}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={
+                pending ||
+                disabled ||
+                uploading ||
+                attachments.length >= ASSISTANT_ATTACHMENTS_MAX
+              }
+              aria-label="添加文件"
+              title={`添加文件（≤${MAX_FILE_SIZE_LABEL}，最多 ${ASSISTANT_ATTACHMENTS_MAX} 个）`}
+              className="ac-btn-ghost shrink-0 px-2 py-2 text-sm"
+            >
+              {uploading ? (
+                <span className="text-xs text-ink-faint">…</span>
+              ) : (
+                <svg
+                  viewBox="0 0 24 24"
+                  className="h-4 w-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <path d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l9-9a3.4 3.4 0 014.8 4.8l-9 9a1.8 1.8 0 01-2.5-2.5l8.2-8.2" />
+                </svg>
+              )}
+            </button>
+          </>
+        )}
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && send()}
           placeholder={placeholder}
           className="ac-field flex-1 text-sm"
-          disabled={pending || disabled}
+          disabled={pending || disabled || uploading}
         />
-        <button onClick={send} disabled={pending || disabled} className="ac-btn px-3 py-2 text-sm">
+        <button
+          onClick={send}
+          disabled={pending || disabled || uploading}
+          className="ac-btn px-3 py-2 text-sm"
+        >
           {pending ? "思考中…" : "发送"}
         </button>
       </div>

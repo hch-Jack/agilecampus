@@ -269,6 +269,47 @@ describe("excelToSheets（SheetJS 解析往返）", () => {
     expect(sheet.html.match(/合并标题/g)).toHaveLength(1);
   });
 
+  it("列宽按 Excel 字符宽还原（wch×7+5），没给列宽时用默认 64px", async () => {
+    const withWidth = await excelToSheets(buildXlsx([{ name: "宽度", rows: [["甲", "乙"]] }]));
+    // 没设 !cols 的普通文件：每列 64px，表格总宽随列数
+    expect(withWidth[0].html).toContain('<col style="width:64px">');
+    expect(withWidth[0].html).toContain("width:128px");
+
+    const ws = XLSX.utils.aoa_to_sheet([["甲", "乙"]]);
+    ws["!cols"] = [{ wch: 20 }, { wch: 10 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "宽度");
+    const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
+    const [sheet] = await excelToSheets(buf);
+    // SheetJS 读回的 wpx 按 6px 字符宽算，会比 Excel 窄；这里按 Excel 的 7px 口径
+    expect(sheet.html).toContain('<col style="width:145px">');
+    expect(sheet.html).toContain('<col style="width:75px">');
+    expect(sheet.html).toContain("table-layout:fixed");
+  });
+
+  it("隐藏的行列不渲染（Excel 里它们不占位置）", async () => {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ["可见列", "隐藏列内容"],
+      ["隐藏行内容", "普通格"],
+    ]);
+    ws["!cols"] = [{}, { hidden: true }];
+    ws["!rows"] = [{}, { hidden: true }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "隐藏");
+    const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
+    const [sheet] = await excelToSheets(buf);
+    expect(sheet.html).toContain("可见列");
+    expect(sheet.html).not.toContain("隐藏列内容");
+    expect(sheet.html).not.toContain("隐藏行内容");
+  });
+
+  it("单元格内换行只在该格折行，数字默认右对齐与 Excel 一致", async () => {
+    const buf = buildXlsx([{ name: "换行", rows: [["第一行\n第二行", 123]] }]);
+    const [sheet] = await excelToSheets(buf);
+    expect(sheet.html).toContain("white-space:pre-wrap");
+    expect(sheet.html).toContain("text-align:right");
+  });
+
   it("单元格文本做 HTML 转义（文件内容不能注入标记）", async () => {
     const buf = buildXlsx([
       { name: "注入", rows: [["<script>alert(1)</script>", "<img src=x onerror=alert(1)>"]] },

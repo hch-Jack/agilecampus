@@ -40,7 +40,7 @@ export default async function LabelsPage({
   const isAdmin = me.role === "admin";
 
   return (
-    <main className="mx-auto max-w-2xl space-y-6 py-8">
+    <main className="mx-auto max-w-2xl space-y-6 py-5 sm:py-8">
       <h1 className="font-display text-2xl font-semibold text-ink">{team.name} · 标签</h1>
       <p className="text-sm text-ink-soft">
         标签为团队共用，可贴在任意项目的任务上，用于筛选与分组。

@@ -43,7 +43,7 @@ export default async function MembersPage({
   const isAdmin = me.role === "admin";
 
   return (
-    <main className="mx-auto max-w-2xl space-y-6 py-8">
+    <main className="mx-auto max-w-2xl space-y-6 py-5 sm:py-8">
       <h1 className="font-display text-2xl font-semibold text-ink">{team.name} · 成员</h1>
       <ul className="space-y-2">
         {members.map((m) => (

@@ -87,7 +87,7 @@ export default async function ProjectPage({
   const canAccept = myPerms?.project ?? false;
 
   return (
-    <main className="mx-auto max-w-5xl space-y-8 py-8">
+    <main className="mx-auto max-w-5xl space-y-8 py-5 sm:py-8">
       <header>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <h1 className="min-w-0 font-display text-2xl font-semibold text-ink">

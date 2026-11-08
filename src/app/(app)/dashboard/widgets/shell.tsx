@@ -26,7 +26,7 @@ export function WidgetShell({
         {href && (
           <Link
             href={href}
-            className="shrink-0 text-xs text-ink-faint transition-colors hover:text-primary"
+            className="ac-hit shrink-0 text-xs text-ink-faint transition-colors hover:text-primary"
           >
             {hrefLabel}
           </Link>

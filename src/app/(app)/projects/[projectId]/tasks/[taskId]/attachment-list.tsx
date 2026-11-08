@@ -1,13 +1,12 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { FilePreviewModal } from "@/components/file-preview";
 import { formatShortDateTime } from "@/lib/time";
-import {
-  uploadAttachmentAction,
-  deleteAttachmentAction,
-  type FormState,
-} from "./actions";
+import { MAX_FILE_SIZE, MAX_FILE_SIZE_LABEL } from "@/lib/file-limits";
+import { uploadFileRaw } from "@/lib/upload-client";
+import { deleteAttachmentAction, type FormState } from "./actions";
 
 export type AttachmentRowData = {
   id: string;
@@ -21,7 +20,8 @@ export type AttachmentRowData = {
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
 export function AttachmentList({
@@ -46,7 +46,7 @@ export function AttachmentList({
 
       {attachments.length === 0 ? (
         <p className="mt-2 text-sm text-ink-faint">
-          暂无附件{canWrite ? "，可在下方上传（单文件不超过 10MB）" : ""}
+          暂无附件{canWrite ? `，可在下方上传（单文件不超过 ${MAX_FILE_SIZE_LABEL}）` : ""}
         </p>
       ) : (
         <ul className="mt-2 space-y-1">
@@ -150,28 +150,58 @@ function AttachmentRow({
 }
 
 function UploadForm({ projectId, taskId }: { projectId: string; taskId: string }) {
-  const [state, formAction, pending] = useActionState<FormState, FormData>(
-    uploadAttachmentAction,
-    null,
-  );
+  const router = useRouter();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const file = inputRef.current?.files?.[0];
+    if (!file) {
+      setError("请选择要上传的文件");
+      return;
+    }
+    if (file.size === 0) {
+      setError("不能上传空文件");
+      return;
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      setError(`附件不能超过 ${MAX_FILE_SIZE_LABEL}`);
+      return;
+    }
+
+    setPending(true);
+    setError("");
+    // 走 route handler 流式上传：server action 的 body 上限只有 12MB
+    const res = await uploadFileRaw<{ id: string }>("/api/attachments/upload", file, {
+      taskId,
+      projectId,
+    });
+    setPending(false);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    if (inputRef.current) inputRef.current.value = "";
+    router.refresh();
+  }
 
   return (
     <form
-      action={formAction}
+      onSubmit={submit}
       className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3"
     >
-      <input type="hidden" name="projectId" value={projectId} />
-      <input type="hidden" name="taskId" value={taskId} />
       <input
+        ref={inputRef}
         type="file"
-        name="file"
         required
         className="ac-field min-w-0 flex-1 text-sm file:mr-2 file:rounded-field file:border-0 file:bg-sunken file:px-2 file:py-1 file:text-xs file:text-ink"
       />
       <button disabled={pending} className="ac-btn">
         {pending ? "上传中…" : "上传附件"}
       </button>
-      {state?.error && <p className="w-full text-sm text-high">{state.error}</p>}
+      {error && <p className="w-full text-sm text-high">{error}</p>}
     </form>
   );
 }
