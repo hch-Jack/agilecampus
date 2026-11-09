@@ -134,12 +134,36 @@ describe("deriveColumns", () => {
     milestones: [{ id: M, name: "一期" }],
   };
 
-  it("按状态分组：三列，patch 改 status", () => {
+  it("按状态分组：四列，进行中与已完成之间是待审批", () => {
     const cols = deriveColumns("status", ctx);
-    expect(cols.map((c) => c.key)).toEqual(["todo", "doing", "done"]);
+    expect(cols.map((c) => c.key)).toEqual(["todo", "doing", "pending", "done"]);
     expect(cols[1].patch).toEqual({ status: "doing" });
     expect(cols[1].matches(task({ status: "doing" }))).toBe(true);
     expect(cols[1].matches(task({ status: "todo" }))).toBe(false);
+    // 「待审批」不落库：落列补丁仍是完成，卡片位置由 pending 申请派生
+    expect(cols[2].patch).toEqual({ status: "done" });
+    expect(cols[2].tone).toBe("text-medium");
+  });
+
+  it("有未决完成申请的任务只落在「待审批」列，不重复出现在状态列", () => {
+    const cols = deriveColumns("status", ctx);
+    const pending = task({
+      status: "doing",
+      pendingApproval: { requestId: A, canDecide: false },
+    });
+    const matched = cols.filter((c) => c.matches(pending)).map((c) => c.key);
+    expect(matched).toEqual(["pending"]);
+
+    // 其他分组维度不受派生字段影响：任务仍按负责人/优先级归列
+    const byAssignee = deriveColumns("assignee", ctx);
+    expect(
+      byAssignee[0].matches({
+        ...pending,
+        assigneeId: A,
+      }),
+    ).toBe(true);
+    const byPriority = deriveColumns("priority", ctx);
+    expect(byPriority[1].matches(pending)).toBe(true);
   });
 
   it("按指派人分组：每成员一列 + 未指派列，patch 改 assigneeId", () => {

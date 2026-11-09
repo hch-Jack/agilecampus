@@ -151,7 +151,7 @@ export default async function AppLayout({
                 />
               </div>
             </header>
-            {/* 常驻栏与正文并排；正文仍居中在 max-w-5xl，页面自己的页头宽度不变 */}
+            {/* 常驻栏与正文并排；正文默认居中在 64rem，工作台/项目详情可用 .page-wide 放宽 */}
             <div className="flex items-stretch">
               <DashboardEditProvider>
                 <AppRail
@@ -160,7 +160,7 @@ export default async function AppLayout({
                   initialCollapsed={railCollapsed}
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="mx-auto max-w-5xl p-4 sm:p-6">{children}</div>
+                  <div className="app-content mx-auto w-full p-4 sm:p-6">{children}</div>
                 </div>
               </DashboardEditProvider>
             </div>

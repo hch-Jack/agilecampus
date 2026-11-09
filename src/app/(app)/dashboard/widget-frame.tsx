@@ -6,7 +6,14 @@ import type {
   PointerEvent as ReactPointerEvent,
   ReactNode,
 } from "react";
-import { widgetOrder, type DashboardLayoutItem } from "@/lib/dashboard-layout";
+import {
+  CARD_SCALE_MAX,
+  CARD_SCALE_MIN,
+  CARD_SCALE_STEP,
+  normalizeCardScale,
+  widgetOrder,
+  type DashboardLayoutItem,
+} from "@/lib/dashboard-layout";
 
 /**
  * 网格里的一张卡：定位、内容壳，以及编辑态的拖拽层 / 顶部栏 / 缩放手柄。
@@ -24,6 +31,7 @@ export function WidgetFrame({
   onDragStart,
   onResizeStart,
   onKeyNudge,
+  onScaleChange,
   children,
 }: {
   item: DashboardLayoutItem;
@@ -36,6 +44,8 @@ export function WidgetFrame({
   onDragStart: (e: ReactPointerEvent<HTMLElement>) => void;
   onResizeStart: (e: ReactPointerEvent<HTMLElement>) => void;
   onKeyNudge: (e: ReactKeyboardEvent<HTMLElement>, mode: "move" | "resize") => void;
+  /** 单卡内容缩放；不传则编辑态不显示缩放控件 */
+  onScaleChange?: (scale: number) => void;
   children: ReactNode;
 }) {
   const style: CSSProperties = {
@@ -43,6 +53,9 @@ export function WidgetFrame({
     gridRow: `${item.y + 1} / span ${item.h}`,
     order: widgetOrder(item),
   };
+  const scale = normalizeCardScale(item.scale) ?? 1;
+  const scaleStep = (dir: -1 | 1) =>
+    onScaleChange?.(Math.round((scale + dir * CARD_SCALE_STEP) * 100) / 100);
 
   return (
     <section
@@ -53,7 +66,11 @@ export function WidgetFrame({
       data-widget-id={item.id}
     >
       <div className="dashboard-widget-inner ac-card">
-        <div className="dashboard-widget-content" inert={editing || undefined}>
+        <div
+          className="dashboard-widget-content"
+          style={{ "--dw-card-scale": String(scale) } as CSSProperties}
+          inert={editing || undefined}
+        >
           {children}
         </div>
 
@@ -85,6 +102,36 @@ export function WidgetFrame({
             >
               <span aria-hidden>⤡</span>
             </div>
+            {onScaleChange && (
+              <div
+                role="group"
+                aria-label={`调整「${title}」内容大小`}
+                className="dashboard-widget-scale"
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  onClick={() => scaleStep(-1)}
+                  disabled={scale <= CARD_SCALE_MIN + 1e-6}
+                  aria-label="缩小内容"
+                  title="缩小卡片内容"
+                >
+                  −
+                </button>
+                <span aria-live="polite" title="卡片内容缩放">
+                  {Math.round(scale * 100)}%
+                </span>
+                <button
+                  type="button"
+                  onClick={() => scaleStep(1)}
+                  disabled={scale >= CARD_SCALE_MAX - 1e-6}
+                  aria-label="放大内容"
+                  title="放大卡片内容"
+                >
+                  +
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>

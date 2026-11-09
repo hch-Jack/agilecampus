@@ -22,11 +22,11 @@ export function WidgetShell({
   return (
     <div className="dw-shell flex h-full min-h-0 flex-col p-3">
       <div className="flex shrink-0 items-center justify-between gap-2">
-        <h2 className="dw-shell-title font-display text-sm font-semibold text-ink">{title}</h2>
+        <h2 className="dw-shell-title font-display font-semibold text-ink">{title}</h2>
         {href && (
           <Link
             href={href}
-            className="ac-hit shrink-0 text-xs text-ink-faint transition-colors hover:text-primary"
+            className="ac-hit dw-meta shrink-0 text-ink-faint transition-colors hover:text-primary"
           >
             {hrefLabel}
           </Link>
@@ -46,5 +46,5 @@ export function WidgetShell({
 }
 
 export function WidgetEmpty({ children }: { children: ReactNode }) {
-  return <p className="text-sm text-ink-faint">{children}</p>;
+  return <p className="dw-body text-ink-faint">{children}</p>;
 }

@@ -23,12 +23,13 @@ import {
   projectChips,
 } from "@/lib/workbench-filters";
 import { db } from "@/db";
-import { feedReads, taskActivities, tasks as tasksTable } from "@/db/schema";
+import { approvalRequests, feedReads, taskActivities, tasks as tasksTable } from "@/db/schema";
 import {
   addTaskPlanSegmentAction,
   clearTaskPlanAction,
   moveTaskAction,
   removeTaskPlanSegmentAction,
+  setTaskPlanColorAction,
 } from "@/app/(app)/projects/[projectId]/actions";
 import { clearFeedAction, deleteActivityAction, markFeedReadAction } from "@/app/(app)/actions";
 import { listMyTaskPlans } from "@/lib/task-plan";
@@ -205,6 +206,27 @@ describe("moveTaskAction 经工作台复用", () => {
     expect(await taskStatus(task.id)).toBe("todo");
   });
 
+  it("待审批卡拖回原状态列：经 moveTaskAction 撤回完成申请", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    authMock.userId = student.id;
+    await moveTaskAction({ taskId: task.id, projectId: project.id, patch: { status: "doing" } });
+
+    // 学生申请完成：被拦截，申请落库、状态仍留在进行中
+    expect(
+      await moveTaskAction({ taskId: task.id, projectId: project.id, patch: { status: "done" } }),
+    ).toEqual({ error: expect.stringContaining("完成申请") });
+    const pendingRows = () =>
+      db.select().from(approvalRequests).where(eq(approvalRequests.taskId, task.id));
+    expect(await pendingRows()).toHaveLength(1);
+
+    // 拖回「进行中」：patch 与库中状态相同（待审批是派生列），仍要撤回
+    expect(
+      await moveTaskAction({ taskId: task.id, projectId: project.id, patch: { status: "doing" } }),
+    ).toBeNull();
+    expect(await pendingRows()).toHaveLength(0);
+  });
+
   it("非法 status 与空补丁均报参数无效", async () => {
     const { owner, student, project } = await scene();
     const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
@@ -376,6 +398,82 @@ describe("个人计划段（add/remove/clear）", () => {
     const res = await clearTaskPlanAction({ taskId: task.id, projectId: project.id });
     expect(res).toBeNull();
     expect(await listMyTaskPlans(student.id, [task.id])).toEqual({});
+  });
+
+  it("排期时可指定颜色，换色与恢复「跟随状态」都只动这一段", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    authMock.userId = student.id;
+
+    const added = await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-02-02",
+      end: "2026-02-04",
+      color: "blue",
+    });
+    expect(added).toBeNull();
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({
+      [task.id]: [{ start: "2026-02-02", end: "2026-02-04", color: "blue" }],
+    });
+
+    const recolored = await setTaskPlanColorAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-02-02",
+      end: "2026-02-04",
+      color: "orange",
+    });
+    expect(recolored).toBeNull();
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({
+      [task.id]: [{ start: "2026-02-02", end: "2026-02-04", color: "orange" }],
+    });
+
+    // null = 恢复跟随任务状态；未设颜色的段不带 color 键（与旧数据形状一致）
+    await setTaskPlanColorAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-02-02",
+      end: "2026-02-04",
+      color: null,
+    });
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({
+      [task.id]: [{ start: "2026-02-02", end: "2026-02-04" }],
+    });
+  });
+
+  it("非法颜色按参数无效处理", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    authMock.userId = student.id;
+    const res = await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-02-02",
+      end: "2026-02-02",
+      // 故意给非 6 位 hex 的颜色串
+      color: "#ff00",
+    });
+    expect(res).toEqual({ error: "参数无效" });
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({});
+  });
+
+  it("自定义 #rrggbb 颜色可存可取", async () => {
+    const { owner, student, project } = await scene();
+    const task = await createTask(owner.id, project.id, { title: "T", assigneeId: student.id });
+    authMock.userId = student.id;
+    const color = "#12ab34";
+    const added = await addTaskPlanSegmentAction({
+      taskId: task.id,
+      projectId: project.id,
+      start: "2026-03-02",
+      end: "2026-03-02",
+      color,
+    });
+    expect(added).toBeNull();
+    expect(await listMyTaskPlans(student.id, [task.id])).toEqual({
+      [task.id]: [{ start: "2026-03-02", end: "2026-03-02", color }],
+    });
   });
 
   it("teacher 被拒且不写库", async () => {

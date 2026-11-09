@@ -13,7 +13,7 @@ import { LayoutGrid } from "../dashboard/layout-grid";
 import { useLayoutEditor } from "../dashboard/use-layout-editor";
 import { WidgetLibrary } from "../dashboard/widget-library";
 import { renderWidgetContent } from "../dashboard/widget-content";
-import { ZoomControl } from "../dashboard/zoom-control";
+import { TextScaleControl, ZoomControl } from "../dashboard/zoom-control";
 import {
   refreshRailDataAction,
   saveRailCollapsedAction,
@@ -43,6 +43,10 @@ export function AppRail({
   const pathname = usePathname();
 
   const [collapsed, setCollapsed] = useState(initialCollapsed);
+  // 展开过一次后网格就常驻挂载（收起时只是 display:none）：
+  // 反复开合不再重挂整个网格与所有卡片，动画期间也不会和挂载开销抢同一帧。
+  // 一开始就收起的用户仍按需挂载，不为从不展开的人多做初始化。
+  const [shellMounted, setShellMounted] = useState(!initialCollapsed);
   const [editing, setEditing] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [data, setData] = useState<DashboardData>(initialData);
@@ -61,6 +65,8 @@ export function AppRail({
     handleConfigChange,
     handleKeyNudge,
     handleZoomChange,
+    handleTextScaleChange,
+    handleCardScaleChange,
     begin,
     activeId,
     isInteracting,
@@ -145,16 +151,22 @@ export function AppRail({
     setCollapsedPreference(true);
   }
 
+  /** 首次展开时把网格挂上；之后收起只是隐藏，再展开不重挂 */
+  function expand() {
+    setShellMounted(true);
+    setCollapsedPreference(false);
+  }
+
   return (
     <aside
       className={`app-rail${collapsed ? " is-collapsed" : ""}${editing ? " is-editing" : ""}`}
       aria-label="常驻栏"
     >
-      {collapsed ? (
+      {collapsed && (
         <button
           type="button"
           className="rail-strip"
-          onClick={() => setCollapsedPreference(false)}
+          onClick={expand}
           aria-label="展开常驻栏"
           aria-expanded={false}
         >
@@ -163,112 +175,118 @@ export function AppRail({
             常驻栏
           </span>
         </button>
-      ) : (
-        <>
-          <div className="rail-scroll" ref={scrollRef}>
-            <div className={`rail-shell${editing ? " is-editing" : ""}`}>
-              <div className="rail-head">
-                <span className="rail-title">常驻栏</span>
-                <button
-                  type="button"
-                  className={`rail-edit${editing ? " is-on" : ""}`}
-                  onClick={() => (editing ? exitEditing() : setEditing(true))}
-                  aria-pressed={editing}
-                >
-                  {editing ? "完成" : "编辑"}
-                </button>
-              </div>
-
-              {editing && (
-                <div className="rail-toolbar">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setLibraryOpen((open) => !open)}
-                      className="ac-btn-ghost px-2.5 py-1 text-xs"
-                    >
-                      添加卡片
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleReset}
-                      className="ac-btn-ghost px-2.5 py-1 text-xs"
-                    >
-                      恢复默认
-                    </button>
-                    {saveState === "error" && (
-                      <button
-                        type="button"
-                        onClick={retrySave}
-                        className="text-xs text-high underline underline-offset-2"
-                        title={saveError ?? undefined}
-                      >
-                        保存失败，重试
-                      </button>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between gap-1.5">
-                    <ZoomControl zoom={layout.zoom} onChange={handleZoomChange} />
-                    <span aria-live="polite" className="text-[11px] text-ink-faint">
-                      {saveState === "saving" ? "保存中…" : saveState === "saved" ? "已保存" : null}
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {editing && libraryOpen && (
-                <div className="rail-library">
-                  <WidgetLibrary
-                    layout={layout}
-                    onAdd={(type) => {
-                      handleAdd(type);
-                      // 常驻栏很窄：加完就收起面板并滚到新卡，否则「看起来没反应」
-                      setLibraryOpen(false);
-                      setTimeout(() => {
-                        const rail = scrollRef.current;
-                        rail?.scrollTo({ top: rail.scrollHeight, behavior: "smooth" });
-                      }, 60);
-                    }}
-                    onClose={() => setLibraryOpen(false)}
-                    compact
-                  />
-                </div>
-              )}
-
-              {layout.items.length === 0 ? (
-                <p className="rail-empty">
-                  {editing ? "还没有卡片，点「添加卡片」挑几张。" : "常驻栏是空的。"}
-                </p>
-              ) : (
-                <LayoutGrid
-                  gridRef={gridRef}
-                  layout={layout}
-                  editing={editing}
-                  activeId={activeId}
-                  renderWidget={(item) =>
-                    renderWidgetContent(item, data, editing, handleConfigChange)
-                  }
-                  isAlert={(item) => item.type === "approvals" && data.approvals.length > 0}
-                  onRemove={handleRemove}
-                  onDragStart={(e, id) => begin(e, id, "move")}
-                  onResizeStart={(e, id) => begin(e, id, "resize")}
-                  onKeyNudge={handleKeyNudge}
-                />
-              )}
+      )}
+      {shellMounted && (
+        <div className="rail-scroll" ref={scrollRef} hidden={collapsed}>
+          <div className={`rail-shell${editing ? " is-editing" : ""}`}>
+            <div className="rail-head">
+              <span className="rail-title">常驻栏</span>
+              <button
+                type="button"
+                className={`rail-edit${editing ? " is-on" : ""}`}
+                onClick={() => (editing ? exitEditing() : setEditing(true))}
+                aria-pressed={editing}
+              >
+                {editing ? "完成" : "编辑"}
+              </button>
             </div>
-          </div>
 
-          {/* 收起按钮钉在栏的右缘中点：够大、够好点，也不挡栏头 */}
-          <button
-            type="button"
-            className="rail-collapse"
-            onClick={collapse}
-            aria-label="收起常驻栏"
-            title="收起常驻栏"
-          >
-            <span aria-hidden>«</span>
-          </button>
-        </>
+            {editing && (
+              <div className="rail-toolbar">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setLibraryOpen((open) => !open)}
+                    className="ac-btn-ghost px-2.5 py-1 text-xs"
+                  >
+                    添加卡片
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleReset}
+                    className="ac-btn-ghost px-2.5 py-1 text-xs"
+                  >
+                    恢复默认
+                  </button>
+                  {saveState === "error" && (
+                    <button
+                      type="button"
+                      onClick={retrySave}
+                      className="text-xs text-high underline underline-offset-2"
+                      title={saveError ?? undefined}
+                    >
+                      保存失败，重试
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-1.5">
+                  <ZoomControl zoom={layout.zoom} onChange={handleZoomChange} />
+                  <TextScaleControl
+                    textScale={layout.textScale}
+                    onChange={handleTextScaleChange}
+                  />
+                  <span aria-live="polite" className="text-[11px] text-ink-faint">
+                    {saveState === "saving" ? "保存中…" : saveState === "saved" ? "已保存" : null}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {editing && libraryOpen && (
+              <div className="rail-library">
+                <WidgetLibrary
+                  layout={layout}
+                  onAdd={(type) => {
+                    handleAdd(type);
+                    // 常驻栏很窄：加完就收起面板并滚到新卡，否则「看起来没反应」
+                    setLibraryOpen(false);
+                    setTimeout(() => {
+                      const rail = scrollRef.current;
+                      rail?.scrollTo({ top: rail.scrollHeight, behavior: "smooth" });
+                    }, 60);
+                  }}
+                  onClose={() => setLibraryOpen(false)}
+                  compact
+                />
+              </div>
+            )}
+
+            {layout.items.length === 0 ? (
+              <p className="rail-empty">
+                {editing ? "还没有卡片，点「添加卡片」挑几张。" : "常驻栏是空的。"}
+              </p>
+            ) : (
+              <LayoutGrid
+                gridRef={gridRef}
+                layout={layout}
+                editing={editing}
+                activeId={activeId}
+                renderWidget={(item) =>
+                  renderWidgetContent(item, data, editing, handleConfigChange)
+                }
+                isAlert={(item) => item.type === "approvals" && data.approvals.length > 0}
+                onRemove={handleRemove}
+                onDragStart={(e, id) => begin(e, id, "move")}
+                onResizeStart={(e, id) => begin(e, id, "resize")}
+                onKeyNudge={handleKeyNudge}
+                onScaleChange={handleCardScaleChange}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 收起按钮钉在栏的右缘中点：够大、够好点，也不挡栏头 */}
+      {!collapsed && (
+        <button
+          type="button"
+          className="rail-collapse"
+          onClick={collapse}
+          aria-label="收起常驻栏"
+          title="收起常驻栏"
+        >
+          <span aria-hidden>«</span>
+        </button>
       )}
     </aside>
   );

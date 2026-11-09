@@ -5,6 +5,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -21,7 +22,9 @@ import {
 import { projectIdFromPathname } from "@/lib/project-path";
 import {
   ASSISTANT_PANEL_OPEN_EVENT,
+  ASSISTANT_PROMPT_EVENT,
   MESSAGES_PANEL_OPEN_EVENT,
+  type AssistantPromptDetail,
 } from "@/lib/right-panels";
 import { setRightPanelOpen } from "@/components/right-panel-push";
 
@@ -100,6 +103,12 @@ export function AssistantShell({
 }) {
   const [open, setOpen] = useState(false);
   const focusProjectId = projectIdFromPathname(usePathname());
+  /**
+   * 页面按钮（如日程表「AI 排期」）带进来的自动提问：打开面板并让 AgentChat 发一次。
+   * nonce 递增保证同一句话只发一次；发完由 AgentChat 回调清空，切会话重挂载也不会重发。
+   */
+  const [autoPrompt, setAutoPrompt] = useState<{ text: string; nonce: number } | null>(null);
+  const autoPromptSeq = useRef(0);
 
   const [conversations, setConversations] = useState(initialConversations);
   const [activeId, setActiveId] = useState<string | null>(initialActiveId);
@@ -184,6 +193,20 @@ export function AssistantShell({
     const close = () => setOpen(false);
     window.addEventListener(MESSAGES_PANEL_OPEN_EVENT, close);
     return () => window.removeEventListener(MESSAGES_PANEL_OPEN_EVENT, close);
+  }, []);
+
+  // 页面里「带着一句话」唤起助手：开面板，这句话在对话里显示为提示（不代发，见 lib/right-panels.ts）
+  useEffect(() => {
+    const onPrompt = (event: Event) => {
+      const detail = (event as CustomEvent<AssistantPromptDetail>).detail;
+      const text = typeof detail?.text === "string" ? detail.text.trim() : "";
+      if (!text) return;
+      setOpen(true);
+      autoPromptSeq.current += 1;
+      setAutoPrompt({ text, nonce: autoPromptSeq.current });
+    };
+    window.addEventListener(ASSISTANT_PROMPT_EVENT, onPrompt);
+    return () => window.removeEventListener(ASSISTANT_PROMPT_EVENT, onPrompt);
   }, []);
 
   /** 把一条会话的内容装进 AgentChat（只由显式切换/新建/删除当前会话调用） */
@@ -404,6 +427,96 @@ export function AssistantShell({
     }
   }
 
+  /**
+   * 抽屉正文单独 memo：开合抽屉只换位置与 inert，面板里的内容一个字都没变。
+   * 若跟着外壳一起重渲染，上百条历史消息（含 Markdown 解析）会在每次开合时整棵重算，
+   * 首帧被渲染任务占住，300ms 的滑入动画立刻掉帧。
+   * 依赖列出正文与各回调实际读的状态；`open` 刻意不在其中 —— 它只影响抽屉位置。
+   */
+  const panelBody = useMemo(
+    () => (
+      <div className="flex min-h-0 flex-1 flex-col gap-3 p-4 lg:px-5">
+        <AssistantConversations
+          conversations={conversations}
+          activeId={activeId}
+          busy={sessionBusy || switching}
+          onSelect={(id) => void selectConversation(id)}
+          onNew={() => void createConversation()}
+          onRename={renameConversation}
+          onDelete={(id) => void deleteConversation(id)}
+          onCategorize={categorizeConversation}
+          onAutoCategorize={autoCategorizeConversations}
+        />
+        <AssistantBoards
+          busy={sessionBusy || switching}
+          onOpenMessage={openTaggedMessage}
+          filesVersion={filesVersion}
+        />
+        {switchError && <p className="shrink-0 text-sm text-high">{switchError}</p>}
+        <div className="min-h-0 flex-1">
+          <AgentChat
+            key={viewKey}
+            scope="personal"
+            projectId={focusProjectId ?? undefined}
+            conversationId={activeId ?? undefined}
+            initialMessages={seedMessages}
+            disabled={switching}
+            autoPrompt={autoPrompt ?? undefined}
+            onAutoPromptDone={() => setAutoPrompt(null)}
+            onBusyChange={setSessionBusy}
+            onTurnPersisted={(info) => handleTurnPersisted(info, viewKey)}
+            onTurnDeleted={handleTurnDeleted}
+            onFilesGenerated={() => setFilesVersion((v) => v + 1)}
+            focusMessage={focusMessage ?? undefined}
+            subtitle={
+              focusProjectId ? "只属于你的对话 · 已带入当前项目" : "只属于你的对话"
+            }
+            emptyHint="问我手上任意项目的事。在项目页面里，我会自动带上当前项目的动态、留言与任务。"
+            placeholder="问点什么，或交代一句让我记住…"
+            actions={
+              <>
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  aria-label="收起助手"
+                  title="收起助手"
+                  className="grid h-8 w-8 place-items-center rounded-field text-ink-faint transition-colors hover:bg-sunken hover:text-ink"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-4 w-4"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    aria-hidden
+                  >
+                    <path d="M6 6l12 12M18 6L6 18" />
+                  </svg>
+                </button>
+              </>
+            }
+          />
+        </div>
+      </div>
+    ),
+    // 正文里的回调都是普通闭包，它们读的状态已全部列在依赖里（见上方说明）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      conversations,
+      activeId,
+      seedMessages,
+      viewKey,
+      sessionBusy,
+      switching,
+      switchError,
+      filesVersion,
+      focusMessage,
+      autoPrompt,
+      focusProjectId,
+    ],
+  );
+
   return (
     <AssistantUiContext.Provider value={{ open, setOpen }}>
       {children}
@@ -426,68 +539,7 @@ export function AssistantShell({
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >
-        <div className="flex min-h-0 flex-1 flex-col gap-3 p-4 lg:px-5">
-          <AssistantConversations
-            conversations={conversations}
-            activeId={activeId}
-            busy={sessionBusy || switching}
-            onSelect={(id) => void selectConversation(id)}
-            onNew={() => void createConversation()}
-            onRename={renameConversation}
-            onDelete={(id) => void deleteConversation(id)}
-            onCategorize={categorizeConversation}
-            onAutoCategorize={autoCategorizeConversations}
-          />
-          <AssistantBoards
-            busy={sessionBusy || switching}
-            onOpenMessage={openTaggedMessage}
-            filesVersion={filesVersion}
-          />
-          {switchError && <p className="shrink-0 text-sm text-high">{switchError}</p>}
-          <div className="min-h-0 flex-1">
-            <AgentChat
-              key={viewKey}
-              scope="personal"
-              projectId={focusProjectId ?? undefined}
-              conversationId={activeId ?? undefined}
-              initialMessages={seedMessages}
-              disabled={switching}
-              onBusyChange={setSessionBusy}
-              onTurnPersisted={(info) => handleTurnPersisted(info, viewKey)}
-              onTurnDeleted={handleTurnDeleted}
-              onFilesGenerated={() => setFilesVersion((v) => v + 1)}
-              focusMessage={focusMessage ?? undefined}
-              subtitle={
-                focusProjectId ? "只属于你的对话 · 已带入当前项目" : "只属于你的对话"
-              }
-              emptyHint="问我手上任意项目的事。在项目页面里，我会自动带上当前项目的动态、留言与任务。"
-              placeholder="问点什么，或交代一句让我记住…"
-              actions={
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setOpen(false)}
-                    aria-label="收起助手"
-                    title="收起助手"
-                    className="grid h-8 w-8 place-items-center rounded-field text-ink-faint transition-colors hover:bg-sunken hover:text-ink"
-                  >
-                    <svg
-                      viewBox="0 0 24 24"
-                      className="h-4 w-4"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      aria-hidden
-                    >
-                      <path d="M6 6l12 12M18 6L6 18" />
-                    </svg>
-                  </button>
-                </>
-              }
-            />
-          </div>
-        </div>
+        {panelBody}
       </aside>
     </AssistantUiContext.Provider>
   );

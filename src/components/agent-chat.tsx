@@ -46,6 +46,8 @@ export type ChatMessage = {
   id?: string;
   /** 客户端稳定 key：还没落库的消息也要有身份（删除本地失败消息靠它） */
   localId?: string;
+  /** 本地合成、未发送的助手提示（如「AI 排期」入口）：不落库、不可删除 */
+  localHint?: boolean;
   drafts?: Draft[];
   options?: OptionMap;
   /** 生成这条答复时带的焦点项目；续做沿用它，而不是屏幕当前项目 */
@@ -85,6 +87,8 @@ export function AgentChat({
   placeholder = "问点什么…",
   disabled = false,
   actions,
+  autoPrompt,
+  onAutoPromptDone,
   onBusyChange,
   onTurnPersisted,
   onTurnDeleted,
@@ -105,6 +109,13 @@ export function AgentChat({
   disabled?: boolean;
   /** 标题行右侧的按钮（设置链接、收起按钮） */
   actions?: ReactNode;
+  /**
+   * 从页面按钮带进来的提示（如日程表「AI 排期」）：nonce 变化时在对话里追加一条
+   * 本地助手提示，**不代发**——用户自己写要求再发送。追加后回调外壳清空，
+   * 切换会话导致的重挂载不会重复追加。
+   */
+  autoPrompt?: { text: string; nonce: number };
+  onAutoPromptDone?: () => void;
   /** 发送/删除期间为 true，外壳据此禁用会话切换 */
   onBusyChange?: (busy: boolean) => void;
   onTurnPersisted?: (info: {
@@ -437,6 +448,30 @@ export function AgentChat({
     }
   }
 
+  // 页面按钮带进来的提示（如日程表「AI 排期」）：只在对话里追加一条本地助手提示，
+  // 绝不替用户发送。排期要求得由用户自己写、自己点发送，助手才开始执行。
+  const autoPromptNonce = useRef(0);
+  useEffect(() => {
+    if (!autoPrompt || pending || disabled) return;
+    if (autoPrompt.nonce === autoPromptNonce.current) return;
+    autoPromptNonce.current = autoPrompt.nonce;
+    // 先清掉外壳里的待发项：切换会话重挂载时不会重复追加
+    onAutoPromptDone?.();
+    // 用户可能正翻着旧消息：这张提示卡是刚点出来的，要把人带到它那里
+    forceBottomRef.current = true;
+    const hint = autoPrompt.text;
+    const localId = `hint-${autoPrompt.nonce}`;
+    setMessages((ms) =>
+      // 连点入口不叠同一张提示卡
+      ms.some((m) => m.localHint && m.content === hint)
+        ? ms
+        : [
+            ...ms,
+            { role: "assistant", content: hint, localId, localHint: true },
+          ],
+    );
+  }, [autoPrompt, pending, disabled, onAutoPromptDone]);
+
   async function deleteTurn(m: ChatMessage) {
     if (pending || deletingId || disabled) return;
 
@@ -619,13 +654,19 @@ export function AgentChat({
                 </div>
               ) : (
                 <div
-                  className={`rounded-lg p-2.5 text-sm ${m.role === "user" ? "bg-sunken" : "bg-primary-soft"}`}
+                  className={`rounded-lg p-2.5 text-sm ${
+                    m.localHint
+                      ? "border border-dashed border-primary/40 bg-primary-soft/40"
+                      : m.role === "user"
+                        ? "bg-sunken"
+                        : "bg-primary-soft"
+                  }`}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-xs text-ink-faint">{m.role === "user" ? "我" : "助手"}</span>
                     <div className="-mt-1 flex items-center">
                       {tagButton}
-                      {deleteButton}
+                      {m.localHint ? null : deleteButton}
                     </div>
                   </div>
                   {/* 标签编辑器紧贴右上角的标签按钮：长答复里不用滚到底部才能输入 */}

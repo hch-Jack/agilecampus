@@ -868,6 +868,8 @@ export const taskPlans = pgTable(
     // 计划做这任务的一段时间：[plannedStart, plannedEnd] 闭区间（YYYY-MM-DD，日历日，无时区）
     plannedStart: date("planned_start").notNull(),
     plannedEnd: date("planned_end").notNull(),
+    // 自定义颜色：只存色板键（lib/task-plan-colors.ts）；NULL = 跟随任务状态
+    color: text("color"),
     createdAt: dbTimestampNow("created_at").notNull(),
     updatedAt: dbTimestampNow("updated_at").notNull(),
   },

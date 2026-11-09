@@ -8,7 +8,9 @@ import {
   addTaskPlanSegment,
   clearTaskPlan,
   removeTaskPlanSegment,
+  setTaskPlanSegmentColor,
 } from "@/lib/task-plan";
+import { isTaskPlanColor, type TaskPlanColor } from "@/lib/task-plan-colors";
 import { setTaskLabels } from "@/lib/label";
 import { createMilestone } from "@/lib/project";
 import { AppError, ApprovalRequestedError, ForbiddenError } from "@/lib/errors";
@@ -130,7 +132,11 @@ export async function moveTaskAction(input: {
   if (Object.keys(parsed.data.patch).length === 0) return { error: "参数无效" };
 
   try {
-    await updateTask(session.user.id, parsed.data.taskId, parsed.data.patch);
+    // 落列即表态：拖回待办/进行中 = 撤回完成申请。待审批卡的原状态可能恰是目标状态，
+    // 光靠「status 有变化」判断撤不干净，故显式带上 withdrawPending。
+    await updateTask(session.user.id, parsed.data.taskId, parsed.data.patch, {
+      withdrawPending: true,
+    });
   } catch (e) {
     if (e instanceof AppError) return { error: e.message };
     throw e;
@@ -141,11 +147,20 @@ export async function moveTaskAction(input: {
 
 // 个人任务计划段：日历里给自己排「打算什么时候做这任务」，可多段（区间或单天）。
 // 注意这不是改任务官方起止日——任务排期不动，这里只动个人记录。
+/** 色板键（含历史键）或自定义 #rrggbb —— 与存储层的判定共用一份实现 */
+const planColorSchema = z.string().refine(isTaskPlanColor, { message: "颜色无效" });
+
 const planSegmentSchema = z.object({
   taskId: z.uuid(),
   projectId: z.uuid(),
   start: z.iso.date("日期格式不正确"),
   end: z.iso.date("日期格式不正确"),
+  /** 不传 = 跟随任务状态 */
+  color: planColorSchema.optional(),
+});
+
+const planRecolorSchema = planSegmentSchema.extend({
+  color: planColorSchema.nullable(),
 });
 
 const planClearSchema = z.object({
@@ -158,6 +173,7 @@ export async function addTaskPlanSegmentAction(input: {
   projectId: string;
   start: string;
   end: string;
+  color?: TaskPlanColor;
 }): Promise<FormState> {
   const session = await auth();
   if (!session?.user) return { error: "请先登录" };
@@ -170,6 +186,36 @@ export async function addTaskPlanSegmentAction(input: {
       parsed.data.projectId,
       parsed.data.start,
       parsed.data.end,
+      parsed.data.color,
+    );
+  } catch (e) {
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
+  revalidatePath("/dashboard");
+  return null;
+}
+
+/** 给已有计划段换色（null = 跟随任务状态）。 */
+export async function setTaskPlanColorAction(input: {
+  taskId: string;
+  projectId: string;
+  start: string;
+  end: string;
+  color: TaskPlanColor | null;
+}): Promise<FormState> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+  const parsed = planRecolorSchema.safeParse(input);
+  if (!parsed.success) return { error: "参数无效" };
+  try {
+    await setTaskPlanSegmentColor(
+      session.user.id,
+      parsed.data.taskId,
+      parsed.data.projectId,
+      parsed.data.start,
+      parsed.data.end,
+      parsed.data.color,
     );
   } catch (e) {
     if (e instanceof AppError) return { error: e.message };

@@ -72,24 +72,30 @@ export function ProjTheme({ children }: { children: ReactNode }) {
       pdx = mx;
       pdy = my;
 
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      for (let i = particles.length - 1; i >= 0; i--) {
-        const p = particles[i];
-        p.x += p.vx;
-        p.y += p.vy;
-        p.life -= 0.028;
-        if (p.life <= 0) {
-          particles.splice(i, 1);
-          continue;
-        }
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
-        ctx.fillStyle = "rgba(198,222,250," + (p.life * 0.75).toFixed(3) + ")";
+      // 没有粒子时画布本来就是干净的：跳过整屏 clearRect 与绘制。
+      // 空闲时这层装饰不再每帧占一次全屏重绘（上次清理发生在最后一颗粒子消亡的那帧，
+      // 之后画布一直保持透明），打开抽屉 / 展开常驻栏时少一份合成压力，画面完全一致。
+      if (particles.length > 0) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        // 阴影色整帧不变，放循环外；阴影半径随生命值变，仍逐颗设置
         ctx.shadowColor = "rgba(170,210,255,.95)";
-        ctx.shadowBlur = 12 * p.life;
-        ctx.fill();
+        for (let i = particles.length - 1; i >= 0; i--) {
+          const p = particles[i];
+          p.x += p.vx;
+          p.y += p.vy;
+          p.life -= 0.028;
+          if (p.life <= 0) {
+            particles.splice(i, 1);
+            continue;
+          }
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.r * p.life, 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(198,222,250," + (p.life * 0.75).toFixed(3) + ")";
+          ctx.shadowBlur = 12 * p.life;
+          ctx.fill();
+        }
+        ctx.shadowBlur = 0;
       }
-      ctx.shadowBlur = 0;
       raf = requestAnimationFrame(loop);
     };
     window.addEventListener("mousemove", onMove);

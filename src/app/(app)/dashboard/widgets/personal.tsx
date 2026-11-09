@@ -44,7 +44,7 @@ export function NoteWidget({
   return (
     <div className="dw-note flex h-full min-h-0 flex-col p-3">
       <div className="flex shrink-0 items-center justify-between gap-2">
-        <h2 className="dw-shell-title font-display text-sm font-semibold text-ink">便签</h2>
+        <h2 className="dw-shell-title font-display font-semibold text-ink">便签</h2>
         {!editing && (
           <button
             type="button"
@@ -78,7 +78,7 @@ export function NoteWidget({
         <button
           type="button"
           onClick={() => setEditing(true)}
-          className="ac-scroll-hidden mt-2 flex min-h-0 flex-1 items-start overflow-y-auto whitespace-pre-wrap break-words text-left text-sm text-ink-soft transition-colors hover:text-ink"
+          className="dw-body ac-scroll-hidden mt-2 flex min-h-0 flex-1 items-start overflow-y-auto whitespace-pre-wrap break-words text-left text-ink-soft transition-colors hover:text-ink"
         >
           {text || <span className="text-ink-faint">点这里记点什么…</span>}
         </button>
@@ -272,18 +272,18 @@ export function ClockWidget({
                 设置
               </button>
             </div>
-            <p className="dw-clock-date mt-1 text-xs text-ink-faint">
+            <p className="dw-clock-date dw-meta mt-1 text-ink-faint">
               {parts ? parts.dateLabel : "按你的时区显示"}
             </p>
             {lunarText && (
-              <p className="dw-clock-lunar mt-0.5 text-xs text-ink-faint">{lunarText}</p>
+              <p className="dw-clock-lunar dw-meta mt-0.5 text-ink-faint">{lunarText}</p>
             )}
             {zones.length > 0 && now && (
               <ul className="dw-clock-zones mt-2 space-y-0.5 border-t border-line pt-2">
                 {zones.map((zone) => (
                   <li
                     key={zone}
-                    className="flex items-baseline justify-between gap-2 text-xs text-ink-soft"
+                    className="dw-meta flex items-baseline justify-between gap-2 text-ink-soft"
                   >
                     <span className="truncate">{zoneLabel(zone)}</span>
                     <span className="shrink-0 tabular-nums text-ink">
@@ -390,7 +390,7 @@ export function CountdownWidget({
       ) : (
         <>
           <div className="flex items-start justify-between gap-2">
-            <p className="truncate text-xs text-ink-soft">{config?.title || "倒计时"}</p>
+            <p className="dw-item truncate text-ink-soft">{config?.title || "倒计时"}</p>
             <button
               type="button"
               onClick={openSetting}
@@ -404,12 +404,12 @@ export function CountdownWidget({
               <p className="dw-countdown-value mt-1 font-display text-2xl font-semibold tabular-nums text-ink">
                 {now ? (target.getTime() - now.getTime() > 0 ? formatRemaining(target.getTime() - now.getTime()) : "已到达") : "计算中…"}
               </p>
-              <p className="dw-countdown-target mt-1 text-[11px] text-ink-faint">
+              <p className="dw-countdown-target dw-meta mt-1 text-ink-faint">
                 目标 {formatDateTime(tz, target)}
               </p>
             </>
           ) : (
-            <p className="mt-1 text-sm text-ink-faint">点「设置」定一个目标时间</p>
+            <p className="dw-body mt-1 text-ink-faint">点「设置」定一个目标时间</p>
           )}
         </>
       )}

@@ -423,3 +423,32 @@ body.proj-cosmic .mobile-nav-sheet {
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
 }
+
+/* —— 15. 正文宽度 —— */
+/* 默认 64rem（原 max-w-5xl）。工作台与项目详情声明 .page-wide 时，
+   共享容器放宽到 90rem（1440px），两页内容宽度严格相等；
+   消息、设置等其他页面不受影响。旧浏览器不支持 :has() 时自动保持 64rem。 */
+.app-content {
+  max-width: 64rem;
+}
+.app-content:has(.page-wide) {
+  max-width: none;
+}
+.page-wide {
+  width: 100%;
+  max-width: 90rem;
+  margin-inline: auto;
+}
+
+/* —— 16. 合成层提示（只影响性能，不改变任何画面）—— */
+/* 右侧抽屉的滑入/滑出只改 transform：提前给它一层合成层，动画一开始就交给合成线程，
+   不用在第一帧临时提升图层（那一下最容易掉帧）。面板里需要浮层的组件都 portal 到
+   body，不会被这层包含块影响。 */
+.assistant-panel {
+  will-change: transform;
+}
+/* 光晕靠 transform 漂移，身上却挂着 95px 的 blur：提示浏览器把滤镜结果留在一层里，
+   漂移时只做合成，不反复重算模糊。 */
+body.proj-cosmic .proj-blob {
+  will-change: transform;
+}

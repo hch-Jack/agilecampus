@@ -655,7 +655,14 @@ async function commitManageTaskPlans(actorId: string, draft: unknown): Promise<C
     } else {
       const end = op.end ?? op.start;
       if (op.action === "add") {
-        await addTaskPlanSegment(actorId, op.taskId, detail.projectId, op.start, end);
+        await addTaskPlanSegment(
+          actorId,
+          op.taskId,
+          detail.projectId,
+          op.start,
+          end,
+          op.color,
+        );
       } else {
         await removeTaskPlanSegment(actorId, op.taskId, detail.projectId, op.start, end);
       }

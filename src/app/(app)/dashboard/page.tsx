@@ -22,7 +22,7 @@ export default async function DashboardPage({
   const layout = await getDashboardLayout(userId, { isApprover: data.isApprover });
 
   return (
-    <main className="mx-auto max-w-5xl py-5 sm:py-8">
+    <main className="page-wide py-5 sm:py-8">
       <DashboardGrid initialLayout={layout} data={data} />
     </main>
   );

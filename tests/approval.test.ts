@@ -24,6 +24,7 @@ import {
   listMyResourceRequests,
   listMySystemMessages,
   listPendingApprovalsForApprover,
+  listPendingTaskDoneApprovals,
   listPendingTaskDoneTaskIds,
   markSystemMessagesRead,
   requestResourceUsage,
@@ -129,6 +130,22 @@ describe("任务完成审批：申请与撤回", () => {
       ApprovalRequestedError,
     );
     await updateTask(student.id, task.id, { status: "todo" });
+    expect(await pendingRow()).toBeNull();
+  });
+
+  it("待审批卡拖回原状态列（状态没变）也撤回：withdrawPending 显式表态", async () => {
+    const { student, task, pendingRow } = await scene();
+    await expect(updateTask(student.id, task.id, { status: "done" })).rejects.toBeInstanceOf(
+      ApprovalRequestedError,
+    );
+    // 四列看板里「待审批」是派生列，卡的原状态仍是 doing；拖回「进行中」patch 与库中相同
+    const updated = await updateTask(
+      student.id,
+      task.id,
+      { status: "doing" },
+      { withdrawPending: true },
+    );
+    expect(updated.status).toBe("doing");
     expect(await pendingRow()).toBeNull();
   });
 
@@ -411,6 +428,29 @@ describe("审批查询辅助", () => {
     expect(await isApproverAnywhere(teacher.id)).toBe(true);
     expect(await isApproverAnywhere(admin.id)).toBe(true);
     expect(await isApproverAnywhere(student.id)).toBe(false);
+  });
+
+  it("listPendingTaskDoneApprovals：按任务带出申请 id 与申请人，决定后清空", async () => {
+    const { student, teacher, task, pendingRow } = await scene();
+    // 无未决申请 / 空任务列表：都返回空 Map
+    expect((await listPendingTaskDoneApprovals([task.id])).size).toBe(0);
+    expect((await listPendingTaskDoneApprovals([])).size).toBe(0);
+
+    await expect(updateTask(student.id, task.id, { status: "done" })).rejects.toBeInstanceOf(
+      ApprovalRequestedError,
+    );
+    const pending = (await pendingRow())!;
+    const map = await listPendingTaskDoneApprovals([task.id]);
+    expect(map.get(task.id)).toMatchObject({
+      requestId: pending.id,
+      requesterId: student.id,
+      requesterName: "student",
+    });
+    expect(map.get(task.id)!.createdAt).toBeInstanceOf(Date);
+
+    // 决定之后不再算待审批（看板卡片回到原状态列）
+    await decideApproval(teacher.id, pending.id, "approved");
+    expect((await listPendingTaskDoneApprovals([task.id])).size).toBe(0);
   });
 });
 
