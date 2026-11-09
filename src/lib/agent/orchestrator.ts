@@ -20,6 +20,7 @@ import { isFileOpenEnvelope } from "./file-open";
 import { loadAttachmentMetas } from "./files";
 import type { MessageAttachment } from "./assistant-panel-shared";
 import { TASK_PLAN_COLOR_KEYS } from "@/lib/task-plan-colors";
+import { buildSkillCatalogBlock } from "./skills";
 
 const SYSTEM_PREAMBLE = `你是 AgileCampus（敏捷校园）的项目管理助手，服务高校科研与课程团队。
 你的职责限于项目管理：拆解目标、排期、指派、跟踪进度、答疑项目现状。你不代做研究、编码或写作等实际工作。
@@ -229,6 +230,8 @@ const SCOPE_NOTES: Record<AgentScope["kind"], string> = {
 - 日程表「排日程」分两层：任务**官方起止日**是项目数据，用 update_tasks 改；
   用户自己「打算哪天做」的计划日才用 manage_task_plans（同样只产草案）；每段可选
   ${TASK_PLAN_COLOR_KEYS.join("/")} 颜色，用户没说就省略（跟随任务状态）。
+- 系统提示末尾有「我的技能」目录：任务与某条技能描述吻合时，先用 read_skill 读出完整步骤再执行；
+  用户要你把一套做法固化成技能时，用 create_skill 拟草案（确认后才保存）。
 - 你可以替用户**打开平台页面**（open_page）：工作台、项目看板/关系图/流程图/时间线、任务详情、
   团队各页、消息、AI 设置。它立即生效、不需要确认卡，调用后正文说「已为你打开…」。
   只在用户明确要求「打开 / 去 / 跳到 / 带我看看」某页时用；他只是在问某个项目的情况时，
@@ -347,9 +350,16 @@ export async function runAgentTurn(params: RunAgentTurnParams) {
       ? `${SCOPE_NOTES.personal}\n\n${PERSONAL_FOCUS_NOTE}`
       : SCOPE_NOTES[scope.kind];
 
+  // 技能目录只进个人助手：项目助手是团队共享会话，技能正文与工具结果会留在共享记录里。
+  // 目录只是「名称 + 一句话描述」，正文等模型 read_skill 时才读（渐进披露）。
+  const skillBlock =
+    scope.kind === "personal" ? await buildSkillCatalogBlock(actorId) : "";
+
   const result = await generateText({
     model: model ?? getModel(),
-    system: `${SYSTEM_PREAMBLE}\n\n${scopeNote}\n\n${HISTORY_NOTE}\n\n${snapshot}`,
+    system: `${SYSTEM_PREAMBLE}\n\n${scopeNote}\n\n${HISTORY_NOTE}\n\n${
+      skillBlock ? `${skillBlock}\n\n` : ""
+    }${snapshot}`,
     tools,
     // 多动作回合要给足工具步数（读→写→再读→再写→收尾文本）；它只是上限，不逼模型多调
     stopWhen: stepCountIs(8),

@@ -33,6 +33,7 @@ export const DRAFT_TOOL_LABELS: Record<string, string> = {
   edit_task_labels: "任务标签",
   manage_dashboard_widgets: "工作台卡片",
   manage_task_plans: "日程表排期",
+  create_skill: "新技能",
 };
 
 /**

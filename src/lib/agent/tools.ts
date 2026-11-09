@@ -80,6 +80,8 @@ import {
   normalizeLayoutDoc,
 } from "@/lib/dashboard-layout";
 import { getDashboardLayout, getRailLayout } from "@/lib/dashboard-layout-store";
+import { assertSkillNameAvailable, normalizeSkillDraft } from "@/lib/skill";
+import { readSkillFileForTool, readSkillForTool } from "./skills";
 import {
   applyWidgetOps,
   readUserWidgets,
@@ -1630,6 +1632,40 @@ function buildBasePersonalTools(actorId: string) {
       inputSchema: taskPlanDraftSchema,
       execute: async ({ ops }) => planTaskDaysDraft(actorId, ops),
     }),
+    read_skill: tool({
+      description:
+        "读取一个技能的完整工作流说明。name 取自系统提示「我的技能」目录。" +
+        "当用户的要求与某条技能描述吻合、或用户点名某个技能时，先读它再照做；" +
+        "返回正文与参考文件清单（有文件再用 read_skill_file 按需读）。",
+      inputSchema: z.object({
+        name: z.string().describe("技能名称，原样取自「我的技能」目录"),
+      }),
+      execute: async ({ name }) => readSkillForTool(actorId, name),
+    }),
+    read_skill_file: tool({
+      description:
+        "读取技能附带的参考文件正文。path 取自 read_skill 返回的 files[].path；" +
+        "只用于用户添加的技能（内置技能没有参考文件）。",
+      inputSchema: z.object({
+        name: z.string().describe("技能名称"),
+        path: z.string().describe("参考文件路径，取自 read_skill 的 files[].path"),
+      }),
+      execute: async ({ name, path }) => readSkillFileForTool(actorId, name, path),
+    }),
+    create_skill: tool({
+      description:
+        "拟一份新技能草案：name（名称）、description（一句话说明何时该用）、" +
+        "instructions（给助手看的工作流正文，可含步骤、检查项、输出格式）。" +
+        "用户要你把一套做法固化成技能时用；名称不得与内置技能或已有技能重名。" +
+        "仅产草案，需用户在卡片上确认后才保存。",
+      inputSchema: skillDraftSchema,
+      execute: async (input) => {
+        // 拟稿就校验一遍：名称重复、正文超长在这里说清楚，别等确认落库才报错
+        const draft = normalizeSkillDraft(input);
+        await assertSkillNameAvailable(actorId, draft.name);
+        return draftEnvelope(CREATE_SKILL_TOOL, draft);
+      },
+    }),
     save_personal_context: tool({
       description:
         "把用户自述的背景、偏好、近况记成「个人上下文」草案（如「我每周三下午有课」）。" +
@@ -1744,6 +1780,10 @@ export const EDIT_TASK_LABELS_TOOL = "edit_task_labels" as const;
 export const MANAGE_WIDGETS_TOOL = "manage_dashboard_widgets" as const;
 export const MANAGE_TASK_PLANS_TOOL = "manage_task_plans" as const;
 
+// 技能：只挂在工作台助手（个人 scope）。项目助手是团队共享会话，
+// 技能正文会随工具结果进入共享对话记录，等于让队友看到，故不接。
+export const CREATE_SKILL_TOOL = "create_skill" as const;
+
 /** 需要人工确认才落库的工具全集 —— 两个 scope 的草案都走同一张确认卡 */
 export const COMMIT_TOOL_NAMES = [
   ...WRITE_TOOL_NAMES,
@@ -1765,6 +1805,7 @@ export const COMMIT_TOOL_NAMES = [
   EDIT_TASK_LABELS_TOOL,
   MANAGE_WIDGETS_TOOL,
   MANAGE_TASK_PLANS_TOOL,
+  CREATE_SKILL_TOOL,
 ] as const;
 
 export type CommitToolName = (typeof COMMIT_TOOL_NAMES)[number];
@@ -1773,6 +1814,16 @@ export type CommitToolName = (typeof COMMIT_TOOL_NAMES)[number];
  * 个人上下文草案：条目数组。`userId` 不在 schema 里 —— 落库时恒取发话人（见 lib/personal-context.ts），
  * 模型就算硬塞一个 userId 也进不来。`visibility` 缺省即 `shared`（项目可见），与手填一致。
  */
+/**
+ * 技能草案：只收名称、描述与正文。参考文件不从这里进 —— 模型无法上传文件，
+ * 需要随技能带资料的场景由用户在设置页导入或编辑。
+ */
+export const skillDraftSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  instructions: z.string(),
+});
+
 export const personalContextDraftSchema = z.object({
   entries: z.array(
     z.object({

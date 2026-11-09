@@ -1622,5 +1622,53 @@ function DraftCard({
     );
   }
 
+  if (draft.tool === "create_skill") {
+    const d = data as {
+      name?: string;
+      description?: string;
+      instructions?: string;
+    };
+    const name = typeof d.name === "string" ? d.name.trim() : "";
+    const description =
+      typeof d.description === "string" ? d.description.trim() : "";
+    const instructions =
+      typeof d.instructions === "string" ? d.instructions : "";
+    const invalid = !name
+      ? "还缺技能名称"
+      : !description
+        ? "还缺技能描述（它决定助手何时该用）"
+        : !instructions.trim()
+          ? "还缺技能正文"
+          : undefined;
+    return (
+      <CardShell
+        title={`新技能「${name || "未命名"}」`}
+        onConfirm={() => save("create_skill", d)}
+        invalid={invalid}
+      >
+        {description && (
+          <p className="text-xs text-ink-soft">
+            <span className="text-ink-faint">何时该用：</span>
+            {description}
+          </p>
+        )}
+        {instructions && (
+          <details>
+            <summary className="cursor-pointer text-xs text-ink-soft">
+              查看工作流正文（{instructions.length} 字）
+            </summary>
+            <pre className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap rounded-field bg-sunken p-2 text-xs text-ink">
+              {instructions}
+            </pre>
+          </details>
+        )}
+        <p className="text-xs text-ink-faint">
+          保存后属于你个人；助手在任务与描述吻合时会先读取这套流程。参考文件可到「AI
+          配置」页补充。
+        </p>
+      </CardShell>
+    );
+  }
+
   return null;
 }

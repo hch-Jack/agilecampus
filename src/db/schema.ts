@@ -506,6 +506,42 @@ export const personalContexts = pgTable(
   (t) => [index("personal_contexts_user_idx").on(t.userId, t.visibility)],
 );
 
+// ------------------------------------------------------------------ 技能（AI 助手）
+//
+// 技能 = 一段给模型看的工作流说明（SKILL.md 的正文）+ 可选的文本参考文件。
+// 内置技能不入库（见 lib/agent/skill-builtins.ts），这张表只放用户自建 / 导入 / 让助手代写的。
+// `files` 是 `[{ path, content }]`：只收文本，脚本原样保存但**永不执行**（没有沙箱）。
+// 技能只属于个人助手：项目助手是团队共享会话，把私人技能读进上下文会泄露给队友。
+export const skillSourceEnum = pgEnum("skill_source", ["manual", "agent", "import"]);
+export type SkillSource = (typeof skillSourceEnum.enumValues)[number];
+
+export type SkillFile = { path: string; content: string };
+
+export const skills = pgTable(
+  "skills",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    instructions: text("instructions").notNull(),
+    // 参考文件（只读文本）。JSONB 数组；类型属于应用层，读写收口在 lib/skill.ts。
+    files: jsonb("files").$type<SkillFile[]>().notNull().default([]),
+    source: skillSourceEnum("source").notNull().default("manual"),
+    // 导入来源：claude（SKILL.md / zip 包）| markdown | json；内置技能用 agilecampus
+    origin: text("origin"),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: dbTimestampNow("created_at").notNull(),
+    updatedAt: dbTimestampNow("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("skills_user_name_unique").on(t.userId, t.name),
+    index("skills_user_idx").on(t.userId),
+  ],
+);
+
 export const taskDependencies = pgTable(
   "task_dependencies",
   {

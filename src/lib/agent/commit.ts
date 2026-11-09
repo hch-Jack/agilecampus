@@ -37,6 +37,7 @@ import {
 import { copyMessageAttachmentToTask, deleteAttachment } from "@/lib/attachment";
 import { copyAgentFileToTask } from "./files";
 import { createPersonalContext } from "@/lib/personal-context";
+import { createSkill } from "@/lib/skill";
 import { createTeam, joinTeam } from "@/lib/team";
 import { notifyTaskAssigned, notifyTaskCompleted } from "@/lib/notify";
 import {
@@ -71,6 +72,8 @@ import {
   RESPOND_INVITE_TOOL,
   SAVE_CONTEXT_TOOL,
   SEND_MESSAGE_TOOL,
+  CREATE_SKILL_TOOL,
+  skillDraftSchema,
   taskPlanDraftSchema,
   UPDATE_LABEL_TOOL,
   type CommitToolName,
@@ -335,6 +338,17 @@ export async function commitDraft(
       return { committed: 1, conflicts: [] };
     }
   }
+}
+
+// 技能：助手代写。落库口重校长度、重名与内置技能冲突，不信任拟稿时的校验。
+// 来源记为 agent，用户在设置页能看出这是助手创建的。
+export async function commitCreateSkill(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = skillDraftSchema.parse(draft);
+  await createSkill(actorId, d, { source: "agent", origin: "agilecampus" });
+  return { committed: 1, conflicts: [] };
 }
 
 // 个人上下文：与手填表单同一个口子（lib/personal-context.ts），只是来源记为 agent 而非 manual
@@ -715,6 +729,7 @@ export async function commitPersonalDraft(
   // 卡片布局与日程表计划：草案里没有 projectId，同样在拆 projectId 之前分派
   if (tool === MANAGE_WIDGETS_TOOL) return commitManageWidgets(actorId, draft);
   if (tool === MANAGE_TASK_PLANS_TOOL) return commitManageTaskPlans(actorId, draft);
+  if (tool === CREATE_SKILL_TOOL) return commitCreateSkill(actorId, draft);
 
   if (tool === "create_project") {
     // teamId 是 uuid 形状，与下面那四类同理：缺了/填成了团队名就说清楚，别甩一句「草案格式无效」
