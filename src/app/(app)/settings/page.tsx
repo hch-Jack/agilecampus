@@ -10,6 +10,9 @@ import { AgentHistorySetting } from "@/components/agent-history-setting";
 import { AssistantHistoryReset } from "@/components/assistant-history-reset";
 import { PersonalContextCard } from "@/components/personal-context-card";
 import { AssistantMemoryTransfer } from "@/components/assistant-memory-transfer";
+import { SkillManager, type UserSkillRow } from "@/components/skill-manager";
+import { BUILTIN_SKILLS } from "@/lib/agent/skill-builtins";
+import { listMySkills } from "@/lib/skill";
 import { TokenManager, type TokenRow } from "./token-manager";
 
 // 「AI配置」页装两类东西：右侧助手的设置（记忆条数 + 个人上下文）与个人访问令牌。
@@ -37,12 +40,24 @@ export default async function SettingsPage({
   // 令牌列表的时间按**用户自己的**时区显示
   const tz = await resolveUserTimeZone(session.user.id);
 
-  const [rawTokens, contextItems, historyLimit, conversationCount] = await Promise.all([
-    listApiTokens(session.user.id),
-    listMyPersonalContext(session.user.id),
-    getAiHistoryLimit(session.user.id),
-    countPersonalConversations(session.user.id),
-  ]);
+  const [rawTokens, contextItems, historyLimit, conversationCount, skillRows] =
+    await Promise.all([
+      listApiTokens(session.user.id),
+      listMyPersonalContext(session.user.id),
+      getAiHistoryLimit(session.user.id),
+      countPersonalConversations(session.user.id),
+      listMySkills(session.user.id),
+    ]);
+
+  const skills: UserSkillRow[] = skillRows.map((s) => ({
+    id: s.id,
+    name: s.name,
+    description: s.description,
+    instructions: s.instructions,
+    source: s.source,
+    origin: s.origin,
+    enabled: s.enabled,
+  }));
 
   const tokens: TokenRow[] = rawTokens.map((t) => ({
     id: t.id,
@@ -93,6 +108,25 @@ export default async function SettingsPage({
           <div className="border-t border-line pt-3">
             <AssistantHistoryReset conversationCount={conversationCount} />
           </div>
+        </div>
+      </section>
+
+      <section className="space-y-4">
+        <div className="space-y-1">
+          <h2 className="font-display text-lg font-semibold text-ink">技能</h2>
+          <p className="text-sm text-ink-soft">
+            让助手学会你的固定做法：内置几种常用工作流，也可以导入或手写自己的技能。
+          </p>
+        </div>
+
+        <div className="ac-card p-5">
+          <SkillManager
+            builtin={BUILTIN_SKILLS.map((s) => ({
+              name: s.name,
+              description: s.description,
+            }))}
+            skills={skills}
+          />
         </div>
       </section>
 

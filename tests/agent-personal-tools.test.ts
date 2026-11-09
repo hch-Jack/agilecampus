@@ -15,6 +15,7 @@ import {
   CREATE_GROUP_TOOL,
   CREATE_LABEL_TOOL,
   CREATE_RESOURCE_USAGE_TOOL,
+  CREATE_SKILL_TOOL,
   CREATE_TEAM_TOOL,
   DELETE_LABEL_TOOL,
   EDIT_TASK_LABELS_TOOL,
@@ -71,6 +72,7 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
         "create_milestone",
         "create_project",
         "create_resource_usage",
+        "create_skill",
         "create_team",
         "decompose_tasks",
         "delete_label",
@@ -102,6 +104,8 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
         "query_progress",
         "read_file",
         "read_messages",
+        "read_skill",
+        "read_skill_file",
         "respond_group_invite",
         "save_file_to_task",
         "search_messages",
@@ -121,6 +125,10 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     expect(projectTools).not.toHaveProperty("open_message");
     expect(projectTools).not.toHaveProperty("respond_group_invite");
     expect(projectTools).not.toHaveProperty("attach_message_file_to_task");
+    // 技能是个人助手的：项目助手是团队共享会话，不接
+    expect(projectTools).not.toHaveProperty("read_skill");
+    expect(projectTools).not.toHaveProperty("read_skill_file");
+    expect(projectTools).not.toHaveProperty("create_skill");
     // 发送 / 转发 / 建群只在工作台：项目页没有消息上下文，也没有发消息的入口
     expect(projectTools).not.toHaveProperty("find_contact");
     expect(projectTools).not.toHaveProperty("send_message");
@@ -310,6 +318,8 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     // 工作台卡片与日程表排期也只归工作台助手：项目页没有工作台布局，也无从管个人的计划日
     expect(WRITE_TOOL_NAMES).not.toContain(MANAGE_WIDGETS_TOOL);
     expect(WRITE_TOOL_NAMES).not.toContain(MANAGE_TASK_PLANS_TOOL);
+    // 技能只归个人助手：项目页是团队共享会话，技能正文不该进去
+    expect(WRITE_TOOL_NAMES).not.toContain(CREATE_SKILL_TOOL);
     expect(COMMIT_TOOL_NAMES).toEqual([
       ...WRITE_TOOL_NAMES,
       SAVE_CONTEXT_TOOL,
@@ -330,6 +340,7 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
       EDIT_TASK_LABELS_TOOL,
       MANAGE_WIDGETS_TOOL,
       MANAGE_TASK_PLANS_TOOL,
+      CREATE_SKILL_TOOL,
     ]);
   });
 });
@@ -428,8 +439,8 @@ describe("buildPersonalTools：焦点项目的工具面", () => {
     const base = buildPersonalTools(student.id);
     const focused = buildPersonalTools(student.id, project.id);
 
-    expect(Object.keys(base)).toHaveLength(45);
-    expect(Object.keys(focused)).toHaveLength(51);
+    expect(Object.keys(base)).toHaveLength(48);
+    expect(Object.keys(focused)).toHaveLength(54);
     expect(Object.keys(focused).filter((name) => !(name in base)).sort()).toEqual(
       [...FOCUS_PROJECT_TOOL_NAMES].sort(),
     );
