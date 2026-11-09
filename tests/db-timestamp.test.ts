@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { getTableColumns, is, sql } from "drizzle-orm";
-import { PgTable } from "drizzle-orm/pg-core";
+import { PgCustomColumn, PgTable } from "drizzle-orm/pg-core";
 import { db } from "@/db";
 import * as schema from "@/db/schema";
 import { getDbTimeZone, setDbTimeZone } from "@/db/schema";
@@ -113,29 +113,27 @@ describe("无时区 timestamp 列的读写口径", () => {
 });
 
 describe("时间列的物理 schema 没有变（db:push 不该产生 ALTER）", () => {
-  it("每一条时间列仍是 timestamp，且默认值的有无与改动前逐一相同", () => {
-    const columns: { sqlType: string; hasDefault: boolean }[] = [];
-    for (const table of Object.values(schema)) {
+  it("每一条时间列都由 dbTimestamp / dbTimestampNow 声明，物理类型是无时区 timestamp", () => {
+    const columns: { name: string; sqlType: string; hasDefault: boolean }[] = [];
+    for (const [tableName, table] of Object.entries(schema)) {
       if (!is(table, PgTable)) continue;
-      for (const column of Object.values(getTableColumns(table))) {
-        if (column.getSQLType() !== "timestamp") continue;
-        columns.push({ sqlType: column.getSQLType(), hasDefault: column.hasDefault });
+      for (const [columnName, column] of Object.entries(getTableColumns(table))) {
+        if (!column.getSQLType().startsWith("timestamp")) continue;
+        columns.push({
+          name: `${tableName}.${columnName}`,
+          sqlType: column.getSQLType(),
+          hasDefault: column.hasDefault,
+        });
+        // 站的约定：时间列只能用 dbTimestamp / dbTimestampNow 声明。
+        // 直接检查声明方式而不是数总数 —— 正常加表不会再触发无意义失败，
+        // 但任何人改用 drizzle 自带的 timestamp()（假定 UTC，会差一个时区偏移）
+        // 或用带时区变体，都会在这里被抓住。
+        expect(is(column, PgCustomColumn), `${tableName}.${columnName}`).toBe(true);
       }
     }
 
-    // 数目是对不上就说明有人绕开了 dbTimestamp 自己搓了一个时间列
-    // （私信/动态流/群聊那几张表后来加过一轮，个人上下文表又加了一轮，留言板再加一轮，
-    // 新手教程打点又加一轮，助手多会话又加了 conversations.last_message_at，
-    // 动态单条隐藏又加了 activity_hides.created_at，
-    // 审批表又加了 approval_requests 的四个（资源快照起止 + 决定时刻 + 行创建），
-    // 工作台日程表又加了 task_plans 的 created_at/updated_at，
-    // 系统消息又加了 system_messages 的 created_at/read_at ——
-    // 项目留言板又加了 project_comments 的 created_at ——
-    // 助手对话文件又加了 agent_files.created_at ——
-    // 消息标签又加了 message_tags.created_at ——
-    // 加表/加时间列就得同步这个数）
-    expect(columns).toHaveLength(49);
-    for (const c of columns) expect(c.sqlType).toBe("timestamp");
+    expect(columns.length).toBeGreaterThan(0);
+    for (const c of columns) expect(c.sqlType, c.name).toBe("timestamp");
 
     // createdAt / updatedAt 由 dbTimestampNow 声明，默认值必须在；
     // feishuBoundAt 等本来没有默认值，绝不能被加上（那会驱动 db:push 去 ALTER）
