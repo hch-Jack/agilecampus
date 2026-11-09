@@ -73,8 +73,8 @@ describe("list_dashboard_widgets", () => {
     expect(view.rail.items.map((i) => i.instanceId)).toEqual([
       "unread_messages",
       "upcoming",
-      "quick_links",
-      "clock",
+      "recent_attachments",
+      "focus_timer",
     ]);
     // 从未设置过 → 默认收起
     expect(view.rail.collapsed).toBe(true);
