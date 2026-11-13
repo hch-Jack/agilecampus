@@ -173,5 +173,13 @@ describe("时间列的物理 schema 没有变（db:push 不该产生 ALTER）", 
     expect(getTableColumns(schema.systemMessages).readAt.hasDefault).toBe(false);
     // 项目留言板：行创建由库写（dbTimestampNow，默认值必须在）
     expect(getTableColumns(schema.projectComments).createdAt.hasDefault).toBe(true);
+    // 在线文档：创建/更新时刻由库写；版本与授权行创建随行写
+    expect(getTableColumns(schema.documents).createdAt.hasDefault).toBe(true);
+    expect(getTableColumns(schema.documents).updatedAt.hasDefault).toBe(true);
+    expect(getTableColumns(schema.documentVersions).createdAt.hasDefault).toBe(true);
+    expect(getTableColumns(schema.documentEditors).createdAt.hasDefault).toBe(true);
+    // 编辑锁：获取时刻由库写；过期时刻由应用算（不能有默认值）
+    expect(getTableColumns(schema.documentLocks).acquiredAt.hasDefault).toBe(true);
+    expect(getTableColumns(schema.documentLocks).expiresAt.hasDefault).toBe(false);
   });
 });

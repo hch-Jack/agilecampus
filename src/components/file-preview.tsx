@@ -8,6 +8,8 @@ import {
   renderMimeFor,
 } from "@/lib/file-preview";
 import type { SheetTable } from "@/lib/file-preview-office";
+import { detectEditableFormat } from "@/lib/documents/format";
+import { EditDocumentButton } from "@/components/documents/edit-document-button";
 
 /** 预览目标：url 是现成的下载路由（带会话鉴权），组件内按需取内容 */
 export type PreviewFile = {
@@ -67,8 +69,18 @@ function extOf(filename: string): string {
  * 统一版式：所有类型共用一个接近全屏的弹窗（96vw × 92vh），内容区撑满，
  * 不再为 PPT/文档留一个只够显示一条的窄条。
  */
-export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose: () => void }) {
+export function FilePreviewModal({
+  file,
+  onClose,
+  edit,
+}: {
+  file: PreviewFile;
+  onClose: () => void;
+  /** 任务附件/项目附件中心传入来源；私信、助手文件保持只读 */
+  edit?: { sourceType: string; sourceId: string } | null;
+}) {
   const kind = detectPreviewKind(file.filename, file.mimeType);
+  const editInfo = edit ? detectEditableFormat(file.filename, file.mimeType, file.size) : null;
   const renderMime = renderMimeFor(file.filename, file.mimeType);
 
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
@@ -278,6 +290,17 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
             {file.filename}
           </span>
           <span className="hidden shrink-0 text-xs text-ink-faint sm:inline">{fmtSize(file.size)}</span>
+          {edit && editInfo?.editable && (
+            <EditDocumentButton sourceType={edit.sourceType} sourceId={edit.sourceId} />
+          )}
+          {edit && editInfo && !editInfo.editable && (
+            <span
+              className="hidden shrink-0 text-[11px] text-ink-faint sm:inline"
+              title={editInfo.reason}
+            >
+              不支持在线编辑
+            </span>
+          )}
           {downloadBtn}
           <button
             type="button"

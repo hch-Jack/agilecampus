@@ -22,6 +22,7 @@ import { getProjectForUser, validateDateRange } from "./project";
 import { notifyTaskAssigned, notifyTaskCompleted } from "./notify";
 import { recordTaskActivity } from "./activity";
 import { requestTaskCompletion, withdrawTaskApprovals } from "./approval";
+import { collectTaskTreeBlobKeys, deleteBlobIfUnreferenced } from "./documents/blobs";
 
 // 动态值统一截断，空值归一为「无」
 function activityText(v: string | null | undefined, fallback = "无") {
@@ -361,7 +362,11 @@ export async function deleteTask(actorId: string, taskId: string) {
     await recordTaskActivity(db, [
       { taskId: task.parentTaskId, actorId, type: "subtask_deleted", newValue: task.title },
     ]);
+
+  // 级联删除会带走附件/文档行，但磁盘 blob 不会自己消失：先收集再清理
+  const blobKeys = await collectTaskTreeBlobKeys(taskId).catch(() => []);
   await db.delete(tasks).where(eq(tasks.id, taskId));
+  for (const key of blobKeys) await deleteBlobIfUnreferenced(key);
 }
 
 export type TaskLabel = { id: string; name: string; color: string };
