@@ -76,6 +76,26 @@ function feedParts(a: {
       return titled
         ? { before: "删除了「", after: `」的附件「${a.newValue ?? ""}」` }
         : { before: `删除了附件「${a.newValue ?? ""}`, after: "」" };
+    case "document_saved":
+      return titled
+        ? { before: "在「", after: `」中保存了文档「${a.newValue ?? ""}」` }
+        : { before: `保存了文档「${a.newValue ?? ""}`, after: "」" };
+    case "document_saved_as":
+      return titled
+        ? { before: "在「", after: `」中另存为文档「${a.newValue ?? ""}」` }
+        : { before: `另存为文档「${a.newValue ?? ""}`, after: "」" };
+    case "document_collaboration_changed":
+      return titled
+        ? { before: "把「", after: `」的协作模式切换为「${a.newValue ?? ""}」` }
+        : { before: `把协作模式切换为「${a.newValue ?? ""}`, after: "」" };
+    case "document_editor_granted":
+      return titled
+        ? { before: "在「", after: `」中授予「${a.newValue ?? ""}」编辑权限` }
+        : { before: `授予「${a.newValue ?? ""}`, after: "」编辑权限" };
+    case "document_editor_revoked":
+      return titled
+        ? { before: "在「", after: `」中撤销了「${a.newValue ?? ""}」的编辑权限` }
+        : { before: `撤销了「${a.newValue ?? ""}`, after: "」的编辑权限" };
     case "approval_requested":
       // 学生把任务提交完成审批（任务此时仍为进行中，没有状态变更动态可看）
       return titled

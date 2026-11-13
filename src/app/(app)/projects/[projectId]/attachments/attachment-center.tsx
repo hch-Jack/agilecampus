@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useActionState, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FilePreviewModal } from "@/components/file-preview";
+import { EditDocumentButton } from "@/components/documents/edit-document-button";
+import { detectEditableFormat } from "@/lib/documents/format";
 import { formatShortDateTime } from "@/lib/time";
 import { MAX_FILE_SIZE, MAX_FILE_SIZE_LABEL } from "@/lib/file-limits";
 import { uploadFileRaw } from "@/lib/upload-client";
@@ -274,6 +276,7 @@ function FileRow({
     null,
   );
   const [previewing, setPreviewing] = useState(false);
+  const editInfo = detectEditableFormat(file.filename, file.mimeType, file.size);
 
   return (
     <li className="flex items-center gap-2 rounded px-1 py-1 hover:bg-sunken">
@@ -293,6 +296,16 @@ function FileRow({
       >
         预览
       </button>
+
+      {/* 在线编辑：仅对文本/Word/表格格式显示；其它格式预览弹窗内给出只读原因 */}
+      {editInfo.editable && (
+        <EditDocumentButton
+          sourceType="task_attachment"
+          sourceId={file.id}
+          label="编辑"
+          className="text-xs text-primary underline"
+        />
+      )}
 
       {/* 下载走 GET 路由（always attachment 响应），与 server action 写路径分离 */}
       <a
@@ -331,6 +344,7 @@ function FileRow({
             size: file.size,
           }}
           onClose={() => setPreviewing(false)}
+          edit={{ sourceType: "task_attachment", sourceId: file.id }}
         />
       )}
     </li>

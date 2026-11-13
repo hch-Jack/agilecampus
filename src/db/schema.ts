@@ -919,3 +919,115 @@ export const taskPlans = pgTable(
     index("task_plans_user_idx").on(t.userId),
   ],
 );
+
+// ---------------------------------------------------------------- 在线文档编辑
+
+/**
+ * 可编辑文档的元数据。用 `(source_type, source_id)` 多态指向实际来源：
+ * 当前只有任务附件（`task_attachment`），后续「总资源库」新增
+ * `resource_library` 来源时只需注册新的 DocumentSourceAdapter，编辑器、
+ * 权限、版本、协作链路均无需改动。
+ *
+ * - `task_id` 是生命周期锚点：任务删除时文档行级联消失；资源库等没有任务的
+ *   来源留空，由对应 adapter 的 `onDocumentDeleted` 负责清理。
+ * - `collaboration_enabled = false`（默认）时同一时刻只允许一个用户编辑，
+ *   由 document_locks 行锁保证；开启后允许多人同时编辑，保存用
+ *   current_version 乐观锁。
+ * - 文件内容本身仍以 task_attachments 为准（filename/mime/size/storage_key
+ *   在该行上更新），这里只存编辑态与版本号。
+ */
+export const documents = pgTable(
+  "documents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id").notNull(),
+    taskId: uuid("task_id").references(() => tasks.id, { onDelete: "cascade" }),
+    format: text("format").notNull(), // text | docx | sheet
+    filename: text("filename").notNull(),
+    mimeType: text("mime_type"),
+    currentVersion: integer("current_version").notNull().default(1),
+    collaborationEnabled: boolean("collaboration_enabled").notNull().default(false),
+    createdById: uuid("created_by_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: dbTimestampNow("created_at").notNull(),
+    updatedAt: dbTimestampNow("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("documents_source_unique").on(t.sourceType, t.sourceId),
+    index("documents_task_idx").on(t.taskId),
+  ],
+);
+
+/**
+ * 文档版本历史（同时是完整审计）：每次保存写入一条不可变记录。
+ * `storage_key` 始终指向一份磁盘 blob；当前版本允许与 task_attachments
+ * 共用同一个 key，旧版本各自独享 key。docx 额外保存 Tiptap JSON
+ * (`editor_state`)，后续打开优先用它作为编辑态真源，避免 docx↔HTML
+ * 反复往返造成格式漂移。
+ *
+ * 保留策略：最新 50 个版本 + 第 1 版（原始版），裁剪时排除当前版本。
+ */
+export const documentVersions = pgTable(
+  "document_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    documentId: uuid("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    filename: text("filename").notNull(),
+    mimeType: text("mime_type"),
+    size: integer("size").notNull(),
+    storageKey: text("storage_key").notNull(),
+    editorState: jsonb("editor_state"),
+    note: text("note"), // initial | autosave | manual | restore | save_as
+    createdById: uuid("created_by_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: dbTimestampNow("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("document_versions_doc_version_unique").on(t.documentId, t.version)],
+);
+
+/**
+ * 文档级额外编辑授权。上传者与团队 admin 的编辑/管理权由来源适配器实时
+ * 推导，不落行；这里只存「额外授权给某个团队成员」的记录，撤销即删行。
+ */
+export const documentEditors = pgTable(
+  "document_editors",
+  {
+    documentId: uuid("document_id")
+      .notNull()
+      .references(() => documents.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    grantedById: uuid("granted_by_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: dbTimestampNow("created_at").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.documentId, t.userId] }),
+    index("document_editors_user_idx").on(t.userId),
+  ],
+);
+
+/**
+ * 单人编辑锁：一行一文档。协作开关关闭时，只有持锁者可以保存。
+ * TTL 90s、客户端 30s 心跳；过期锁在下一次获取时被直接覆盖，无需后台清理。
+ * `expires_at` 由应用写，不能有默认值（db:push 不应产生 ALTER）。
+ */
+export const documentLocks = pgTable("document_locks", {
+  documentId: uuid("document_id")
+    .primaryKey()
+    .references(() => documents.id, { onDelete: "cascade" }),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  sessionId: text("session_id").notNull(),
+  acquiredAt: dbTimestampNow("acquired_at").notNull(),
+  expiresAt: dbTimestamp("expires_at").notNull(),
+});

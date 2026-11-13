@@ -71,7 +71,7 @@ const DOC_EXTS = new Set(["doc", "dot"]);
 const EXCEL_EXTS = new Set(["xlsx", "xlsm", "xlsb", "xls", "xltx", "xltm", "xlt", "ods"]);
 const PPT_EXTS = new Set(["pptx", "pptm", "ppsx", "potx"]);
 
-function extOf(filename: string): string {
+export function extOf(filename: string): string {
   const dot = filename.lastIndexOf(".");
   return dot === -1 ? "" : filename.slice(dot + 1).toLowerCase();
 }
