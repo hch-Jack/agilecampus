@@ -82,7 +82,7 @@ export function TaskOverview({
                   <button
                     type="button"
                     onClick={() => setEditing(true)}
-                    className="text-xs text-ink-faint hover:text-primary hover:underline"
+                    className="ac-hit text-xs text-ink-faint hover:text-primary hover:underline"
                   >
                     编辑
                   </button>
@@ -159,7 +159,7 @@ export function TaskOverview({
           {deleteError && <p className="text-xs text-high">{deleteError}</p>}
           <button
             disabled={deleting}
-            className="text-xs text-high underline disabled:opacity-50"
+            className="ac-hit text-xs text-high underline disabled:opacity-50"
           >
             删除任务
           </button>

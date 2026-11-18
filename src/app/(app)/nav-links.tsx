@@ -3,27 +3,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useLayoutEffect, useRef, useState } from "react";
+import { activeNavKey, NAV_ITEMS } from "./nav-items";
 
-// key 是分区前缀（用于判定当前页），href 是点击跳转目标。
-// 消息不在这里：入口固定在顶栏右侧的「消息」按钮（AI 助手旁），见 messages-panel.tsx 的 MessagesToggle。
-const ITEMS = [
-  { key: "/dashboard", href: "/dashboard", label: "工作台" },
-  { key: "/projects", href: "/projects", label: "所有项目" },
-  { key: "/teams", href: "/teams", label: "我的团队" },
-  { key: "/settings", href: "/settings", label: "AI配置" },
-] as const;
-
-// 当前路径落在哪个导航分区（含子页）
-function activeKey(pathname: string): string {
-  for (const it of ITEMS) {
-    if (pathname.startsWith(it.key)) return it.key;
-  }
-  return "";
-}
-
-export function NavLinks() {
+export function NavLinks({ className = "" }: { className?: string }) {
   const pathname = usePathname();
-  const active = activeKey(pathname);
+  const active = activeNavKey(pathname);
   const itemRefs = useRef<Record<string, HTMLAnchorElement | null>>({});
   const [pill, setPill] = useState<{ left: number; width: number } | null>(null);
 
@@ -34,7 +18,7 @@ export function NavLinks() {
   }, [active]);
 
   return (
-    <nav className="relative flex items-center gap-1">
+    <nav className={`relative flex items-center gap-1 ${className}`}>
       {pill && (
         <span
           aria-hidden
@@ -42,7 +26,7 @@ export function NavLinks() {
           style={{ left: pill.left, width: pill.width }}
         />
       )}
-      {ITEMS.map((item) => {
+      {NAV_ITEMS.map((item) => {
         const isActive = active === item.key;
         return (
           <Link

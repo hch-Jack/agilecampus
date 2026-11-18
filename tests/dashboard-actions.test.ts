@@ -190,6 +190,47 @@ describe("saveDashboardLayoutAction", () => {
     expect(await getDashboardLayout(user.id)).not.toHaveProperty("zoom");
   });
 
+  it("文字大小与单卡缩放随布局往返；100% 不落字段", async () => {
+    const user = await makeUser("owner@example.com");
+    authMock.userId = user.id;
+
+    const doc = {
+      v: 1 as const,
+      items: [
+        { id: "note", type: "note" as const, x: 0, y: 0, w: 4, h: 4, scale: 1.15 },
+        { id: "clock", type: "clock" as const, x: 4, y: 0, w: 4, h: 3, scale: 1 },
+      ],
+      textScale: 1.1,
+    };
+    expect(await saveDashboardLayoutAction(doc)).toEqual({ ok: true });
+    const saved = await getDashboardLayout(user.id);
+    expect(saved.textScale).toBe(1.1);
+    expect(saved.items.find((item) => item.id === "note")!.scale).toBe(1.15);
+    // 100% 等价于缺省：不写字段
+    expect(saved.items.find((item) => item.id === "clock")!.scale).toBeUndefined();
+
+    // 非 5% 步进的值保存时按步进取整
+    expect(await saveDashboardLayoutAction({ v: 1, items: [], textScale: 1.17 })).toEqual({
+      ok: true,
+    });
+    expect((await getDashboardLayout(user.id)).textScale).toBe(1.15);
+
+    // 信封层拒绝超出范围的值
+    expect(await saveDashboardLayoutAction({ v: 1, items: [], textScale: 1.5 })).toHaveProperty(
+      "error",
+    );
+    expect(
+      await saveDashboardLayoutAction({ v: 1, items: [{ id: "note", x: 0, y: 0, w: 4, h: 4, scale: 0.5 }] }),
+    ).toHaveProperty("error");
+
+    // 库里已有的越界值读出来时夹到边界
+    await db
+      .update(users)
+      .set({ dashboardLayout: { v: 1, items: [], textScale: 2 } })
+      .where(eq(users.id, user.id));
+    expect((await getDashboardLayout(user.id)).textScale).toBe(1.3);
+  });
+
   it("zoom 超出合法范围或被夹到边界后能被读出", async () => {
     const user = await makeUser("owner@example.com");
     authMock.userId = user.id;

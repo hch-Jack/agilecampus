@@ -3,6 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -16,6 +17,7 @@ import {
   MESSAGES_PANEL_OPEN_EVENT,
 } from "@/lib/right-panels";
 import { MessagesPanelContext, useMessagesPanel, type MessagesMode } from "./messages-panel-context";
+import { setRightPanelOpen } from "./right-panel-push";
 
 /**
  * 消息系统的**固定模式**（整页 ⇄ 右侧浮窗）与浮窗本体。
@@ -28,7 +30,8 @@ import { MessagesPanelContext, useMessagesPanel, type MessagesMode } from "./mes
  *   弹回上一个页面（兜底工作台）并开浮窗，整页不让出现
  *
  * 浮窗布局口径与 AI 助手面板（assistant-shell.tsx）完全一致：桌面端挤压正文
- * （`lg:pr-[570px]`）、移动端覆盖 + 遮罩，抽屉同宽（`lg:w-[570px]`）；
+ * （由 right-panel-push.tsx 统一加 `lg:pr-[570px]`，两面板共用一层，切换不抖）、
+ * 移动端覆盖 + 遮罩，抽屉同宽（`lg:w-[570px]`）；
  * aside 复用 `assistant-panel` 类拿宇宙主题深色玻璃与减弱动态偏好。
  * 与助手的互斥靠 window 事件（见 lib/right-panels.ts），两边互不 import。
  *
@@ -98,7 +101,25 @@ export function MessagesPanelShell({
   // 浮窗可见性是派生的：只在 drawer 模式且不在 /messages 上（后者是跳转过渡态）。
   // 这样两种消息形态天然不共存，也避免「路由回消息页关浮窗」这类 effect 里 setState。
   const visible = mode === "drawer" && open && pathname !== "/messages";
-  const renderContent = visible || keepMounted;
+  // 打开抽屉的同一拍挂载整个消息界面（含首次拉取）会占住首帧，滑入动画起步就卡一下。
+  // 让抽屉先滑出第一帧、下一帧再挂内容：那时抽屉才走到 ~5%，肉眼无差；而 transform
+  // 过渡跑在合成线程上，主线程在挂载期间动画照常流畅。
+  // 收起 300ms 后复位（与 keepMounted 同节拍），下次打开重新享受这一帧的缓冲。
+  const [paintReady, setPaintReady] = useState(false);
+  useEffect(() => {
+    if (visible) {
+      const raf = requestAnimationFrame(() => setPaintReady(true));
+      return () => cancelAnimationFrame(raf);
+    }
+    const timer = setTimeout(() => setPaintReady(false), 300);
+    return () => clearTimeout(timer);
+  }, [visible]);
+  const renderContent = (visible && paintReady) || keepMounted;
+  // 内容元素本身也是稳定的：外壳因开关/模式变化重渲染时，不去重算整套消息列表
+  const content = useMemo(
+    () => <MessagesClient timeZone={timeZone} variant="panel" />,
+    [timeZone],
+  );
 
   // 「进消息系统之前的页面」：layout 的客户端组件跨路由常驻，每次落到非消息页记一笔；
   // 直接打开/刷新时没有来路，弹回/切换兜底去工作台。
@@ -126,6 +147,12 @@ export function MessagesPanelShell({
   useEffect(() => {
     if (open) window.dispatchEvent(new Event(MESSAGES_PANEL_OPEN_EVENT));
   }, [open]);
+
+  // 正文挤压交给 RightPanelPush 统一算：和助手互斥且同宽，切换时正文不挪位
+  useEffect(() => {
+    setRightPanelOpen("messages", visible);
+  }, [visible]);
+  useEffect(() => () => setRightPanelOpen("messages", false), []);
   useEffect(() => {
     const close = () => closePanel();
     window.addEventListener(ASSISTANT_PANEL_OPEN_EVENT, close);
@@ -206,14 +233,7 @@ export function MessagesPanelShell({
 
   return (
     <MessagesPanelContext.Provider value={{ mode, open, openMessages, toggleDrawer, switchMode }}>
-      {/* 桌面端挤压正文：与助手的 assistant-shell-push 同款；互斥保证不会同时挤压 */}
-      <div
-        className={`min-h-screen transition-[padding] duration-300 ease-out ${
-          visible ? "lg:pr-[570px]" : ""
-        }`}
-      >
-        {children}
-      </div>
+      {children}
 
       {/* 移动端遮罩；桌面端正文已被挤开，不需要 */}
       {visible && (
@@ -233,8 +253,10 @@ export function MessagesPanelShell({
           visible ? "translate-x-0" : "translate-x-full"
         }`}
       >
-        <div className="flex min-h-0 flex-1 flex-col p-4 lg:px-5">
-          {renderContent && <MessagesClient timeZone={timeZone} variant="panel" />}
+        {/* 不加内边距：浮窗里是左右两栏的界面，左栏要贴着抽屉左边框、
+            头部条要贴着上边框，留白交给各栏自己控制（页头 px-3、列表 p-3）。 */}
+        <div className="flex min-h-0 flex-1 flex-col">
+          {renderContent && content}
         </div>
       </aside>
     </MessagesPanelContext.Provider>

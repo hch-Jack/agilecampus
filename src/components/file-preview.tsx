@@ -20,7 +20,8 @@ export type PreviewFile = {
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
 // 文件类型角标文案（弹窗标题左侧），不认识的一律归「文件」
@@ -180,7 +181,11 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
         const res = await fetch(file.url);
         if (!res.ok) throw new Error(String(res.status));
         const buf = await res.arrayBuffer();
-        if (!cancelled) setPptBuf(buf);
+        // pptxgenjs 生成的旧文件可能带着悬空的 slideMaster 声明，解析器会整份放弃；
+        // 先修掉再交给 pptx-preview（无悬空声明时原样返回，不做重打包）
+        const { stripDanglingPptxOverrides } = await import("@/lib/pptx-sanitize");
+        const fixed = await stripDanglingPptxOverrides(buf);
+        if (!cancelled) setPptBuf(fixed);
       } catch {
         if (!cancelled) setError("文档解析失败，可下载后查看");
       }
@@ -388,7 +393,9 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
                 )}
               </div>
               <div
-                className="min-h-0 flex-1 overflow-auto bg-white p-2 text-neutral-900 sm:p-3 [&_table]:border-collapse [&_table]:text-xs [&_table]:text-neutral-900 [&_td]:border [&_td]:border-neutral-200 [&_td]:px-2 [&_td]:py-0.5"
+                // 列宽/字号/内边距由 file-preview-office 生成的表格内联样式精确还原，
+                // 这里只补 Excel 网格线（单元格自定义边框会以内联样式覆盖）
+                className="min-h-0 flex-1 overflow-auto bg-white p-2 text-neutral-900 sm:p-3 [&_td]:border [&_td]:border-neutral-200"
                 dangerouslySetInnerHTML={{ __html: sheets[activeSheet]?.html ?? "" }}
               />
             </div>

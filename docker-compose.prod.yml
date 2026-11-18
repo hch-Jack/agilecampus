@@ -45,6 +45,8 @@ services:
       DATABASE_URL: postgres://agilecampus:${POSTGRES_PASSWORD}@db:5432/agilecampus
       # Auth.js v5 self-host 须信任反代/非 localhost 的 Host 头，否则登录报 UntrustedHost
       AUTH_TRUST_HOST: "true"
+      # 附件落盘目录（1GB 大文件不进数据库）；必须与下面的卷挂载点一致
+      UPLOAD_DIR: /app/data/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -53,6 +55,10 @@ services:
     ports:
       # 宿主 3000 常被占用；默认避让至 3080，可经 .env 的 APP_PORT 覆盖
       - "${APP_PORT:-3080}:3000"
+    volumes:
+      # 附件正文（磁盘小文件与 1GB 大文件）；不挂卷的话重建容器会丢文件
+      - uploads:/app/data/uploads
 
 volumes:
   pgdata:
+  uploads:

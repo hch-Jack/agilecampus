@@ -191,6 +191,31 @@ describe("runAgentTurn（个人 scope：控制台助手）", () => {
     expect(prompt).toContain("本次工作范围");
     expect(prompt).toContain("我参与的项目");
     expect(prompt).toContain("每周三下午有课（仅自己）");
+    // 技能目录只列名称 + 描述；正文要 read_skill 才读
+    expect(prompt).toContain("# 我的技能");
+    expect(prompt).toContain("weekly-report");
+    expect(prompt).toContain("read_skill");
+  });
+
+  it("技能目录只进个人助手：项目助手是团队共享会话，不带", async () => {
+    const { student, project } = await scene();
+    const personal = capturingReplay([textStep("好。")]);
+    await runAgentTurn({
+      actorId: student.id,
+      userText: "嗨",
+      scope: { kind: "personal" },
+      model: personal.model,
+    });
+    expect(JSON.stringify(personal.prompts[0])).toContain("# 我的技能");
+
+    const projectRun = capturingReplay([textStep("好。")]);
+    await runAgentTurn({
+      actorId: student.id,
+      projectId: project.id,
+      userText: "嗨",
+      model: projectRun.model,
+    });
+    expect(JSON.stringify(projectRun.prompts[0])).not.toContain("# 我的技能");
   });
 
   it("借 save_personal_context 拟上下文草案，只产草案不落库", async () => {

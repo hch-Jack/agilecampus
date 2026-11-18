@@ -8,15 +8,41 @@ export const GRID_COLUMNS = 12;
  * 缩放也有更细的档位。
  */
 export const GRID_ROW_HEIGHT = 32;
+/**
+ * 工作台 / 项目详情的行高（px）。这两个页面的正文上限从 64rem 放宽到 90rem 后，
+ * 内容区宽度 976px → 1392px（×1.43），行高按同一比例放大（32 × 1.43 ≈ 46），
+ * 卡片宽高比才回到加宽前的样子；只改行高不动坐标，所有既有布局（含用户自定义的）
+ * 一起等比变高，无需迁移。常驻栏宽度没变，仍用 {@link GRID_ROW_HEIGHT}。
+ */
+export const DASHBOARD_ROW_HEIGHT = 46;
 /** 卡片间距（px），指针换算与 CSS gap 共用 */
 export const GRID_GAP = 12;
 
-/** 缩放范围：70%–150%，步进 10%；1 = 标准，缺省即标准 */
+/** 网格缩放范围：70%–150%，步进 10%；1 = 标准，缺省即标准 */
 export const ZOOM_MIN = 0.7;
 export const ZOOM_MAX = 1.5;
 export const ZOOM_STEP = 0.1;
 
+/** 全局文字大小范围：85%–130%，步进 5%；1 = 标准，缺省即标准 */
+export const TEXT_SCALE_MIN = 0.85;
+export const TEXT_SCALE_MAX = 1.3;
+export const TEXT_SCALE_STEP = 0.05;
+
+/** 单卡内容缩放范围：80%–130%，步进 5%；1 = 标准，缺省即标准 */
+export const CARD_SCALE_MIN = 0.8;
+export const CARD_SCALE_MAX = 1.3;
+export const CARD_SCALE_STEP = 0.05;
+
 /** 夹取并取整缩放值；1 视为缺省（不写字段），非法值返回 undefined */
+function normalizeScale(value: unknown, min: number, max: number): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const clamped = Math.min(max, Math.max(min, value));
+  // 统一按 5% 档位取整，避免浮点噪声写进库
+  const rounded = Math.round(clamped * 20) / 20;
+  return rounded === 1 ? undefined : rounded;
+}
+
+/** 网格缩放（行高/间距）：夹取并取整到 10% 档位 */
 export function normalizeZoom(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   const clamped = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, value));
@@ -24,14 +50,30 @@ export function normalizeZoom(value: unknown): number | undefined {
   return rounded === 1 ? undefined : rounded;
 }
 
+/** 全局文字大小：夹取并取整到 5% 档位 */
+export function normalizeTextScale(value: unknown): number | undefined {
+  return normalizeScale(value, TEXT_SCALE_MIN, TEXT_SCALE_MAX);
+}
+
+/** 单卡内容缩放：夹取并取整到 5% 档位 */
+export function normalizeCardScale(value: unknown): number | undefined {
+  return normalizeScale(value, CARD_SCALE_MIN, CARD_SCALE_MAX);
+}
+
 /**
  * 缩放后的行高与间距。列数恒为 12 —— 缩放只改格子尺寸，
  * 所以已保存的坐标不受影响，同一块区域能放下更多（或更少）行。
+ *
+ * `rowBase` 是 100% 时的行高：工作台传 {@link DASHBOARD_ROW_HEIGHT}，
+ * 常驻栏沿用 {@link GRID_ROW_HEIGHT}。
  */
-export function gridMetrics(zoom?: number): { rowHeight: number; gap: number } {
+export function gridMetrics(
+  zoom?: number,
+  rowBase: number = GRID_ROW_HEIGHT,
+): { rowHeight: number; gap: number } {
   const z = normalizeZoom(zoom) ?? 1;
   return {
-    rowHeight: Math.max(16, Math.round(GRID_ROW_HEIGHT * z)),
+    rowHeight: Math.max(16, Math.round(rowBase * z)),
     gap: Math.max(4, Math.round(GRID_GAP * z)),
   };
 }
@@ -137,13 +179,21 @@ export type DashboardLayoutItem = {
   w: number;
   h: number;
   config?: DashboardWidgetConfig;
+  /** 单卡内容缩放 80%–130%；缺省等价于 1，只有非 1 时才写字段 */
+  scale?: number;
 };
 
 /**
  * 带版本的信封：库中 NULL = 从未自定义；items: [] = 用户主动删空。
- * `zoom` 缺省等价于 1（标准），只有非 1 时才写字段。
+ * `zoom` 缺省等价于 1（标准），只有非 1 时才写字段；
+ * `textScale` 同理，表示整页卡片的全局文字大小。
  */
-export type DashboardLayoutDoc = { v: 1; items: DashboardLayoutItem[]; zoom?: number };
+export type DashboardLayoutDoc = {
+  v: 1;
+  items: DashboardLayoutItem[];
+  zoom?: number;
+  textScale?: number;
+};
 
 export type DashboardWidgetMeta = {
   id: DashboardWidgetId;
@@ -358,14 +408,14 @@ export function defaultDashboardLayoutFor(isApprover: boolean): DashboardLayoutD
 
 /**
  * 全域常驻栏的默认布局：栏只有 ~300px 宽，卡片一律满宽（12 列），
- * 只放「一眼要看」的四张 —— 未读消息、即将到期、快捷入口、时钟。
+ * 只放「一眼要看」的四张 —— 未读消息、即将到期、最近附件、番茄钟。
  * 坐标与工作台共用同一套 12 列模型，所以拖拽 / 缩放 / 增删的引擎完全复用。
  */
 const RAIL_DEFAULT_ITEMS: DashboardLayoutItem[] = [
   { id: "unread_messages", type: "unread_messages", x: 0, y: 0, w: 12, h: 3 },
   { id: "upcoming", type: "upcoming", x: 0, y: 3, w: 12, h: 4 },
-  { id: "quick_links", type: "quick_links", x: 0, y: 7, w: 12, h: 4 },
-  { id: "clock", type: "clock", x: 0, y: 11, w: 12, h: 3 },
+  { id: "recent_attachments", type: "recent_attachments", x: 0, y: 7, w: 12, h: 4 },
+  { id: "focus_timer", type: "focus_timer", x: 0, y: 11, w: 12, h: 3 },
 ];
 
 export const DEFAULT_RAIL_LAYOUT: DashboardLayoutDoc = { v: 1, items: RAIL_DEFAULT_ITEMS };
@@ -504,7 +554,8 @@ function sanitizeItem(raw: unknown): DashboardLayoutItem | null {
 
   const id = sanitizeInstanceId(input.id, type);
   const config = sanitizeConfig(type, input.config);
-  return config ? { id, type, x, y, w, h, config } : { id, type, x, y, w, h };
+  const scale = normalizeCardScale(input.scale);
+  return { id, type, x, y, w, h, ...(config ? { config } : {}), ...(scale !== undefined ? { scale } : {}) };
 }
 
 /**
@@ -527,9 +578,19 @@ function resolveOverlaps(items: DashboardLayoutItem[]): DashboardLayoutItem[] {
  * 用户把卡片拖到下方、或在两张卡之间留白，位置就按放下时算；
  * 删卡也不牵动其他卡片（想收拢就手动拖，或「恢复默认」）。
  */
-function layoutFrom(items: DashboardLayoutItem[], zoom?: number): DashboardLayoutDoc {
+function layoutFrom(
+  items: DashboardLayoutItem[],
+  zoom?: number,
+  textScale?: number,
+): DashboardLayoutDoc {
   const z = normalizeZoom(zoom);
-  return { v: 1, items: resolveOverlaps(items), ...(z !== undefined ? { zoom: z } : {}) };
+  const t = normalizeTextScale(textScale);
+  return {
+    v: 1,
+    items: resolveOverlaps(items),
+    ...(z !== undefined ? { zoom: z } : {}),
+    ...(t !== undefined ? { textScale: t } : {}),
+  };
 }
 
 /**
@@ -546,8 +607,14 @@ export function normalizeLayoutDoc(raw: unknown): DashboardLayoutDoc {
   const input = raw as Record<string, unknown>;
   if (input.v !== 1 || !Array.isArray(input.items)) return defaultDoc();
   const zoom = normalizeZoom(input.zoom);
+  const textScale = normalizeTextScale(input.textScale);
   if (input.items.length === 0) {
-    return { v: 1, items: [], ...(zoom !== undefined ? { zoom } : {}) };
+    return {
+      v: 1,
+      items: [],
+      ...(zoom !== undefined ? { zoom } : {}),
+      ...(textScale !== undefined ? { textScale } : {}),
+    };
   }
 
   const seenIds = new Set<string>();
@@ -565,7 +632,7 @@ export function normalizeLayoutDoc(raw: unknown): DashboardLayoutDoc {
   }
 
   if (items.length === 0) return defaultDoc();
-  return layoutFrom(items.sort(byPosition), zoom);
+  return layoutFrom(items.sort(byPosition), zoom, textScale);
 }
 
 /** 移动：从当前文档出发，把目标放到新坐标并重排 */
@@ -584,7 +651,7 @@ export function moveWidget(
     y: clamp(intOr(y, target.y), 0, MAX_Y),
   };
   const others = doc.items.filter((item) => item.id !== id);
-  return layoutFrom([moved, ...others], doc.zoom);
+  return layoutFrom([moved, ...others], doc.zoom, doc.textScale);
 }
 
 /** 缩放：左上角固定，尺寸夹到最小尺寸与 12 列内 */
@@ -602,7 +669,7 @@ export function resizeWidget(
   const nextH = clamp(intOr(h, target.h), meta.minSize.h, MAX_H);
   const resized: DashboardLayoutItem = { ...target, w: nextW, h: nextH };
   const others = doc.items.filter((item) => item.id !== id);
-  return layoutFrom([resized, ...others], doc.zoom);
+  return layoutFrom([resized, ...others], doc.zoom, doc.textScale);
 }
 
 /** 新实例 id：首个实例沿用类型名，之后依次 `type-2`、`type-3` */
@@ -628,7 +695,7 @@ export function addWidget(doc: DashboardLayoutDoc, type: DashboardWidgetId): Das
     w: meta.defaultSize.w,
     h: meta.defaultSize.h,
   };
-  return layoutFrom([...doc.items, added], doc.zoom);
+  return layoutFrom([...doc.items, added], doc.zoom, doc.textScale);
 }
 
 /**
@@ -653,6 +720,7 @@ export function removeWidget(doc: DashboardLayoutDoc, id: string): DashboardLayo
   return layoutFrom(
     doc.items.filter((item) => item.id !== id),
     doc.zoom,
+    doc.textScale,
   );
 }
 
@@ -669,10 +737,32 @@ export function updateWidgetConfig(
   return {
     v: 1,
     ...(doc.zoom !== undefined ? { zoom: doc.zoom } : {}),
+    ...(doc.textScale !== undefined ? { textScale: doc.textScale } : {}),
     items: doc.items.map((item) => {
       if (item.id !== id) return item;
-      if (config) return { ...item, config };
-      return { id: item.id, type: item.type, x: item.x, y: item.y, w: item.w, h: item.h };
+      // 展开保留 scale 等其余字段，只替换 config；没有新配置时也保留旧几何/缩放
+      const rest = { ...item };
+      delete rest.config;
+      return config ? { ...rest, config } : rest;
+    }),
+  };
+}
+
+/** 单卡内容缩放：只改 `scale`，不动位置、尺寸与全局设置 */
+export function updateWidgetScale(
+  doc: DashboardLayoutDoc,
+  id: string,
+  scale: number,
+): DashboardLayoutDoc {
+  if (!doc.items.some((item) => item.id === id)) return doc;
+  const nextScale = normalizeCardScale(scale);
+  return {
+    ...doc,
+    items: doc.items.map((item) => {
+      if (item.id !== id) return item;
+      const rest = { ...item };
+      delete rest.scale;
+      return nextScale !== undefined ? { ...rest, scale: nextScale } : rest;
     }),
   };
 }

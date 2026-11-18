@@ -33,7 +33,7 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="ac-modal-in relative w-full max-w-md overflow-hidden rounded-card border border-line bg-surface shadow-pop"
+        className="ac-modal-in relative w-full max-w-md overflow-hidden rounded-card border border-line bg-surface shadow-pop max-sm:max-h-[85dvh] max-sm:overflow-y-auto"
       >
         <header className="flex items-center justify-between border-b border-line px-5 py-3">
           <h2 className="font-display text-base font-semibold text-ink">{title}</h2>
@@ -41,7 +41,7 @@ export function Modal({
             type="button"
             aria-label="关闭"
             onClick={onClose}
-            className="grid h-7 w-7 place-items-center rounded-field text-ink-faint transition-colors hover:bg-sunken hover:text-ink"
+            className="grid h-7 w-7 place-items-center rounded-field text-ink-faint transition-colors hover:bg-sunken hover:text-ink max-sm:h-10 max-sm:w-10"
           >
             <svg
               viewBox="0 0 24 24"

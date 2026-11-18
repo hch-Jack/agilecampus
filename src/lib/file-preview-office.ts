@@ -355,9 +355,55 @@ type SheetCellStyle = {
     color?: StyleColor;
   };
   fill?: { patternType?: string; fgColor?: StyleColor };
-  alignment?: { horizontal?: string; vertical?: string; wrapText?: boolean };
+  alignment?: { horizontal?: string; vertical?: string; wrapText?: boolean; indent?: number };
   border?: { top?: StyleEdge; right?: StyleEdge; bottom?: StyleEdge; left?: StyleEdge };
 };
+
+// Excel 默认列宽 8.43 字符、默认行高 14.4 磅，换算成 CSS 像素
+const DEFAULT_COL_PX = 64;
+const MIN_COL_PX = 8;
+const MAX_COL_PX = 600;
+const DEFAULT_ROW_PX = 19;
+// Excel 列宽单位按默认字体（Calibri 11）最大数字宽约 7px 换算：wch × 7 + 5
+const CHAR_PX = 7;
+
+const H_ALIGN: Record<string, string> = {
+  center: "center",
+  centerContinuous: "center",
+  right: "right",
+  left: "left",
+  justified: "justify",
+  fill: "left",
+};
+const V_ALIGN: Record<string, string> = {
+  top: "top",
+  center: "middle",
+  bottom: "bottom",
+  justified: "middle",
+  distributed: "middle",
+};
+
+/** 列宽：优先按字符宽换算（SheetJS 的 wpx 用 MDW=6，比 Excel 实际渲染窄一截） */
+function colWidthPx(info: XLSX.ColInfo | undefined): number {
+  if (!info) return DEFAULT_COL_PX;
+  const chars = info.wch ?? info.width;
+  const px = chars !== undefined ? Math.round(chars * CHAR_PX + 5) : info.wpx;
+  if (px === undefined) return DEFAULT_COL_PX;
+  return Math.min(MAX_COL_PX, Math.max(MIN_COL_PX, Math.round(px)));
+}
+
+function rowHeightPx(info: XLSX.RowInfo | undefined): number {
+  if (!info) return DEFAULT_ROW_PX;
+  // 读取端 hpx 可能是把 pt 当 px 回显的，优先用 hpt 自己换算（1pt = 4/3px）
+  if (info.hpt !== undefined) return Math.max(0, Math.round((info.hpt * 4) / 3));
+  if (info.hpx !== undefined) return Math.max(0, Math.round(info.hpx));
+  return DEFAULT_ROW_PX;
+}
+
+/** 字体名只保留字母/数字/汉字与空格下划线连字符，挡掉样式注入 */
+function safeFontFamily(name: string): string {
+  return name.replace(/[^\p{L}\p{N} _-]/gu, "").trim();
+}
 
 function borderCss(border: SheetCellStyle["border"]): string {
   if (!border) return "";
@@ -366,15 +412,18 @@ function borderCss(border: SheetCellStyle["border"]): string {
     const edge = border[side];
     if (!edge?.style) continue;
     const line = BORDER_STYLES[edge.style] ?? "1px solid";
-    const color = cssColor(edge.color?.rgb) ?? "#d0d5dd";
+    // 边框没给颜色时 Excel 用自动色（近黑），不是浅灰
+    const color = cssColor(edge.color?.rgb) ?? "#000000";
     css += `border-${side}:${line} ${color};`;
   }
   return css;
 }
 
-function cellCss(cell: XLSX.CellObject | undefined, text: string): string {
+function cellCss(cell: XLSX.CellObject | undefined, text: string, clip: boolean): string {
   const style = (cell as { s?: SheetCellStyle } | undefined)?.s;
-  let css = "";
+  const alignment = style?.alignment;
+  // Excel 单元格左右各有约 3px 内边距
+  let css = "padding:0 3px;";
   if (style) {
     const font = style.font;
     if (font) {
@@ -383,8 +432,10 @@ function cellCss(cell: XLSX.CellObject | undefined, text: string): string {
       const decorate = [font.underline ? "underline" : "", font.strike ? "line-through" : ""].filter(Boolean);
       if (decorate.length) css += `text-decoration:${decorate.join(" ")};`;
       if (font.sz) css += `font-size:${font.sz}pt;`;
-      if (font.name)
-        css += `font-family:${font.name.replace(/[^a-zA-Z0-9 _-]/g, "")},sans-serif;`;
+      if (font.name) {
+        const family = safeFontFamily(font.name);
+        if (family) css += `font-family:${family},Calibri,sans-serif;`;
+      }
       const color = cssColor(font.color?.rgb);
       if (color && color.toLowerCase() !== "#000000") css += `color:${color};`;
     }
@@ -393,27 +444,23 @@ function cellCss(cell: XLSX.CellObject | undefined, text: string): string {
       const bg = cssColor(fill.fgColor?.rgb);
       if (bg && bg.toLowerCase() !== "#ffffff") css += `background-color:${bg};`;
     }
-    const alignment = style.alignment;
-    if (alignment?.horizontal) {
-      const map: Record<string, string> = { center: "center", centerContinuous: "center", right: "right", left: "left", justified: "justify", fill: "left" };
-      const value = map[alignment.horizontal];
-      if (value) css += `text-align:${value};`;
-    }
-    if (alignment?.vertical) {
-      const map: Record<string, string> = { top: "top", center: "middle", bottom: "bottom", justified: "middle", distributed: "middle" };
-      const value = map[alignment.vertical];
-      if (value) css += `vertical-align:${value};`;
-    }
-    if (alignment?.wrapText) css += "white-space:pre-wrap;word-break:break-word;";
     css += borderCss(style.border);
   }
-  if (!/text-align:/.test(css)) {
-    if (cell?.t === "n") css += "text-align:right;";
-    else if (cell?.t === "b") css += "text-align:center;";
-  }
-  if (!/white-space:/.test(css)) {
-    // 短文本不换行（横向可滚动），长文本折行，避免一列被撑到屏幕外
-    css += text.length > 60 ? "white-space:pre-wrap;word-break:break-word;" : "white-space:nowrap;";
+  // 纵向默认与 Excel 一致：底对齐
+  css += `vertical-align:${(alignment?.vertical && V_ALIGN[alignment.vertical]) || "bottom"};`;
+  // 缩进：Excel 一个缩进单位约等于 3 个字符宽
+  if (alignment?.indent) css += `padding-left:${3 + Math.round(alignment.indent) * 9}px;`;
+  // 横向对齐：显式样式优先，否则数字/日期右对齐、布尔居中（与 Excel 一致）
+  const hAlign = alignment?.horizontal ? H_ALIGN[alignment.horizontal] : undefined;
+  if (hAlign) css += `text-align:${hAlign};`;
+  else if (cell?.t === "n" || cell?.t === "d") css += "text-align:right;";
+  else if (cell?.t === "b") css += "text-align:center;";
+  // 只有 Excel 勾了自动换行或单元格里有换行符才折行；其余不换行，
+  // 右侧邻格有内容时按 Excel 的做法裁掉溢出，邻格为空则允许溢出显示
+  if (alignment?.wrapText || text.includes("\n")) {
+    css += "white-space:pre-wrap;word-break:break-word;";
+  } else {
+    css += clip ? "white-space:nowrap;overflow:hidden;text-overflow:clip;" : "white-space:nowrap;overflow:visible;";
   }
   return css;
 }
@@ -427,6 +474,20 @@ function cellText(cell: XLSX.CellObject): string {
   }
 }
 
+/** 在升序原始坐标表里找 [from,to] 覆盖的连续区间，返回起始下标与个数（下标即渲染位置） */
+function visibleSpan(index: number[], from: number, to: number): { start: number; count: number } | null {
+  let lo = 0;
+  let hi = index.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (index[mid] < from) lo = mid + 1;
+    else hi = mid;
+  }
+  let end = lo;
+  while (end < index.length && index[end] <= to) end++;
+  return end > lo ? { start: lo, count: end - lo } : null;
+}
+
 function renderSheet(ws: XLSX.WorkSheet): Omit<SheetTable, "name"> {
   if (!ws["!ref"]) return { html: "", truncated: false, colsTruncated: false };
   const range = XLSX.utils.decode_range(ws["!ref"]);
@@ -435,47 +496,76 @@ function renderSheet(ws: XLSX.WorkSheet): Omit<SheetTable, "name"> {
   const colsTruncated = range.e.c - range.s.c + 1 > MAX_SHEET_COLS;
   if (colsTruncated) range.e.c = range.s.c + MAX_SHEET_COLS - 1;
 
-  // 合并单元格：左上角铺 rowspan/colspan，被覆盖的格子跳过
-  const anchors = new Map<string, { rows: number; cols: number }>();
+  // 隐藏的行列在 Excel 里不占位置：先筛出可见行列，合并单元格随之重映射
+  const visibleRows: number[] = [];
+  for (let r = range.s.r; r <= range.e.r; r++) if (!ws["!rows"]?.[r]?.hidden) visibleRows.push(r);
+  const visibleCols: number[] = [];
+  for (let c = range.s.c; c <= range.e.c; c++) if (!ws["!cols"]?.[c]?.hidden) visibleCols.push(c);
+  if (visibleRows.length === 0 || visibleCols.length === 0)
+    return { html: "", truncated, colsTruncated };
+
+  // 合并单元格：左上角铺 rowspan/colspan，被覆盖的格子跳过。
+  // 锚点落进隐藏行列时，显示内容仍取真正的左上角单元格（Excel 也这样显示）
+  const anchors = new Map<string, { rows: number; cols: number; text: string }>();
   const covered = new Set<string>();
   for (const merge of ws["!merges"] ?? []) {
     const r1 = Math.max(merge.s.r, range.s.r);
     const c1 = Math.max(merge.s.c, range.s.c);
     const r2 = Math.min(merge.e.r, range.e.r);
     const c2 = Math.min(merge.e.c, range.e.c);
-    if (r2 < range.s.r || c2 < range.s.c || r1 > range.e.r || c1 > range.e.c) continue;
-    anchors.set(`${r1}:${c1}`, { rows: r2 - r1 + 1, cols: c2 - c1 + 1 });
-    for (let r = r1; r <= r2; r++)
-      for (let c = c1; c <= c2; c++) if (r !== r1 || c !== c1) covered.add(`${r}:${c}`);
+    if (r2 < r1 || c2 < c1) continue;
+    const rowSpan = visibleSpan(visibleRows, r1, r2);
+    const colSpan = visibleSpan(visibleCols, c1, c2);
+    if (!rowSpan || !colSpan) continue;
+    const anchorCell = ws[XLSX.utils.encode_cell(merge.s)];
+    anchors.set(`${rowSpan.start}:${colSpan.start}`, {
+      rows: rowSpan.count,
+      cols: colSpan.count,
+      text: anchorCell ? cellText(anchorCell) : "",
+    });
+    for (let r = rowSpan.start; r < rowSpan.start + rowSpan.count; r++)
+      for (let c = colSpan.start; c < colSpan.start + colSpan.count; c++)
+        if (r !== rowSpan.start || c !== colSpan.start) covered.add(`${r}:${c}`);
   }
 
-  const colgroup: string[] = [];
-  for (let c = range.s.c; c <= range.e.c; c++) {
-    const info = ws["!cols"]?.[c];
-    const px = info?.wpx ?? (info?.wch ? Math.round(info.wch * 7 + 5) : undefined);
-    colgroup.push(px ? `<col style="width:${Math.min(Math.max(px, 24), 600)}px">` : "<col>");
-  }
+  // 列宽按 Excel 的字符宽口径换算；table-layout:fixed 保证列宽与表格总宽都能精确还原
+  const widths = visibleCols.map((c) => colWidthPx(ws["!cols"]?.[c]));
+  const totalWidth = widths.reduce((sum, px) => sum + px, 0);
+  const colgroup = widths.map((px) => `<col style="width:${px}px">`).join("");
 
   const rows: string[] = [];
-  for (let r = range.s.r; r <= range.e.r; r++) {
-    const hpt = ws["!rows"]?.[r]?.hpt;
+  for (let ri = 0; ri < visibleRows.length; ri++) {
+    const r = visibleRows[ri];
+    // 先行取整行文本：一是避免重复 format_cell，二是判断右侧邻格是否有内容（决定裁切还是溢出）
+    const rowTexts = visibleCols.map((c) => {
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      return cell ? cellText(cell) : "";
+    });
     const cells: string[] = [];
-    for (let c = range.s.c; c <= range.e.c; c++) {
-      const key = `${r}:${c}`;
+    for (let ci = 0; ci < visibleCols.length; ci++) {
+      const key = `${ri}:${ci}`;
       if (covered.has(key)) continue;
       const anchor = anchors.get(key);
-      const cell = ws[XLSX.utils.encode_cell({ r, c })];
-      const text = cell ? cellText(cell) : "";
+      const cell = ws[XLSX.utils.encode_cell({ r, c: visibleCols[ci] })];
+      const text = anchor ? anchor.text : rowTexts[ci];
+      // 跨列的合并格不裁切；普通格右侧邻格有字时按 Excel 规则裁掉溢出
+      const clip = !anchor && ci + 1 < visibleCols.length && rowTexts[ci + 1].length > 0;
       const span =
-        (anchor ? ` rowspan="${anchor.rows}" colspan="${anchor.cols}"` : "");
-      const css = cellCss(cell, text);
+        anchor && (anchor.rows > 1 || anchor.cols > 1)
+          ? `${anchor.rows > 1 ? ` rowspan="${anchor.rows}"` : ""}${anchor.cols > 1 ? ` colspan="${anchor.cols}"` : ""}`
+          : "";
+      const css = cellCss(cell, text, clip);
       const title = text.length > 80 ? ` title="${escapeHtml(text)}"` : "";
-      cells.push(`<td${span}${css ? ` style="${css}"` : ""}${title}>${escapeHtml(text)}</td>`);
+      cells.push(`<td${span} style="${css}"${title}>${escapeHtml(text)}</td>`);
     }
-    rows.push(`<tr${hpt ? ` style="height:${Math.round((hpt * 4) / 3)}px"` : ""}>${cells.join("")}</tr>`);
+    rows.push(`<tr style="height:${rowHeightPx(ws["!rows"]?.[r])}px">${cells.join("")}</tr>`);
   }
 
-  const html = `<table class="ac-xl-sheet"><colgroup>${colgroup.join("")}</colgroup><tbody>${rows.join("")}</tbody></table>`;
+  // 字体/字号与 Excel 默认一致（Calibri 11 磅），单元格样式再逐项覆盖
+  const html =
+    `<table class="ac-xl-sheet" style="border-collapse:collapse;table-layout:fixed;width:${totalWidth}px;` +
+    `font-family:Calibri,'Microsoft YaHei',sans-serif;font-size:11pt;line-height:1.35;color:#000">` +
+    `<colgroup>${colgroup}</colgroup><tbody>${rows.join("")}</tbody></table>`;
   return { html, truncated, colsTruncated };
 }
 

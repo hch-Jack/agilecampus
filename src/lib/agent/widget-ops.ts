@@ -274,7 +274,12 @@ export function applyWidgetOps(
       }
       case "set_zoom": {
         const zoom = normalizeZoom(op.zoom);
-        next = { v: 1, items: next.items, ...(zoom !== undefined ? { zoom } : {}) };
+        next = {
+          v: 1,
+          items: next.items,
+          ...(zoom !== undefined ? { zoom } : {}),
+          ...(next.textScale !== undefined ? { textScale: next.textScale } : {}),
+        };
         summary.push(`网格缩放改为 ${Math.round((zoom ?? 1) * 100)}%`);
         break;
       }

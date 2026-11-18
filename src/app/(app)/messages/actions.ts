@@ -119,6 +119,9 @@ export async function sendMessageAction(
 ): Promise<Result<{ peer: DmPeer; messages: DmMessageView[] }>> {
   return withUser(async (userId) => {
     const content = String(formData.get("content") ?? "");
+    // 网页先走 /api/dm/attachments/upload 把文件流式落盘，这里只回传附件 id；
+    // `file` 字段仍保留给小文件/旧调用方（会整份读进内存）。
+    const attachmentId = String(formData.get("attachmentId") ?? "") || null;
     const entry = formData.get("file");
     const file =
       entry instanceof File && entry.size > 0
@@ -129,7 +132,7 @@ export async function sendMessageAction(
             data: Buffer.from(await entry.arrayBuffer()),
           }
         : null;
-    await sendDm(userId, peerId, { content, file });
+    await sendDm(userId, peerId, { content, file, attachmentId });
     return listMessages(userId, peerId);
   });
 }
@@ -178,6 +181,7 @@ export async function sendGroupMessageAction(
   if (!parsed.success) return fail("群聊不存在或已解散");
   return withUser(async (userId) => {
     const content = String(formData.get("content") ?? "");
+    const attachmentId = String(formData.get("attachmentId") ?? "") || null;
     const entry = formData.get("file");
     const file =
       entry instanceof File && entry.size > 0
@@ -188,7 +192,7 @@ export async function sendGroupMessageAction(
             data: Buffer.from(await entry.arrayBuffer()),
           }
         : null;
-    await sendGroupMessage(userId, parsed.data, { content, file });
+    await sendGroupMessage(userId, parsed.data, { content, file, attachmentId });
     return openGroupConversation(userId, parsed.data);
   });
 }

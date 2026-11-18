@@ -40,13 +40,13 @@ function ApprovalRow({ row, tz }: { row: DashboardApproval; tz: string }) {
         {href ? (
           <Link
             href={href}
-            className="truncate text-sm font-medium text-ink hover:text-primary"
+            className="dw-item truncate font-medium text-ink hover:text-primary"
             title={subject}
           >
             {subject}
           </Link>
         ) : (
-          <span className="truncate text-sm font-medium text-ink">{subject}</span>
+          <span className="dw-item truncate font-medium text-ink">{subject}</span>
         )}
         <span
           className={`ac-badge shrink-0 ${
@@ -60,15 +60,15 @@ function ApprovalRow({ row, tz }: { row: DashboardApproval; tz: string }) {
           {APPROVAL_TYPE_LABEL[row.type]}
         </span>
       </div>
-      <p className="mt-0.5 truncate text-[11px] text-ink-faint">
+      <p className="dw-meta mt-0.5 truncate text-ink-faint">
         {row.requesterName} · {row.teamName} · {formatDateTime(tz, row.createdAt)}
       </p>
       {row.type !== "task_done" && row.purpose && (
-        <p className="truncate text-[11px] text-ink-soft">
+        <p className="dw-meta truncate text-ink-soft">
           {row.type === "project_acceptance" ? "说明" : "用途"}：{row.purpose}
         </p>
       )}
-      {error && <p className="mt-1 text-xs text-high">{error}</p>}
+      {error && <p className="dw-meta mt-1 text-high">{error}</p>}
       <div className="mt-1.5 flex gap-1.5">
         <button
           type="button"

@@ -6,6 +6,7 @@ import { listTeamResourceUsages } from "@/lib/resource";
 import { listTeamLabels } from "@/lib/label";
 import { createTask } from "@/lib/task";
 import { uploadAttachment } from "@/lib/attachment";
+import { saveAgentFile } from "@/lib/agent/files";
 import { createGroup, inviteToGroup, listGroupConversations, listMyGroupInvites } from "@/lib/group-chat";
 import { listMyPersonalContext } from "@/lib/personal-context";
 import {
@@ -302,6 +303,76 @@ describe("POST /api/chat", () => {
     );
     expect(res.status).toBe(400);
     expect(await listProjectChatHistory(student.id, project.id)).toEqual([]);
+  });
+
+  it("scope=project 带 attachmentIds → 400（文件只属于个人助手）", async () => {
+    const { student, project } = await scene();
+    authMock.userId = student.id;
+    const file = await saveAgentFile(student.id, {
+      filename: "资料.txt",
+      mimeType: "text/plain",
+      size: 2,
+      data: Buffer.from("正文"),
+    });
+    useScript([textStep("不该到这里")]);
+
+    const res = await chatRoute(
+      req({
+        scope: "project",
+        projectId: project.id,
+        attachmentIds: [file.id],
+        userText: "看看这个文件",
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("项目助手不支持上传文件");
+    expect(await listProjectChatHistory(student.id, project.id)).toEqual([]);
+  });
+
+  it("scope=personal 带别人/不存在的 fileId → 400，且不落消息", async () => {
+    const { student, owner } = await scene();
+    authMock.userId = student.id;
+    const theirs = await saveAgentFile(owner.id, {
+      filename: "别人的.txt",
+      mimeType: "text/plain",
+      size: 2,
+      data: Buffer.from("正文"),
+    });
+    useScript([textStep("不该到这里")]);
+
+    const res = await chatRoute(
+      req({ scope: "personal", attachmentIds: [theirs.id], userText: "读一下" }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toContain("有文件不存在或已被删除");
+    expect(await countPersonalConversations(student.id)).toBe(0);
+  });
+
+  it("scope=personal 带自己的文件：这轮问答落库时带上文件快照", async () => {
+    const { student } = await scene();
+    authMock.userId = student.id;
+    const file = await saveAgentFile(student.id, {
+      filename: "开题报告.txt",
+      mimeType: "text/plain",
+      size: 12,
+      data: Buffer.from("正文内容"),
+    });
+    useScript([textStep("收到，我读了。")]);
+
+    const res = await chatRoute(
+      req({ scope: "personal", attachmentIds: [file.id], userText: "帮我看看这份文件" }),
+    );
+    expect(res.status).toBe(200);
+    const data = await res.json();
+
+    const messages = await listPersonalConversationMessages(student.id, data.conversationId);
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+    expect(messages[0].attachments).toEqual([
+      { id: file.id, filename: "开题报告.txt", mimeType: "text/plain", size: 12 },
+    ]);
+    // 正文照旧是用户原话，文件清单不混进聊天记录
+    expect(messages[0].content).toBe("帮我看看这份文件");
+    expect(messages[1].attachments).toBeUndefined();
   });
 });
 

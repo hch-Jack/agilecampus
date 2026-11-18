@@ -47,7 +47,7 @@ export default async function ResourcesPage({
   const needsApproval = !hasPermission(me.role, me, "resource");
 
   return (
-    <main className="mx-auto max-w-3xl space-y-8 py-8">
+    <main className="mx-auto max-w-3xl space-y-8 py-5 sm:py-8">
       <header className="space-y-1">
         <Link href="/teams" className="text-xs text-ink-soft hover:text-primary">
           ← 我的团队

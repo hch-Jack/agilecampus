@@ -17,6 +17,7 @@ import {
   type DashboardWidgetConfig,
 } from "@/lib/dashboard-layout";
 import type { TaskPlanSegment } from "@/lib/task-plan";
+import { openAssistantWithPrompt } from "@/lib/right-panels";
 import type { WorkbenchTask } from "./workbench-board";
 import { WorkbenchCalendar } from "./workbench-calendar";
 import { TrackSplitter } from "./track-splitter";
@@ -41,6 +42,24 @@ const DEFAULT_GANTT_RATIO = 0.38;
 const DEFAULT_POOL_RATIO = 0.3;
 
 const roundRatio = (ratio: number) => Math.round(ratio * 1000) / 1000;
+
+/**
+ * 「AI 排期」按钮放进对话里的提示。
+ *
+ * 注意这不是发给模型的用户消息：点按钮只是在助手气泡里说明能力与需要哪些信息，
+ * 由用户自己写下要求、自己点发送，助手才开始排期——避免把提示词当用户指令直接执行。
+ */
+const SCHEDULE_AI_HINT = [
+  "想让我帮你排工作台日程表？把你的要求告诉我就行，大概说说也可以：",
+  "",
+  "- 计划排在哪个时间段（从哪天到哪天）",
+  "- 每天大概能投入多少时间，或最多排几个任务",
+  "- 哪些任务优先，哪些可以往后放",
+  "- 有没有必须避开的日子",
+  "",
+  "我会结合你的待办任务排一份草案——只改你自己的「打算哪天做」，不动任务的官方起止日；",
+  "每段颜色也可以指定。草案确认后才落库。",
+].join("\n");
 
 type Bar = {
   task: WorkbenchTask;
@@ -101,7 +120,7 @@ export function WorkbenchSchedule({
   }
 
   if (tasks.length === 0)
-    return <p className="dw-schedule-empty px-1 text-xs text-ink-faint">暂无分配给你的任务。</p>;
+    return <p className="dw-schedule-empty dw-meta px-1 text-ink-faint">暂无分配给你的任务。</p>;
 
   const todayMs = parseDay(today)!;
   const scheduled: { task: WorkbenchTask; start: number; end: number }[] = [];
@@ -151,7 +170,30 @@ export function WorkbenchSchedule({
 
   return (
     <section aria-label="任务日程" className="dw-schedule">
-      <h2 className="font-display text-sm font-semibold text-ink">日程表</h2>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="dw-title font-display font-semibold text-ink">日程表</h2>
+        <button
+          type="button"
+          onClick={() => openAssistantWithPrompt(SCHEDULE_AI_HINT)}
+          className="ac-btn-ghost dw-meta inline-flex shrink-0 items-center gap-1 px-2 py-0.5"
+          title="让 AI 助手说明排期需要哪些要求，你写完要求再发送"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            className="h-3.5 w-3.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <path d="M12 3l1.8 4.9 4.9 1.8-4.9 1.8L12 16.4l-1.8-4.9L5.3 9.7l4.9-1.8L12 3Z" />
+            <path d="M18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z" />
+          </svg>
+          AI 排期
+        </button>
+      </div>
       {/* 模块开关：随时关掉不看的部分，比例与开关都按卡片保存 */}
       <div className="dw-schedule-tools" role="group" aria-label="日程表显示模块">
         <ModuleToggle pressed={showGantt} onClick={() => toggleModule("showGantt")}>
@@ -182,7 +224,7 @@ export function WorkbenchSchedule({
                   {scale.ticks.map((t, i) => (
                     <span
                       key={i}
-                      className="dw-gantt-tick absolute -translate-x-1/2 text-[11px] tabular-nums text-ink-faint"
+                      className="dw-gantt-tick dw-meta absolute -translate-x-1/2 tabular-nums text-ink-faint"
                       style={{ left: `${pct(t)}%` }}
                     >
                       {fmtMD(t)}
@@ -195,7 +237,7 @@ export function WorkbenchSchedule({
                 <div key={g.projectId} className="border-b border-line last:border-b-0">
                   {/* 只有一个项目时不重复项目名：小卡片里省下一行，多露一条任务 */}
                   {groups.length > 1 && (
-                    <div className="bg-sunken/40 px-3 py-1 text-[11px] font-semibold text-ink-soft">
+                    <div className="dw-meta bg-sunken/40 px-3 py-1 font-semibold text-ink-soft">
                       {g.projectName}
                     </div>
                   )}
@@ -206,7 +248,7 @@ export function WorkbenchSchedule({
                         <li key={b.task.id} className="flex items-center px-3 py-0.5">
                           <Link
                             href={`/projects/${b.task.projectId}/tasks/${b.task.id}`}
-                            className="dw-gantt-label shrink-0 truncate pr-2 text-xs text-ink hover:text-primary"
+                            className="dw-gantt-label dw-meta shrink-0 truncate pr-2 text-ink hover:text-primary"
                             title={b.task.title}
                           >
                             {b.task.title}
@@ -220,7 +262,7 @@ export function WorkbenchSchedule({
                               />
                             )}
                             <span
-                              className={`absolute top-0 flex h-5 items-center overflow-hidden rounded px-1.5 text-[10px] text-white ${
+                              className={`dw-micro absolute top-0 flex h-5 items-center overflow-hidden rounded px-1.5 text-white ${
                                 b.overdue ? "bg-high" : STATUS_BAR[b.task.status] ?? "bg-todo"
                               }`}
                               style={{
@@ -241,7 +283,7 @@ export function WorkbenchSchedule({
               ))}
 
               {/* 图例 */}
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5 text-[11px] text-ink-soft">
+              <div className="dw-meta flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5 text-ink-soft">
                 <Legend cls="bg-todo" label="待办" />
                 <Legend cls="bg-doing" label="进行中" />
                 <Legend cls="bg-done" label="已完成" />
@@ -252,7 +294,7 @@ export function WorkbenchSchedule({
               </div>
             </div>
           ) : (
-            <div className="ac-card dw-schedule-gantt dw-schedule-empty text-xs text-ink-faint">
+            <div className="ac-card dw-schedule-gantt dw-schedule-empty dw-meta text-ink-faint">
               尚无任务设了官方起止日——在项目里给任务排期后，时间线会出现在这里
             </div>
           ))}
@@ -290,7 +332,7 @@ export function WorkbenchSchedule({
         )}
 
         {!showGantt && !showCalendar && (
-          <p className="dw-schedule-empty text-xs text-ink-faint">
+          <p className="dw-schedule-empty dw-meta text-ink-faint">
             甘特和月历都隐藏了——点上方开关重新显示。
           </p>
         )}
@@ -326,7 +368,7 @@ function ModuleToggle({
 function UnscheduledList({ tasks }: { tasks: WorkbenchTask[] }) {
   return (
     <div className="ac-card dw-unscheduled p-3">
-      <h3 className="mb-2 text-xs font-semibold text-ink">未设官方起止（{tasks.length}）</h3>
+      <h3 className="dw-meta mb-2 font-semibold text-ink">未设官方起止（{tasks.length}）</h3>
       <ul className="flex flex-wrap gap-2">
         {tasks.map((t) => (
           <li key={t.id}>

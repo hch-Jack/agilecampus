@@ -2,12 +2,16 @@
 // 不能放在 "use server" 文件里（那个文件只允许导出服务端函数）。
 import { z } from "zod";
 import {
+  CARD_SCALE_MAX,
+  CARD_SCALE_MIN,
   CLOCK_MAX_ZONES,
   CLOCK_ZONE_MAX_LENGTH,
   COUNTDOWN_TITLE_MAX_LENGTH,
   GRID_COLUMNS,
   INSTANCE_ID_MAX_LENGTH,
   NOTE_MAX_LENGTH,
+  TEXT_SCALE_MAX,
+  TEXT_SCALE_MIN,
   WIDGET_IDS,
   ZOOM_MAX,
   ZOOM_MIN,
@@ -32,6 +36,8 @@ const itemSchema = z
     y: z.number().int(),
     w: z.number().int(),
     h: z.number().int(),
+    // 单卡内容缩放（最终夹取/取整由 normalize 负责）
+    scale: z.number().min(CARD_SCALE_MIN).max(CARD_SCALE_MAX).optional(),
     config: z
       .object({
         text: z.string().max(NOTE_MAX_LENGTH * 4).optional(),
@@ -56,6 +62,8 @@ const itemSchema = z
 export const layoutEnvelopeSchema = z.object({
   v: z.literal(1),
   zoom: z.number().min(ZOOM_MIN).max(ZOOM_MAX).optional(),
+  // 全局文字大小（最终夹取/取整由 normalize 负责）
+  textScale: z.number().min(TEXT_SCALE_MIN).max(TEXT_SCALE_MAX).optional(),
   items: z.array(itemSchema).max(MAX_LAYOUT_ITEMS),
 });
 
@@ -66,6 +74,7 @@ export function toLayoutDoc(parsed: LayoutEnvelope): DashboardLayoutDoc {
   return {
     v: 1,
     ...(parsed.zoom !== undefined ? { zoom: parsed.zoom } : {}),
+    ...(parsed.textScale !== undefined ? { textScale: parsed.textScale } : {}),
     items: parsed.items.map((item) => ({
       id: item.id,
       type: (item.type ?? item.id) as DashboardWidgetId,
@@ -74,6 +83,7 @@ export function toLayoutDoc(parsed: LayoutEnvelope): DashboardLayoutDoc {
       w: Math.min(item.w, GRID_COLUMNS),
       h: item.h,
       ...(item.config ? { config: item.config } : {}),
+      ...(item.scale !== undefined ? { scale: item.scale } : {}),
     })),
   };
 }

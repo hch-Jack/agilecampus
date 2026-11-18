@@ -162,7 +162,9 @@ export async function updateTask(
     priority?: TaskPriority;
     completionNote?: string | null;
   },
-  opts?: { tx?: DbTx; approvedBy?: boolean },
+  // withdrawPending：看板拖拽落列专用。「待审批」卡拖回待办/进行中时状态可能本就
+  // 未变（待审批列是派生位置，卡的原状态仍是 todo/doing），靠它显式表达撤回。
+  opts?: { tx?: DbTx; approvedBy?: boolean; withdrawPending?: boolean },
 ) {
   const exec = opts?.tx ?? db;
   const [task] = await exec.select().from(tasks).where(eq(tasks.id, taskId));
@@ -195,10 +197,12 @@ export async function updateTask(
     access.role === "student" &&
     !opts?.approvedBy;
 
-  // 状态变化落定前撤掉未决的完成申请：拖回待办/进行中=申请人撤回；管理员直接完成=申请被替代
+  // 状态变化落定前撤掉未决的完成申请：拖回待办/进行中=申请人撤回；管理员直接完成=申请被替代。
+  // withdrawPending 覆盖「拖回的就是卡的原状态列」——四列看板里待审批卡的原状态可能
+  // 已是 doing/todo，此时 patch.status 与库中相同，但语义上仍是明确撤回。
   if (
     patch.status !== undefined &&
-    patch.status !== task.status &&
+    (patch.status !== task.status || opts?.withdrawPending) &&
     !task.parentTaskId &&
     !completionNeedsApproval
   ) {

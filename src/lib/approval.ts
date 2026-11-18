@@ -190,12 +190,32 @@ export async function listPendingApprovalsForApprover(
   }));
 }
 
-/** 给定任务里还有 pending 完成申请的那些 id（看板「待审批」角标用） */
-export async function listPendingTaskDoneTaskIds(taskIds: string[]): Promise<Set<string>> {
-  if (taskIds.length === 0) return new Set();
+/** 任务完成申请（pending）：看板「待审批」列据此派生，不新增任务状态 */
+export type PendingTaskDoneApproval = {
+  requestId: string;
+  requesterId: string;
+  requesterName: string;
+  createdAt: Date;
+};
+
+/**
+ * 给定任务里还有 pending 完成申请的，按 taskId 建 Map。
+ * 一个任务同时最多一条 pending（partial unique index 兜底），无需去重取舍。
+ */
+export async function listPendingTaskDoneApprovals(
+  taskIds: string[],
+): Promise<Map<string, PendingTaskDoneApproval>> {
+  if (taskIds.length === 0) return new Map();
   const rows = await db
-    .select({ taskId: approvalRequests.taskId })
+    .select({
+      taskId: approvalRequests.taskId,
+      requestId: approvalRequests.id,
+      requesterId: approvalRequests.requesterId,
+      requesterName: users.name,
+      createdAt: approvalRequests.createdAt,
+    })
     .from(approvalRequests)
+    .innerJoin(users, eq(approvalRequests.requesterId, users.id))
     .where(
       and(
         eq(approvalRequests.status, "pending"),
@@ -203,7 +223,23 @@ export async function listPendingTaskDoneTaskIds(taskIds: string[]): Promise<Set
         inArray(approvalRequests.taskId, taskIds),
       ),
     );
-  return new Set(rows.map((r) => r.taskId).filter((id): id is string => id != null));
+
+  const map = new Map<string, PendingTaskDoneApproval>();
+  for (const r of rows) {
+    if (!r.taskId || map.has(r.taskId)) continue;
+    map.set(r.taskId, {
+      requestId: r.requestId,
+      requesterId: r.requesterId,
+      requesterName: r.requesterName,
+      createdAt: r.createdAt,
+    });
+  }
+  return map;
+}
+
+/** 给定任务里还有 pending 完成申请的那些 id（看板「待审批」角标用） */
+export async function listPendingTaskDoneTaskIds(taskIds: string[]): Promise<Set<string>> {
+  return new Set((await listPendingTaskDoneApprovals(taskIds)).keys());
 }
 
 // —— 申请 ——

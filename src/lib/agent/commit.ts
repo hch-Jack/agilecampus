@@ -35,7 +35,9 @@ import {
   type WidgetSurface,
 } from "./widget-ops";
 import { copyMessageAttachmentToTask, deleteAttachment } from "@/lib/attachment";
+import { copyAgentFileToTask } from "./files";
 import { createPersonalContext } from "@/lib/personal-context";
+import { createSkill } from "@/lib/skill";
 import { createTeam, joinTeam } from "@/lib/team";
 import { notifyTaskAssigned, notifyTaskCompleted } from "@/lib/notify";
 import {
@@ -52,6 +54,7 @@ import { resolveUserTimeZone } from "@/lib/time-pref";
 import { AppError, ForbiddenError } from "@/lib/errors";
 import {
   ATTACH_MESSAGE_TOOL,
+  SAVE_FILE_TO_TASK_TOOL,
   CREATE_GROUP_TOOL,
   CREATE_LABEL_TOOL,
   CREATE_RESOURCE_USAGE_TOOL,
@@ -69,6 +72,8 @@ import {
   RESPOND_INVITE_TOOL,
   SAVE_CONTEXT_TOOL,
   SEND_MESSAGE_TOOL,
+  CREATE_SKILL_TOOL,
+  skillDraftSchema,
   taskPlanDraftSchema,
   UPDATE_LABEL_TOOL,
   type CommitToolName,
@@ -167,6 +172,7 @@ const createSubtaskSchema = z.object({
 const deleteSubtaskSchema = z.object({ taskId: z.uuid() });
 const deleteAttachmentSchema = z.object({ attachmentId: z.uuid() });
 const attachMessageFileSchema = z.object({ attachmentId: z.uuid(), taskId: z.uuid() });
+const saveFileToTaskSchema = z.object({ fileId: z.uuid(), taskId: z.uuid() });
 
 const chatTargetTypeSchema = z.enum(["user", "group"]);
 
@@ -177,7 +183,7 @@ const sendMessageSchema = z
     targetId: z.uuid(),
     content: z.string().optional(),
     // null 与 undefined 都表示「没带附件」；卡片清空附件字段时会送 null
-    fileSource: z.enum(["task", "message"]).nullable().optional(),
+    fileSource: z.enum(["task", "message", "file"]).nullable().optional(),
     attachmentId: z.uuid().nullable().optional(),
   })
   .refine((d) => (d.fileSource == null) === (d.attachmentId == null), {
@@ -334,6 +340,17 @@ export async function commitDraft(
   }
 }
 
+// 技能：助手代写。落库口重校长度、重名与内置技能冲突，不信任拟稿时的校验。
+// 来源记为 agent，用户在设置页能看出这是助手创建的。
+export async function commitCreateSkill(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = skillDraftSchema.parse(draft);
+  await createSkill(actorId, d, { source: "agent", origin: "agilecampus" });
+  return { committed: 1, conflicts: [] };
+}
+
 // 个人上下文：与手填表单同一个口子（lib/personal-context.ts），只是来源记为 agent 而非 manual
 export async function commitPersonalContext(
   actorId: string,
@@ -374,7 +391,18 @@ export async function commitMessageAttachment(
   return { committed: 1, conflicts: [] };
 }
 
-// 发送消息：卡片确认后才真正落库。目标权限、附件可读性与 10MB 上限都由
+// 助手对话里上传的文件 → 任务附件：同样只属于工作台助手。copyAgentFileToTask
+// 先验文件归属（ownerId = 发话人），再经 uploadAttachment 重校任务写权限与 1GB 上限。
+export async function commitSaveFileToTask(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = saveFileToTaskSchema.parse(draft);
+  await copyAgentFileToTask(actorId, d.fileId, d.taskId);
+  return { committed: 1, conflicts: [] };
+}
+
+// 发送消息：卡片确认后才真正落库。目标权限、附件可读性与 1GB 上限都由
 // chat-transfer → sendDm/sendGroupMessage 重校；这里只负责把卡片数据还原成来源对象。
 export async function commitSendMessage(
   actorId: string,
@@ -641,7 +669,14 @@ async function commitManageTaskPlans(actorId: string, draft: unknown): Promise<C
     } else {
       const end = op.end ?? op.start;
       if (op.action === "add") {
-        await addTaskPlanSegment(actorId, op.taskId, detail.projectId, op.start, end);
+        await addTaskPlanSegment(
+          actorId,
+          op.taskId,
+          detail.projectId,
+          op.start,
+          end,
+          op.color,
+        );
       } else {
         await removeTaskPlanSegment(actorId, op.taskId, detail.projectId, op.start, end);
       }
@@ -676,6 +711,7 @@ export async function commitPersonalDraft(
   if (tool === SAVE_CONTEXT_TOOL) return commitPersonalContext(actorId, draft);
   if (tool === RESPOND_INVITE_TOOL) return commitGroupInviteResponse(actorId, draft);
   if (tool === ATTACH_MESSAGE_TOOL) return commitMessageAttachment(actorId, draft);
+  if (tool === SAVE_FILE_TO_TASK_TOOL) return commitSaveFileToTask(actorId, draft);
   if (tool === SEND_MESSAGE_TOOL) return commitSendMessage(actorId, draft);
   if (tool === FORWARD_MESSAGE_TOOL) return commitForwardMessage(actorId, draft);
   if (tool === CREATE_GROUP_TOOL) return commitCreateGroup(actorId, draft);
@@ -693,6 +729,7 @@ export async function commitPersonalDraft(
   // 卡片布局与日程表计划：草案里没有 projectId，同样在拆 projectId 之前分派
   if (tool === MANAGE_WIDGETS_TOOL) return commitManageWidgets(actorId, draft);
   if (tool === MANAGE_TASK_PLANS_TOOL) return commitManageTaskPlans(actorId, draft);
+  if (tool === CREATE_SKILL_TOOL) return commitCreateSkill(actorId, draft);
 
   if (tool === "create_project") {
     // teamId 是 uuid 形状，与下面那四类同理：缺了/填成了团队名就说清楚，别甩一句「草案格式无效」

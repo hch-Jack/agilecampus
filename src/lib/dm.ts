@@ -11,10 +11,22 @@ import {
 } from "@/db/schema";
 import { AppError, ForbiddenError } from "./errors";
 import { userAvatarUrl } from "./user";
+import {
+  deleteBlob,
+  persistBlob,
+  type FileContentInput,
+} from "./blob-store";
+import { MAX_FILE_SIZE } from "./file-limits";
 
-// 单文件大小上限：10MB，与任务附件同限。上传走 server action，
-// 体积限制与 next.config 的 experimental.serverActions.bodySizeLimit（12mb）配套。
-export const DM_ATTACHMENT_MAX_SIZE = 10 * 1024 * 1024;
+// 单文件大小上限：1GB，与任务附件同限。大文件走 /api/dm/attachments/upload 流式落盘。
+export const DM_ATTACHMENT_MAX_SIZE = MAX_FILE_SIZE;
+
+/** 消息附件的入参：内容是磁盘键（大文件）或内存字节（历史路径/测试/小文件） */
+export type DmFileInput = {
+  filename: string;
+  mimeType?: string | null;
+  size?: number;
+} & FileContentInput;
 
 // 会话对端的展示信息（聊天窗口头部 / 搜索命中返回）。类型放这里而非 "use server"
 // 文件——server action 文件里 re-export 类型会被 Turbopack 误编译成运行时导出（ReferenceError）。
@@ -366,12 +378,65 @@ export async function getDmMessageForForward(
 
 // 发私信（文本与文件至少其一）：附件与消息同事务落库，双方会话行一并补齐。
 // 返回原始消息行（含 attachmentId），展示形状由调用方组装。
+/**
+ * 预上传附件：先把字节落库/落盘，但还没有任何消息引用它。
+ * 客户端随后把返回的 id 交给 sendMessageAction / sendGroupMessageAction —— 这样
+ * 1GB 的文件不会经过 server action 的 body（其上限只有 12MB）。
+ */
+export async function stageDmAttachment(actorId: string, input: DmFileInput) {
+  const blob = await persistBlob(input, DM_ATTACHMENT_MAX_SIZE);
+  try {
+    const [att] = await db
+      .insert(dmAttachments)
+      .values({
+        uploaderId: actorId,
+        filename: input.filename.slice(0, 200) || "未命名文件",
+        mimeType: input.mimeType ?? null,
+        size: blob.size,
+        data: blob.data,
+        storageKey: blob.storageKey,
+      })
+      .returning({ id: dmAttachments.id, filename: dmAttachments.filename, size: dmAttachments.size });
+    return att;
+  } catch (e) {
+    await deleteBlob(blob.storageKey);
+    throw e;
+  }
+}
+
+/** 认领预上传附件：必须是本人上传、且还没有被任何私信/群消息引用 */
+export async function claimStagedAttachment(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  actorId: string,
+  attachmentId: string,
+) {
+  const [att] = await tx
+    .select({ uploaderId: dmAttachments.uploaderId })
+    .from(dmAttachments)
+    .where(eq(dmAttachments.id, attachmentId));
+  if (!att || att.uploaderId !== actorId) throw new AppError("附件不存在");
+  const [usedByDm] = await tx
+    .select({ id: dmMessages.id })
+    .from(dmMessages)
+    .where(eq(dmMessages.attachmentId, attachmentId))
+    .limit(1);
+  const [usedByGroup] = await tx
+    .select({ id: dmGroupMessages.id })
+    .from(dmGroupMessages)
+    .where(eq(dmGroupMessages.attachmentId, attachmentId))
+    .limit(1);
+  if (usedByDm || usedByGroup) throw new AppError("附件已发送");
+}
+
 export async function sendDm(
   actorId: string,
   peerId: string,
   input: {
     content: string;
-    file?: { filename: string; mimeType?: string | null; size: number; data: Buffer } | null;
+    /** 随消息新落一份附件（REST / 助手复制路径） */
+    file?: DmFileInput | null;
+    /** 已由 /api/dm/attachments/upload 预上传的附件 id（网页发送路径） */
+    attachmentId?: string | null;
   },
 ) {
   if (actorId === peerId) throw new AppError("不能给自己发消息");
@@ -380,42 +445,48 @@ export async function sendDm(
 
   // 文本截断到 5000 字符，防超长刷屏
   const content = input.content.trim().slice(0, 5000);
-  const file = input.file;
-  if (file) {
-    if (file.size > DM_ATTACHMENT_MAX_SIZE) throw new AppError("文件不能超过 10MB");
-    if (file.size === 0) throw new AppError("不能上传空文件");
-  }
-  if (!content && !file) throw new AppError("不能发送空消息");
+  if (input.file && input.attachmentId) throw new AppError("附件只能给一份");
+  if (!content && !input.file && !input.attachmentId) throw new AppError("不能发送空消息");
 
-  return db.transaction(async (tx) => {
-    let attachmentId: string | null = null;
-    if (file) {
-      const [att] = await tx
-        .insert(dmAttachments)
-        .values({
-          uploaderId: actorId,
-          filename: file.filename.slice(0, 200) || "未命名文件",
-          mimeType: file.mimeType ?? null,
-          size: file.size,
-          data: file.data,
-        })
-        .returning({ id: dmAttachments.id });
-      attachmentId = att.id;
-    }
-    const [msg] = await tx
-      .insert(dmMessages)
-      .values({ senderId: actorId, recipientId: peerId, content, attachmentId })
-      .returning();
-    // 双方都出现在彼此的消息列表里
-    await tx
-      .insert(dmContacts)
-      .values([
-        { ownerId: actorId, peerId },
-        { ownerId: peerId, peerId: actorId },
-      ])
-      .onConflictDoNothing();
-    return msg;
-  });
+  // 落盘放在事务外：复制大文件不占着数据库连接
+  const blob = input.file ? await persistBlob(input.file, DM_ATTACHMENT_MAX_SIZE) : null;
+
+  try {
+    return await db.transaction(async (tx) => {
+      let attachmentId: string | null = input.attachmentId ?? null;
+      if (attachmentId) await claimStagedAttachment(tx, actorId, attachmentId);
+      if (blob) {
+        const [att] = await tx
+          .insert(dmAttachments)
+          .values({
+            uploaderId: actorId,
+            filename: input.file!.filename.slice(0, 200) || "未命名文件",
+            mimeType: input.file!.mimeType ?? null,
+            size: blob.size,
+            data: blob.data,
+            storageKey: blob.storageKey,
+          })
+          .returning({ id: dmAttachments.id });
+        attachmentId = att.id;
+      }
+      const [msg] = await tx
+        .insert(dmMessages)
+        .values({ senderId: actorId, recipientId: peerId, content, attachmentId })
+        .returning();
+      // 双方都出现在彼此的消息列表里
+      await tx
+        .insert(dmContacts)
+        .values([
+          { ownerId: actorId, peerId },
+          { ownerId: peerId, peerId: actorId },
+        ])
+        .onConflictDoNothing();
+      return msg;
+    });
+  } catch (e) {
+    await deleteBlob(blob?.storageKey);
+    throw e;
+  }
 }
 
 // —— 未读总数（导航角标用） ——
@@ -486,6 +557,7 @@ export async function getDmAttachmentForDownload(actorId: string, attachmentId: 
       mimeType: dmAttachments.mimeType,
       size: dmAttachments.size,
       data: dmAttachments.data,
+      storageKey: dmAttachments.storageKey,
     })
     .from(dmAttachments)
     .where(eq(dmAttachments.id, attachmentId));

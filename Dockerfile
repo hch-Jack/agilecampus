@@ -27,6 +27,9 @@ ENV PORT=3000
 RUN addgroup --system --gid 1001 nodejs \
   && adduser --system --uid 1001 nextjs
 
+# 附件落盘目录：先建好并归 nextjs 所有，命名卷首次挂载才会继承权限
+RUN mkdir -p /app/data/uploads && chown -R nextjs:nodejs /app/data
+
 # standalone 自带精简 node_modules 与 server.js；static/public 须手工搬入
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static

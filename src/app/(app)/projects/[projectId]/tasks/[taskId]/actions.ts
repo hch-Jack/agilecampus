@@ -17,10 +17,11 @@ import { AppError, ForbiddenError } from "@/lib/errors";
 export type FormState = { error: string } | null;
 
 // 子任务/附件的增改删都要同时刷新详情页与看板（看板上的子任务卡片、任务卡片的
-// 完成情况/优先级等也会随之变化）
+// 完成情况/优先级等也会随之变化）；附件中心按任务汇总附件，也要跟着刷新
 function revalidateTaskPaths(projectId: string, taskId: string) {
   revalidatePath(`/projects/${projectId}/tasks/${taskId}`);
   revalidatePath(`/projects/${projectId}`);
+  revalidatePath(`/projects/${projectId}/attachments`);
 }
 
 const toggleSubtaskSchema = z.object({
@@ -141,7 +142,9 @@ export async function uploadAttachmentAction(
 
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return { error: "请选择要上传的文件" };
-  if (file.size > ATTACHMENT_MAX_SIZE) return { error: "附件不能超过 10MB" };
+  // 大文件走 /api/attachments/upload（流式写盘）；这个 action 只作为小文件兼容路径，
+  // 实际受 server action body 上限约束（next.config 的 12mb）。
+  if (file.size > ATTACHMENT_MAX_SIZE) return { error: "附件不能超过 1GB" };
 
   try {
     await uploadAttachment(session.user.id, taskId, {

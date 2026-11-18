@@ -14,7 +14,8 @@ import { useRouter } from "next/navigation";
 import {
   DndContext,
   DragOverlay,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   useDraggable,
   useDroppable,
   useSensor,
@@ -128,13 +129,13 @@ function WorkbenchCardBody({
         href={`/projects/${task.projectId}/tasks/${task.id}`}
         onClick={onTitleClick}
         // card-link 把可点区域铺满整张卡；可拖拽时保留抓手光标
-        className={`card-link font-medium text-ink hover:text-primary ${
+        className={`card-link dw-body font-medium text-ink hover:text-primary ${
           canWrite ? "cursor-grab" : "cursor-pointer"
         }`}
       >
         {task.title}
       </Link>
-      <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
+      <p className="dw-meta mt-1.5 flex flex-wrap items-center gap-1.5">
         <span className="ac-badge bg-primary-soft text-primary">{task.projectName}</span>
         {onOpenApproval && <ApprovalBadge task={task} onOpen={onOpenApproval} />}
         {!canWrite && <span className="ac-badge bg-sunken text-ink-faint">只读</span>}
@@ -244,11 +245,12 @@ function Column({
   return (
     <div
       ref={setNodeRef}
-      className={`proj-column ac-scroll-hidden min-h-40 space-y-2 rounded-xl border border-line p-3 transition-colors ${
+      // 手机上三列会竖排，空列 min-h-40 会把整块撑得很长，缩到 6rem
+      className={`proj-column ac-scroll-hidden min-h-40 space-y-2 rounded-xl border border-line p-3 transition-colors max-sm:min-h-24 ${
         isOver ? "drop" : ""
       }`}
     >
-      <h3 className={`flex items-center gap-2 text-sm font-semibold ${column.tone}`}>
+      <h3 className={`dw-item flex items-center gap-2 font-semibold ${column.tone}`}>
         {column.label}
         <span className="ac-badge bg-surface text-ink-soft">{tasks.length}</span>
       </h3>
@@ -305,8 +307,10 @@ export function WorkbenchBoard({
     (current, move: { taskId: string; patch: ColumnPatch }) =>
       current.map((t) => (t.id === move.taskId ? { ...t, ...move.patch } : t)),
   );
+  // 与项目看板同一口径：鼠标按下移 4px 即拖；触屏长按 250ms 才拖，否则交给页面滚动
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 6 } }),
   );
 
   function handleDragStart(event: DragStartEvent) {
@@ -368,7 +372,7 @@ export function WorkbenchBoard({
     >
       <div className="workbench-board flex h-full min-h-0 flex-col p-4">
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
-          <h2 className="font-display text-sm font-semibold text-ink">我的任务看板</h2>
+          <h2 className="dw-title font-display font-semibold text-ink">我的任务看板</h2>
           <div className="flex items-center gap-1.5">
             <button
               type="button"
@@ -425,7 +429,7 @@ export function WorkbenchBoard({
           </nav>
         )}
 
-        {error && <p className="mt-1 text-sm text-high">{error}</p>}
+        {error && <p className="dw-body mt-1 text-high">{error}</p>}
 
         <div className="workbench-board-content ac-scroll-hidden mt-2 min-h-0 flex-1">
           <div
@@ -447,7 +451,7 @@ export function WorkbenchBoard({
 
         {/* 过滤态下 done 列仍可落卡（服务端过滤会在回流后吞掉它），底部提示被隐藏的数量 */}
         {hideDone && (
-          <p className="mt-2 shrink-0 text-xs text-ink-faint">
+          <p className="dw-meta mt-2 shrink-0 text-ink-faint">
             已隐藏 {doneCount} 个已完成任务
           </p>
         )}

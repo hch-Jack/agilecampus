@@ -128,7 +128,7 @@ export function AcceptanceControl({
           aria-label="申请结题验收"
         >
           <div
-            className="w-full max-w-lg rounded-field border border-line bg-surface shadow-2xl"
+            className="w-full max-w-lg rounded-field border border-line bg-surface shadow-2xl max-sm:max-h-[85dvh] max-sm:overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="p-5">

@@ -48,7 +48,7 @@ export function DissolveTeamForm({
           type="button"
           disabled={pending}
           onClick={() => setDialogOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium
+          className="ac-hit inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-sm font-medium
                      text-danger/80 transition-all
                      hover:text-danger hover:bg-danger/10
                      hover:scale-105

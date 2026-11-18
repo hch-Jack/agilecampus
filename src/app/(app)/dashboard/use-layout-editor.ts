@@ -11,12 +11,16 @@ import {
 import {
   addWidget,
   addWidgetFullWidth,
+  DASHBOARD_ROW_HEIGHT,
   gridMetrics,
+  GRID_ROW_HEIGHT,
   moveWidget,
+  normalizeTextScale,
   normalizeZoom,
   removeWidget,
   resizeWidget,
   updateWidgetConfig,
+  updateWidgetScale,
   type DashboardLayoutDoc,
   type DashboardWidgetConfig,
   type DashboardWidgetId,
@@ -102,7 +106,12 @@ export function useLayoutEditor({
     layoutRef.current = next;
     // 每次都换一个信封引用：取消拖动时传入的可能是同一个 snapshot，
     // 若 React 判定状态未变而跳过渲染，卡片的亚格子位移就没人收尾了
-    setLayout({ v: next.v, items: next.items, ...(next.zoom !== undefined ? { zoom: next.zoom } : {}) });
+    setLayout({
+      v: next.v,
+      items: next.items,
+      ...(next.zoom !== undefined ? { zoom: next.zoom } : {}),
+      ...(next.textScale !== undefined ? { textScale: next.textScale } : {}),
+    });
   }
 
   useLayoutEffect(() => {
@@ -214,8 +223,13 @@ export function useLayoutEditor({
   const { begin, activeId, isInteracting } = useGridInteraction({
     gridRef,
     getLayout: () => layoutRef.current,
-    // 与 LayoutGrid 的 gridMetrics(layout.zoom) 保持一致：缩放改行高与间距
-    getMetrics: () => gridMetrics(layoutRef.current.zoom),
+    // 与 LayoutGrid 的 gridMetrics(layout.zoom, rowBase) 保持一致：缩放改行高与间距。
+    // 行高基数按面区分：工作台 46px（正文放宽到 90rem 后等比放大），常驻栏仍 32px。
+    getMetrics: () =>
+      gridMetrics(
+        layoutRef.current.zoom,
+        surface === "rail" ? GRID_ROW_HEIGHT : DASHBOARD_ROW_HEIGHT,
+      ),
     getScrollContainer,
     onPreview: applyLayout,
     onCommit: (doc) => {
@@ -272,6 +286,11 @@ export function useLayoutEditor({
     commit(getResetLayout());
   }
 
+  /** 单卡内容缩放：点击即存，无输入防抖 */
+  function handleCardScaleChange(id: string, scale: number) {
+    commit(updateWidgetScale(layoutRef.current, id, scale));
+  }
+
   function handleConfigChange(id: string): ConfigChange {
     const change: ConfigChange = (patch: DashboardWidgetConfig, immediate = false) => {
       const next = updateWidgetConfig(layoutRef.current, id, patch);
@@ -302,7 +321,7 @@ export function useLayoutEditor({
     commit(next, 350);
   }
 
-  /** 缩放写进同一个布局信封（与卡片坐标一起保存）；100% 等价于不带字段 */
+  /** 网格缩放写进同一个布局信封（与卡片坐标一起保存）；100% 等价于不带字段 */
   function setZoom(zoom: number) {
     const z = normalizeZoom(zoom);
     const current = layoutRef.current;
@@ -310,6 +329,20 @@ export function useLayoutEditor({
       v: 1,
       items: current.items,
       ...(z !== undefined ? { zoom: z } : {}),
+      ...(current.textScale !== undefined ? { textScale: current.textScale } : {}),
+    };
+    commit(next);
+  }
+
+  /** 全局文字大小：同样写进布局信封，100% 等价于不带字段 */
+  function setTextScale(textScale: number) {
+    const t = normalizeTextScale(textScale);
+    const current = layoutRef.current;
+    const next: DashboardLayoutDoc = {
+      v: 1,
+      items: current.items,
+      ...(current.zoom !== undefined ? { zoom: current.zoom } : {}),
+      ...(t !== undefined ? { textScale: t } : {}),
     };
     commit(next);
   }
@@ -329,8 +362,10 @@ export function useLayoutEditor({
     handleRemove,
     handleReset,
     handleConfigChange,
+    handleCardScaleChange,
     handleKeyNudge,
     handleZoomChange: setZoom,
+    handleTextScaleChange: setTextScale,
     begin,
     activeId,
     isInteracting,

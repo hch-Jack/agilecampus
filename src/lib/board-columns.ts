@@ -78,19 +78,40 @@ export function deriveColumns(group: GroupBy, ctx: ColumnContext): BoardColumn[]
 
     case "status":
     default:
-      return (
-        [
-          { key: "todo", label: "待办", tone: "text-todo" },
-          { key: "doing", label: "进行中", tone: "text-doing" },
-          { key: "done", label: "已完成", tone: "text-done" },
-        ] as const
-      ).map((c) => ({
-        key: c.key,
-        label: c.label,
-        tone: c.tone,
-        patch: { status: c.key } as ColumnPatch,
-        matches: (t: FilterableTask) => t.status === c.key,
-      }));
+      // 四列：待办 / 进行中 / 待审批 / 已完成。
+      // 「待审批」不落库：由 pending 的 task_done 申请派生（任务状态仍是 todo/doing），
+      // 这类任务只出现在这一列，避免同一张卡同时出现在两处。
+      return [
+        {
+          key: "todo",
+          label: "待办",
+          tone: "text-todo",
+          patch: { status: "todo" } as ColumnPatch,
+          matches: (t: FilterableTask) => !t.pendingApproval && t.status === "todo",
+        },
+        {
+          key: "doing",
+          label: "进行中",
+          tone: "text-doing",
+          patch: { status: "doing" } as ColumnPatch,
+          matches: (t: FilterableTask) => !t.pendingApproval && t.status === "doing",
+        },
+        {
+          key: "pending",
+          label: "待审批",
+          tone: "text-medium",
+          // 学生拖入 = 提交完成申请（走完成申请弹窗）；管理员拖入 = 直接完成
+          patch: { status: "done" } as ColumnPatch,
+          matches: (t: FilterableTask) => t.pendingApproval != null,
+        },
+        {
+          key: "done",
+          label: "已完成",
+          tone: "text-done",
+          patch: { status: "done" } as ColumnPatch,
+          matches: (t: FilterableTask) => !t.pendingApproval && t.status === "done",
+        },
+      ];
   }
 }
 

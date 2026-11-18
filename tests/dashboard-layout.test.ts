@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   CLOCK_MAX_ZONES,
   COUNTDOWN_TITLE_MAX_LENGTH,
+  DASHBOARD_ROW_HEIGHT,
   DASHBOARD_WIDGETS,
   DEFAULT_DASHBOARD_LAYOUT,
   DEFAULT_RAIL_LAYOUT,
@@ -11,13 +12,19 @@ import {
   NOTE_MAX_LENGTH,
   SCHEDULE_GANTT_RATIO_MAX,
   SCHEDULE_POOL_RATIO_MIN,
+  CARD_SCALE_MAX,
+  CARD_SCALE_MIN,
+  TEXT_SCALE_MAX,
+  TEXT_SCALE_MIN,
   WIDGET_IDS,
   ZOOM_MAX,
   ZOOM_MIN,
   addWidget,
   addWidgetFullWidth,
   moveWidget,
+  normalizeCardScale,
   normalizeLayoutDoc,
+  normalizeTextScale,
   normalizeZoom,
   defaultDashboardLayoutFor,
   defaultRailLayoutFor,
@@ -26,6 +33,7 @@ import {
   resizeWidget,
   sortByCatalog,
   updateWidgetConfig,
+  updateWidgetScale,
   widgetOrder,
   type DashboardLayoutDoc,
   type DashboardLayoutItem,
@@ -574,6 +582,21 @@ describe("缩放", () => {
     expect(gridMetrics(ZOOM_MIN).gap).toBeGreaterThanOrEqual(4);
   });
 
+  it("gridMetrics：工作台行高基数按加宽比例放大，常驻栏仍用 32", () => {
+    // 工作台 100% 读 DASHBOARD_ROW_HEIGHT，缩放仍按倍数生效
+    expect(gridMetrics(undefined, DASHBOARD_ROW_HEIGHT)).toEqual({
+      rowHeight: DASHBOARD_ROW_HEIGHT,
+      gap: GRID_GAP,
+    });
+    expect(gridMetrics(1.2, DASHBOARD_ROW_HEIGHT)).toEqual({
+      rowHeight: Math.round(DASHBOARD_ROW_HEIGHT * 1.2),
+      gap: Math.round(GRID_GAP * 1.2),
+    });
+    // 不传基数 = 常驻栏，保持原样
+    expect(gridMetrics(1).rowHeight).toBe(GRID_ROW_HEIGHT);
+    expect(DASHBOARD_ROW_HEIGHT).toBeGreaterThan(GRID_ROW_HEIGHT);
+  });
+
   it("normalizeLayoutDoc 保留 zoom，缺省与非法值都不带字段", () => {
     const base = { v: 1, items: [{ id: "clock", x: 0, y: 0, w: 3, h: 2 }] };
     expect(normalizeLayoutDoc({ ...base, zoom: 1.3 }).zoom).toBe(1.3);
@@ -597,6 +620,101 @@ describe("缩放", () => {
     expect(removeWidget(doc, "clock").zoom).toBe(1.2);
     expect(updateWidgetConfig(doc, "note", { text: "x" }).zoom).toBe(1.2);
     expect(addWidgetFullWidth(doc, "note").zoom).toBe(1.2);
+  });
+});
+
+describe("文字大小与单卡内容缩放", () => {
+  it("normalizeTextScale / normalizeCardScale：夹取、按 5% 取整、100% 不落字段", () => {
+    expect(normalizeTextScale(undefined)).toBeUndefined();
+    expect(normalizeTextScale("1.1")).toBeUndefined();
+    expect(normalizeTextScale(Number.NaN)).toBeUndefined();
+    expect(normalizeTextScale(1)).toBeUndefined();
+    expect(normalizeTextScale(1.02)).toBeUndefined(); // 取整后仍是 1
+    expect(normalizeTextScale(0.5)).toBe(TEXT_SCALE_MIN);
+    expect(normalizeTextScale(9)).toBe(TEXT_SCALE_MAX);
+    expect(normalizeTextScale(1.17)).toBe(1.15);
+
+    expect(normalizeCardScale(0.1)).toBe(CARD_SCALE_MIN);
+    expect(normalizeCardScale(4)).toBe(CARD_SCALE_MAX);
+    expect(normalizeCardScale(0.87)).toBe(0.85);
+    expect(normalizeCardScale(1)).toBeUndefined();
+  });
+
+  it("normalizeLayoutDoc 保留 textScale 与 item.scale，非法值丢弃", () => {
+    const base = {
+      v: 1,
+      items: [{ id: "note", x: 0, y: 0, w: 4, h: 4, scale: 1.15 }],
+      textScale: 1.1,
+    };
+    const normalized = normalizeLayoutDoc(base);
+    expect(normalized.textScale).toBe(1.1);
+    expect(find(normalized, "note")!.scale).toBe(1.15);
+
+    // 100% 等价于缺省，不写字段
+    expect(normalizeLayoutDoc({ ...base, textScale: 1 }).textScale).toBeUndefined();
+    expect(
+      normalizeLayoutDoc({ ...base, items: [{ ...base.items[0], scale: 1 }] }).items[0].scale,
+    ).toBeUndefined();
+
+    // 越界值读出来时夹到边界；完全非法的值整段丢弃
+    expect(normalizeLayoutDoc({ ...base, textScale: 2 }).textScale).toBe(TEXT_SCALE_MAX);
+    expect(
+      normalizeLayoutDoc({ ...base, items: [{ ...base.items[0], scale: 0.2 }] }).items[0].scale,
+    ).toBe(CARD_SCALE_MIN);
+    expect(normalizeLayoutDoc({ ...base, textScale: "1.1" }).textScale).toBeUndefined();
+    expect(normalizeLayoutDoc({ v: 1, items: [] })).toEqual({ v: 1, items: [] });
+  });
+
+  it("updateWidgetScale：改 / 清 / 不动其他字段，未知实例原样返回", () => {
+    const scaled = normalizeLayoutDoc({
+      v: 1,
+      items: [
+        { id: "note", type: "note", x: 0, y: 0, w: 4, h: 4, config: { text: "hi" }, scale: 1.2 },
+        { id: "clock", type: "clock", x: 4, y: 0, w: 4, h: 3 },
+      ],
+      zoom: 1.2,
+      textScale: 1.1,
+    });
+
+    const bigger = updateWidgetScale(scaled, "note", 1.3);
+    expect(find(bigger, "note")).toMatchObject({
+      x: 0,
+      y: 0,
+      w: 4,
+      h: 4,
+      config: { text: "hi" },
+      scale: 1.3,
+    });
+    expect(bigger.zoom).toBe(1.2);
+    expect(bigger.textScale).toBe(1.1);
+    // 兄弟实例不受影响
+    expect(find(bigger, "clock")!.scale).toBeUndefined();
+
+    // 回到 100%：删字段而不是存 1
+    const reset = updateWidgetScale(bigger, "note", 1);
+    expect(find(reset, "note")).not.toHaveProperty("scale");
+
+    expect(updateWidgetScale(scaled, "nope", 1.2)).toBe(scaled);
+  });
+
+  it("布局变更与配置更新不丢 textScale / scale", () => {
+    const doc = normalizeLayoutDoc({
+      v: 1,
+      items: [{ id: "note", type: "note", x: 0, y: 0, w: 4, h: 4, scale: 1.2 }],
+      textScale: 1.1,
+    });
+
+    expect(moveWidget(doc, "note", 4, 2).textScale).toBe(1.1);
+    expect(resizeWidget(doc, "note", 6, 4).textScale).toBe(1.1);
+    expect(addWidget(doc, "clock").textScale).toBe(1.1);
+    // 删到空 items 也不丢全局文字大小
+    expect(removeWidget(doc, "note")).toEqual({ v: 1, items: [], textScale: 1.1 });
+    expect(addWidgetFullWidth(doc, "clock").textScale).toBe(1.1);
+
+    const withConfig = updateWidgetConfig(doc, "note", { text: "改过" });
+    expect(withConfig.textScale).toBe(1.1);
+    expect(find(withConfig, "note")!.scale).toBe(1.2);
+    expect(find(withConfig, "note")!.config).toEqual({ text: "改过" });
   });
 });
 

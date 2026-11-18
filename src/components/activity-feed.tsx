@@ -244,7 +244,11 @@ export function ActivityFeed({
       }
     >
       <div className="flex shrink-0 items-center justify-between gap-3">
-        <h2 className="flex items-center gap-1.5 font-display text-lg font-semibold text-ink">
+        <h2
+          className={`flex items-center gap-1.5 font-display font-semibold text-ink ${
+            embedded ? "dw-title" : "text-lg"
+          }`}
+        >
           {title}
           {unread > 0 && (
             <>
@@ -256,7 +260,7 @@ export function ActivityFeed({
               </span>
               <button
                 onClick={handleMarkRead}
-                className="text-xs font-normal text-ink-faint transition-colors hover:text-primary"
+                className="ac-hit text-xs font-normal text-ink-faint transition-colors hover:text-primary"
               >
                 标记已读
               </button>
@@ -267,7 +271,7 @@ export function ActivityFeed({
           <button
             onClick={handleClear}
             disabled={clearPending}
-            className="shrink-0 text-xs text-ink-faint transition-colors hover:text-high disabled:opacity-50"
+            className="ac-hit shrink-0 text-xs text-ink-faint transition-colors hover:text-high disabled:opacity-50"
           >
             {clearPending ? "清除中…" : "清除记录"}
           </button>
@@ -277,7 +281,7 @@ export function ActivityFeed({
         <p className="mt-1 text-xs text-high">{clearError ?? deleteError}</p>
       )}
       {activities.length === 0 ? (
-        <p className="mt-2 text-sm text-ink-faint">暂无动态</p>
+        <p className={`mt-2 text-ink-faint ${embedded ? "dw-body" : "text-sm"}`}>暂无动态</p>
       ) : (
         <ul
           className={`ac-scroll-hidden mt-2 space-y-1.5 overflow-y-auto pr-1 ${
@@ -288,7 +292,7 @@ export function ActivityFeed({
             const parts = feedParts(a);
             const titled = a.taskTitle != null;
             return (
-              <li key={a.id} className="text-sm">
+              <li key={a.id} className={embedded ? "dw-body" : "text-sm"}>
                 {showProject && <span className="text-ink-faint">{a.projectName}:</span>}{" "}
                 <span className="font-medium text-ink">{a.actorName}</span>{" "}
                 <span className="text-ink-soft">
@@ -303,7 +307,9 @@ export function ActivityFeed({
                   )}
                   {parts.after}
                 </span>{" "}
-                <span className="text-xs text-ink-faint">{fmtRelative(a.createdAt, now, tz)}</span>
+                <span className={`text-ink-faint ${embedded ? "dw-meta" : "text-xs"}`}>
+                  {fmtRelative(a.createdAt, now, tz)}
+                </span>
                 {/* 新消息红点：未读条目必然排在最前（createdAt 倒序、未读=晚于已读标记），
                     故索引 < unread 即新消息；点「标记已读」后全部消失 */}
                 {i < unread && (
@@ -323,7 +329,8 @@ export function ActivityFeed({
                         ? "管理员：从所有人的动态流中删除"
                         : "仅从自己的动态流中隐藏"
                     }
-                    className="ml-1.5 align-middle text-xs leading-none text-ink-faint transition-colors hover:text-high disabled:opacity-40"
+                    // 手机上用伪元素外扩点击区（ac-dot-hit），行内占位不变，避免 × 被挤到下一行
+                    className="ac-dot-hit relative ml-1.5 align-middle text-xs leading-none text-ink-faint transition-colors hover:text-high disabled:opacity-40"
                   >
                     ×
                   </button>

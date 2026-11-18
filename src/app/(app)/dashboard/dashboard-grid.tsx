@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  DASHBOARD_ROW_HEIGHT,
   defaultDashboardLayoutFor,
   normalizeLayoutDoc,
   type DashboardLayoutDoc,
@@ -13,7 +14,7 @@ import { LayoutGrid } from "./layout-grid";
 import { useLayoutEditor } from "./use-layout-editor";
 import { WidgetLibrary } from "./widget-library";
 import { renderWidgetContent } from "./widget-content";
-import { ZoomControl } from "./zoom-control";
+import { TextScaleControl, ZoomControl } from "./zoom-control";
 import "./dashboard.css";
 
 export function DashboardGrid({
@@ -38,8 +39,10 @@ export function DashboardGrid({
     handleRemove,
     handleReset,
     handleConfigChange,
+    handleCardScaleChange,
     handleKeyNudge,
     handleZoomChange,
+    handleTextScaleChange,
     begin,
     activeId,
     isInteracting,
@@ -158,6 +161,10 @@ export function DashboardGrid({
                 恢复默认
               </button>
               <ZoomControl zoom={layout.zoom} onChange={handleZoomChange} />
+              <TextScaleControl
+                textScale={layout.textScale}
+                onChange={handleTextScaleChange}
+              />
               <button type="button" onClick={exitEditing} className="ac-btn px-3 py-1.5 text-xs">
                 完成
               </button>
@@ -218,6 +225,8 @@ export function DashboardGrid({
             onDragStart={(e, id) => begin(e, id, "move")}
             onResizeStart={(e, id) => begin(e, id, "resize")}
             onKeyNudge={handleKeyNudge}
+            onScaleChange={handleCardScaleChange}
+            rowBase={DASHBOARD_ROW_HEIGHT}
           />
         )}
       </div>

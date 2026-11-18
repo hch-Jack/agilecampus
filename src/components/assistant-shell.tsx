@@ -5,12 +5,14 @@ import {
   createContext,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
 import { AgentChat, type ChatMessage } from "@/components/agent-chat";
 import { AssistantConversations } from "@/components/assistant-conversations";
+import { AssistantBoards } from "@/components/assistant-boards";
 import {
   ASSISTANT_CONVERSATION_COOKIE,
   ASSISTANT_COOKIE_MAX_AGE,
@@ -20,8 +22,11 @@ import {
 import { projectIdFromPathname } from "@/lib/project-path";
 import {
   ASSISTANT_PANEL_OPEN_EVENT,
+  ASSISTANT_PROMPT_EVENT,
   MESSAGES_PANEL_OPEN_EVENT,
+  type AssistantPromptDetail,
 } from "@/lib/right-panels";
+import { setRightPanelOpen } from "@/components/right-panel-push";
 
 /**
  * 主界面右侧的 AI 助手面板。
@@ -32,9 +37,10 @@ import {
  * 四个容易踩的点：
  * 1. 面板必须是 `<header>` 的**兄弟**：顶栏带 backdrop-blur，会成为 fixed 后代的包含块，
  *    抽屉放进去就不再相对视口定位（顶栏的「设置」弹窗因此 portal 到 body）。
- * 2. `lg:pr-[570px]` 加在**整页外层**，不能加在 `mx-auto max-w-5xl` 的内容盒上 ——
- *    加在内容盒里会让正文在剩余区域里不居中，顶栏右侧按钮也会被抽屉盖住。
- *    **这个数与抽屉的 `lg:w-[570px]` 必须一致**，改宽度时两处一起改。
+ * 2. `lg:pr-[570px]` 由 **RightPanelPush** 统一加在整页外层，消息浮窗共用同一层；
+ *    不能加在 `mx-auto max-w-5xl` 的内容盒上 —— 加在内容盒里会让正文在剩余区域里
+ *    不居中，顶栏右侧按钮也会被抽屉盖住。**这个数与抽屉的 `lg:w-[570px]` 必须一致**，
+ *    改宽度时三处（RightPanelPush / 助手抽屉 / 消息抽屉）一起改。
  * 3. 抽屉**常驻挂载**，收起时移出视口（translate + inert）。若按需卸载，`AgentChat` 的
  *    `useState(initialMessages)` 会在下次打开时重新播种，这段时间里发的消息就丢了。
  * 4. `viewKey` 只在**显式切换/新建/删除当前会话/重置**时递增，用来重新播种 `AgentChat`。
@@ -97,6 +103,12 @@ export function AssistantShell({
 }) {
   const [open, setOpen] = useState(false);
   const focusProjectId = projectIdFromPathname(usePathname());
+  /**
+   * 页面按钮（如日程表「AI 排期」）带进来的自动提问：打开面板并让 AgentChat 发一次。
+   * nonce 递增保证同一句话只发一次；发完由 AgentChat 回调清空，切会话重挂载也不会重发。
+   */
+  const [autoPrompt, setAutoPrompt] = useState<{ text: string; nonce: number } | null>(null);
+  const autoPromptSeq = useRef(0);
 
   const [conversations, setConversations] = useState(initialConversations);
   const [activeId, setActiveId] = useState<string | null>(initialActiveId);
@@ -106,10 +118,17 @@ export function AssistantShell({
   const [sessionBusy, setSessionBusy] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
+  /** 「按标签查历史」点中的消息：切到会话后由 AgentChat 滚动定位 */
+  const [focusMessage, setFocusMessage] = useState<
+    { messageId: string; nonce: number } | null
+  >(null);
+  const focusNonce = useRef(0);
   /** 切换请求的递增序号：慢响应回来时若已过期就丢弃 */
   const switchSeq = useRef(0);
   /** 当前 AgentChat 的 viewKey；用来丢弃「重置前发出的请求」晚到的落库回调 */
   const viewKeyRef = useRef(viewKey);
+  /** 「生成文件」统计的刷新信号：助手每生成一批文件就 +1，顶部数量实时更新 */
+  const [filesVersion, setFilesVersion] = useState(0);
   useEffect(() => {
     viewKeyRef.current = viewKey;
   }, [viewKey]);
@@ -163,10 +182,31 @@ export function AssistantShell({
   useEffect(() => {
     if (open) window.dispatchEvent(new Event(ASSISTANT_PANEL_OPEN_EVENT));
   }, [open]);
+
+  // 正文挤压宽度交给 RightPanelPush 统一算：两个面板互斥，切换时宽度不变，
+  // 不会出现「外层刚开始撑、内层还没收」的错帧抖动。
+  useEffect(() => {
+    setRightPanelOpen("assistant", open);
+  }, [open]);
+  useEffect(() => () => setRightPanelOpen("assistant", false), []);
   useEffect(() => {
     const close = () => setOpen(false);
     window.addEventListener(MESSAGES_PANEL_OPEN_EVENT, close);
     return () => window.removeEventListener(MESSAGES_PANEL_OPEN_EVENT, close);
+  }, []);
+
+  // 页面里「带着一句话」唤起助手：开面板，这句话在对话里显示为提示（不代发，见 lib/right-panels.ts）
+  useEffect(() => {
+    const onPrompt = (event: Event) => {
+      const detail = (event as CustomEvent<AssistantPromptDetail>).detail;
+      const text = typeof detail?.text === "string" ? detail.text.trim() : "";
+      if (!text) return;
+      setOpen(true);
+      autoPromptSeq.current += 1;
+      setAutoPrompt({ text, nonce: autoPromptSeq.current });
+    };
+    window.addEventListener(ASSISTANT_PROMPT_EVENT, onPrompt);
+    return () => window.removeEventListener(ASSISTANT_PROMPT_EVENT, onPrompt);
   }, []);
 
   /** 把一条会话的内容装进 AgentChat（只由显式切换/新建/删除当前会话调用） */
@@ -198,6 +238,13 @@ export function AssistantShell({
     } finally {
       if (seq === switchSeq.current) setSwitching(false);
     }
+  }
+
+  /** 标签检索点选一条历史消息：切到它所在会话，并让 AgentChat 滚过去高亮 */
+  function openTaggedMessage(conversationId: string, messageId: string) {
+    focusNonce.current += 1;
+    setFocusMessage({ messageId, nonce: focusNonce.current });
+    if (conversationId !== activeId) void selectConversation(conversationId);
   }
 
   async function createConversation() {
@@ -238,6 +285,7 @@ export function AssistantShell({
     info: {
       conversationId: string;
       conversationTitle: string | null;
+      conversationCategory: string | null;
       conversationCreatedAt: string;
       lastMessageAt: string;
     },
@@ -248,6 +296,7 @@ export function AssistantShell({
       upsertConversation(prev, {
         id: info.conversationId,
         title: info.conversationTitle,
+        category: info.conversationCategory,
         createdAt: info.conversationCreatedAt,
         lastMessageAt: info.lastMessageAt,
       }),
@@ -269,6 +318,43 @@ export function AssistantShell({
         ),
       ),
     );
+  }
+
+  /** 手动改分类（null = 未分类）；只改这一条的摘要，不重排列表之外的东西 */
+  async function categorizeConversation(
+    id: string,
+    category: string | null,
+  ): Promise<string | null> {
+    try {
+      const res = await fetch(`/api/chat/conversations/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return data.error ?? "分类失败";
+      if (data.conversation) {
+        setConversations((prev) => upsertConversation(prev, data.conversation));
+      }
+      return null;
+    } catch {
+      return "网络异常，请重试";
+    }
+  }
+
+  /** 自动归类所有未分类会话；服务端返回最新列表，整表替换 */
+  async function autoCategorizeConversations(): Promise<string | null> {
+    try {
+      const res = await fetch("/api/chat/conversations/categorize", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return data.error ?? "自动归类失败";
+      if (Array.isArray(data.conversations)) {
+        setConversations(sortConversations(data.conversations));
+      }
+      return null;
+    } catch {
+      return "网络异常，请重试";
+    }
   }
 
   async function renameConversation(id: string, title: string): Promise<string | null> {
@@ -341,15 +427,99 @@ export function AssistantShell({
     }
   }
 
+  /**
+   * 抽屉正文单独 memo：开合抽屉只换位置与 inert，面板里的内容一个字都没变。
+   * 若跟着外壳一起重渲染，上百条历史消息（含 Markdown 解析）会在每次开合时整棵重算，
+   * 首帧被渲染任务占住，300ms 的滑入动画立刻掉帧。
+   * 依赖列出正文与各回调实际读的状态；`open` 刻意不在其中 —— 它只影响抽屉位置。
+   */
+  const panelBody = useMemo(
+    () => (
+      <div className="flex min-h-0 flex-1 flex-col gap-3 p-4 lg:px-5">
+        <AssistantConversations
+          conversations={conversations}
+          activeId={activeId}
+          busy={sessionBusy || switching}
+          onSelect={(id) => void selectConversation(id)}
+          onNew={() => void createConversation()}
+          onRename={renameConversation}
+          onDelete={(id) => void deleteConversation(id)}
+          onCategorize={categorizeConversation}
+          onAutoCategorize={autoCategorizeConversations}
+        />
+        <AssistantBoards
+          busy={sessionBusy || switching}
+          onOpenMessage={openTaggedMessage}
+          filesVersion={filesVersion}
+        />
+        {switchError && <p className="shrink-0 text-sm text-high">{switchError}</p>}
+        <div className="min-h-0 flex-1">
+          <AgentChat
+            key={viewKey}
+            scope="personal"
+            projectId={focusProjectId ?? undefined}
+            conversationId={activeId ?? undefined}
+            initialMessages={seedMessages}
+            disabled={switching}
+            autoPrompt={autoPrompt ?? undefined}
+            onAutoPromptDone={() => setAutoPrompt(null)}
+            onBusyChange={setSessionBusy}
+            onTurnPersisted={(info) => handleTurnPersisted(info, viewKey)}
+            onTurnDeleted={handleTurnDeleted}
+            onFilesGenerated={() => setFilesVersion((v) => v + 1)}
+            focusMessage={focusMessage ?? undefined}
+            subtitle={
+              focusProjectId ? "只属于你的对话 · 已带入当前项目" : "只属于你的对话"
+            }
+            emptyHint="问我手上任意项目的事。在项目页面里，我会自动带上当前项目的动态、留言与任务。"
+            placeholder="问点什么，或交代一句让我记住…"
+            actions={
+              <>
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  aria-label="收起助手"
+                  title="收起助手"
+                  className="grid h-8 w-8 place-items-center rounded-field text-ink-faint transition-colors hover:bg-sunken hover:text-ink"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-4 w-4"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    aria-hidden
+                  >
+                    <path d="M6 6l12 12M18 6L6 18" />
+                  </svg>
+                </button>
+              </>
+            }
+          />
+        </div>
+      </div>
+    ),
+    // 正文里的回调都是普通闭包，它们读的状态已全部列在依赖里（见上方说明）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      conversations,
+      activeId,
+      seedMessages,
+      viewKey,
+      sessionBusy,
+      switching,
+      switchError,
+      filesVersion,
+      focusMessage,
+      autoPrompt,
+      focusProjectId,
+    ],
+  );
+
   return (
     <AssistantUiContext.Provider value={{ open, setOpen }}>
-      <div
-        className={`assistant-shell-push min-h-screen transition-[padding] duration-300 ease-out ${
-          open ? "lg:pr-[570px]" : ""
-        }`}
-      >
-        {children}
-      </div>
+      {children}
 
       {/* 移动端遮罩；桌面端正文已被挤开，不需要 */}
       {open && (
@@ -369,59 +539,7 @@ export function AssistantShell({
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >
-        <div className="flex min-h-0 flex-1 flex-col gap-3 p-4 lg:px-5">
-          <AssistantConversations
-            conversations={conversations}
-            activeId={activeId}
-            busy={sessionBusy || switching}
-            onSelect={(id) => void selectConversation(id)}
-            onNew={() => void createConversation()}
-            onRename={renameConversation}
-            onDelete={(id) => void deleteConversation(id)}
-          />
-          {switchError && <p className="shrink-0 text-sm text-high">{switchError}</p>}
-          <div className="min-h-0 flex-1">
-            <AgentChat
-              key={viewKey}
-              scope="personal"
-              projectId={focusProjectId ?? undefined}
-              conversationId={activeId ?? undefined}
-              initialMessages={seedMessages}
-              disabled={switching}
-              onBusyChange={setSessionBusy}
-              onTurnPersisted={(info) => handleTurnPersisted(info, viewKey)}
-              onTurnDeleted={handleTurnDeleted}
-              subtitle={
-                focusProjectId ? "只属于你的对话 · 已带入当前项目" : "只属于你的对话"
-              }
-              emptyHint="问我手上任意项目的事。在项目页面里，我会自动带上当前项目的动态、留言与任务。"
-              placeholder="问点什么，或交代一句让我记住…"
-              actions={
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setOpen(false)}
-                    aria-label="收起助手"
-                    title="收起助手"
-                    className="grid h-8 w-8 place-items-center rounded-field text-ink-faint transition-colors hover:bg-sunken hover:text-ink"
-                  >
-                    <svg
-                      viewBox="0 0 24 24"
-                      className="h-4 w-4"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      aria-hidden
-                    >
-                      <path d="M6 6l12 12M18 6L6 18" />
-                    </svg>
-                  </button>
-                </>
-              }
-            />
-          </div>
-        </div>
+        {panelBody}
       </aside>
     </AssistantUiContext.Provider>
   );

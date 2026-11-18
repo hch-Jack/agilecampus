@@ -206,3 +206,62 @@ body {
 .ac-scroll-hidden::-webkit-scrollbar {
   display: none;
 }
+
+/* ============================================================
+   手机端（< 640px）——只在这里改，桌面端一字不动
+   ============================================================ */
+@media (max-width: 639.98px) {
+  /* 点按目标：按钮统一 44px 高（拇指友好）；manipulation 去掉双击缩放的 300ms 等待 */
+  .ac-btn,
+  .ac-btn-ghost {
+    min-height: 2.75rem;
+    touch-action: manipulation;
+  }
+
+  select.ac-field {
+    min-height: 2.5rem;
+  }
+
+  /* iOS 聚焦 <16px 的输入框会自动放大整页；手机上所有文本控件统一抬到 16px */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+  textarea,
+  select,
+  .ac-field {
+    font-size: 1rem;
+  }
+
+  /* 小号文字控件（「查看全部」「清除记录」「专注 / 休息」这类 16px 高的链接）：
+     上下各垫 8px 变成可点区域，负外边距把排版占位抵消掉，视觉位置不变。 */
+  .ac-hit {
+    margin-block: -0.5rem;
+    padding-block: 0.5rem;
+    padding-inline: 0.5rem;
+    margin-inline: -0.5rem;
+  }
+
+  /* 筛选胶囊（「隐藏已完成」「仅看逾期」）：加高加宽，方便拇指点 */
+  a.ac-badge,
+  button.ac-badge {
+    min-height: 2rem;
+    padding-inline: 0.75rem;
+    touch-action: manipulation;
+  }
+
+  /* 教程底部的小圆点指示器：视觉仍是 8px 点，可点区域向外扩 10px */
+  .ac-dot-hit::after {
+    content: "";
+    position: absolute;
+    inset: -0.625rem;
+  }
+
+  /* 原生日期/时间控件在窄屏下别撑出容器 */
+  .ac-field[type="date"],
+  .ac-field[type="time"],
+  .ac-field[type="datetime-local"],
+  input[type="date"],
+  input[type="time"],
+  input[type="datetime-local"] {
+    max-width: 100%;
+    min-width: 0;
+  }
+}
