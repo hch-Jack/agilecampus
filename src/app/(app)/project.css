@@ -392,12 +392,26 @@ body.proj-cosmic .graph-sticky {
 }
 
 /* —— 12. 右侧 AI 助手面板 —— */
+/* 挤压层宽度：面板抽屉与正文 padding 共用同一个变量；默认值放 CSS，
+   首屏/水合前也有正确宽度。桌面端才挤压，手机端抽屉覆盖。 */
+.assistant-shell-push {
+  --right-panel-width: 570px;
+}
+@media (min-width: 1024px) {
+  .assistant-shell-pushed {
+    padding-right: var(--right-panel-width);
+  }
+}
 /* 宇宙主题的 --color-surface 只有 45% 不透明度，铺在页面内容上会透底、字也糊。
    面板单独压厚，并保留一层模糊让边缘与星空背景过渡。浅色主题用 bg-surface（纯白）。 */
 body.proj-cosmic .assistant-panel {
   background-color: rgba(14, 19, 34, 0.94);
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
+}
+/* 拖动宽度时直接跟手：暂停挤压 padding 的补间，松手后再恢复 */
+html[data-panel-resizing] .assistant-shell-push {
+  transition: none !important;
 }
 /* 挤压/滑入都用 transition（不是 animation），这里一并尊重减弱动态偏好 */
 @media (prefers-reduced-motion: reduce) {
@@ -445,7 +459,10 @@ body.proj-cosmic .mobile-nav-sheet {
    不用在第一帧临时提升图层（那一下最容易掉帧）。面板里需要浮层的组件都 portal 到
    body，不会被这层包含块影响。 */
 .assistant-panel {
-  will-change: transform;
+  /* Tailwind v4 的 translate-x-* 走独立的 translate 属性，这里两个都提示，
+     抽屉滑入/滑出才稳定交给合成线程 */
+  will-change: transform, translate;
+  backface-visibility: hidden;
 }
 /* 光晕靠 transform 漂移，身上却挂着 95px 的 blur：提示浏览器把滤镜结果留在一层里，
    漂移时只做合成，不反复重算模糊。 */

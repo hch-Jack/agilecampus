@@ -195,7 +195,17 @@ export function useGridInteraction({
       setActiveId(id);
       document.body.classList.add("dashboard-dragging");
 
+      // 吸附位变化才需要让别人让位；再按帧合并，避免一次 pointermove 风暴里
+      // 连续跨格时多次驱动整页 React 重渲染（视觉仍按刷新率更新）。
+      let previewRaf = 0;
+      let pendingPreview: DashboardLayoutDoc | null = null;
+
       function cleanup() {
+        if (previewRaf) {
+          cancelAnimationFrame(previewRaf);
+          previewRaf = 0;
+        }
+        pendingPreview = null;
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
         window.removeEventListener("pointercancel", onCancel);
@@ -280,11 +290,19 @@ export function useGridInteraction({
 
         s.latest = next;
         if (changed) {
-          onPreview(
+          pendingPreview =
             s.mode === "move"
               ? pinMovedItem(next, s.id, s.startItem.x, s.startItem.y)
-              : next,
-          );
+              : next;
+          if (!previewRaf) {
+            previewRaf = requestAnimationFrame(() => {
+              previewRaf = 0;
+              if (pendingPreview) {
+                onPreview(pendingPreview);
+                pendingPreview = null;
+              }
+            });
+          }
         }
 
         // 靠近可滚动区域的上下边缘时自动滚动，让长布局也能拖到屏幕外

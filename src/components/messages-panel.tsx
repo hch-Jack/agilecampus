@@ -3,6 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -18,6 +19,7 @@ import {
 } from "@/lib/right-panels";
 import { MessagesPanelContext, useMessagesPanel, type MessagesMode } from "./messages-panel-context";
 import { setRightPanelOpen } from "./right-panel-push";
+import { RightPanelResizeHandle } from "./right-panel-width";
 
 /**
  * 消息系统的**固定模式**（整页 ⇄ 右侧浮窗）与浮窗本体。
@@ -114,11 +116,33 @@ export function MessagesPanelShell({
     const timer = setTimeout(() => setPaintReady(false), 300);
     return () => clearTimeout(timer);
   }, [visible]);
-  const renderContent = (visible && paintReady) || keepMounted;
+  // 预加载：浮窗模式空闲时先把消息界面挂到屏幕外（inert、不轮询），
+  // 第一次点击「消息」时不再现挂整个组件树，抽屉动画从第一帧就走。
+  const [preloaded, setPreloaded] = useState(false);
+  useEffect(() => {
+    if (mode !== "drawer" || preloaded) return;
+    const w = window as Window & {
+      requestIdleCallback?: (cb: IdleRequestCallback, opts?: IdleRequestOptions) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    let idleId = 0;
+    let timer = 0;
+    if (w.requestIdleCallback) {
+      idleId = w.requestIdleCallback(() => setPreloaded(true), { timeout: 2000 });
+    } else {
+      timer = window.setTimeout(() => setPreloaded(true), 1200);
+    }
+    return () => {
+      if (idleId && w.cancelIdleCallback) w.cancelIdleCallback(idleId);
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [mode, preloaded]);
+
+  const renderContent = (visible && paintReady) || keepMounted || preloaded;
   // 内容元素本身也是稳定的：外壳因开关/模式变化重渲染时，不去重算整套消息列表
   const content = useMemo(
-    () => <MessagesClient timeZone={timeZone} variant="panel" />,
-    [timeZone],
+    () => <MessagesClient timeZone={timeZone} variant="panel" active={visible} />,
+    [timeZone, visible],
   );
 
   // 「进消息系统之前的页面」：layout 的客户端组件跨路由常驻，每次落到非消息页记一笔；
@@ -148,11 +172,12 @@ export function MessagesPanelShell({
     if (open) window.dispatchEvent(new Event(MESSAGES_PANEL_OPEN_EVENT));
   }, [open]);
 
-  // 正文挤压交给 RightPanelPush 统一算：和助手互斥且同宽，切换时正文不挪位
-  useEffect(() => {
+  // 正文挤压交给 RightPanelPush 统一算：和助手互斥且同宽，切换时正文不挪位。
+  // layout effect 与抽屉 transform 同帧启动，避免挤压比抽屉晚一帧。
+  useLayoutEffect(() => {
     setRightPanelOpen("messages", visible);
   }, [visible]);
-  useEffect(() => () => setRightPanelOpen("messages", false), []);
+  useLayoutEffect(() => () => setRightPanelOpen("messages", false), []);
   useEffect(() => {
     const close = () => closePanel();
     window.addEventListener(ASSISTANT_PANEL_OPEN_EVENT, close);
@@ -249,10 +274,11 @@ export function MessagesPanelShell({
         aria-label="消息"
         aria-hidden={!visible}
         inert={!visible}
-        className={`assistant-panel fixed inset-y-0 right-0 z-40 flex w-full max-w-[630px] flex-col border-l border-line bg-surface shadow-pop transition-transform duration-300 ease-out lg:w-[570px] ${
+        className={`assistant-panel fixed inset-y-0 right-0 z-40 flex w-full max-w-[630px] flex-col overflow-hidden border-l border-line bg-surface shadow-pop transition-transform duration-300 ease-out lg:w-[var(--right-panel-width)] lg:max-w-none ${
           visible ? "translate-x-0" : "translate-x-full"
         }`}
       >
+        <RightPanelResizeHandle label="消息" />
         {/* 不加内边距：浮窗里是左右两栏的界面，左栏要贴着抽屉左边框、
             头部条要贴着上边框，留白交给各栏自己控制（页头 px-3、列表 p-3）。 */}
         <div className="flex min-h-0 flex-1 flex-col">

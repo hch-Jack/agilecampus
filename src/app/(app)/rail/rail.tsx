@@ -19,6 +19,7 @@ import {
   saveRailCollapsedAction,
   saveRailLayoutAction,
 } from "./actions";
+import { beginRailPaintBlur } from "@/components/dashboard-paint-freeze";
 import "../dashboard/dashboard.css";
 
 /**
@@ -139,6 +140,7 @@ export function AppRail({
 
   /** 先本地切换，再按账号落库：下次登录（换设备也一样）沿用这次的选择 */
   function setCollapsedPreference(next: boolean) {
+    if (next !== collapsed) beginRailPaintBlur(next);
     setCollapsed(next);
     void saveRailCollapsedAction(next).catch(() => {
       // 落库失败不影响本次切换；下次再点会重试

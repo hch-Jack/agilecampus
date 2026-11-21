@@ -96,6 +96,18 @@ export function parseDbFilters(raw: string | null | undefined): DbFilters {
   };
 }
 
+/** 把筛选态写回 URLSearchParams（只动 dbf 键；URLSearchParams 自己负责编码） */
+export function setDbFiltersOnParams(
+  params: URLSearchParams,
+  f: DbFilters,
+): URLSearchParams {
+  const next = new URLSearchParams(params.toString());
+  const serialized = serializeDbFilters(f);
+  if (serialized) next.set(DB_FILTER_PARAM, serialized);
+  else next.delete(DB_FILTER_PARAM);
+  return next;
+}
+
 /** 筛选态 → URL 参数值（不含键名）；全空返回 "" */
 export function serializeDbFilters(f: DbFilters): string {
   const compact: Record<string, unknown> = {};

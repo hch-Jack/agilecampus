@@ -1,27 +1,23 @@
 "use client";
 
+import { useEffect, useRef, type ReactNode } from "react";
 import {
-  useSyncExternalStore,
-  type ReactNode,
-} from "react";
+  getRightPanelWidth,
+  setRightPanelWidth,
+  subscribeRightPanelWidth,
+} from "./right-panel-width";
+import { beginDashboardPaintFreeze } from "./dashboard-paint-freeze";
 
 /**
  * 「右侧浮层挤压正文」的**唯一**一层包装。
  *
- * 以前 AI 助手与消息浮窗各自在 children 外面包一层 `lg:pr-[570px]`，
- * 而消息浮窗那一层又嵌在助手那一层里面。两个面板互斥、宽度相同，切换时：
- * 外层 0 → 570、内层 570 → 0 同时跑两条 300ms 的 padding 过渡，只要有一帧
- * 起步不同步（effect 在首帧之后才跑到），正文就会先被多挤一下再弹回来——
- * 用户看到的就是「主页面抖一下、闪一下」。
+ * 挤压宽度存在这里，但**不再通过 React state 驱动**：面板开关时整页子树
+ * 有上千个节点，一旦 setState 让 Next/React 重渲染，点击到首帧就要多花几百毫秒。
+ * 现在订阅开关/宽度后直接改自己的 class 与 CSS 变量，正文零重渲染，
+ * 抽屉 transform 与 padding 过渡在同一帧启动。
  *
- * 改成两个面板都只向这里报「我开着没有」，宽度由这一个 div 统一决定：
- * 切换时前一个还没关、后一个已经开，`pushed` 始终为 true，正文一动不动。
- * 桌面端挤压、移动端覆盖的口径不变；`assistant-shell-push` 这个类名保留，
- * 宇宙主题的「减弱动态」规则还按它关过渡。
- *
- * 挤压是 `padding` 过渡（布局属性，只能主线程逐帧重排）：工作台/项目详情正文
- * 上千个布局对象，实测每帧 ~30ms，300ms 只落下 9–11 次宽度更新。试过把它改成
- * 「一次到位」——确实只剩 2 次重排，但画面生硬，已还原。
+ * 挤压是 `padding` 过渡（布局属性，只能主线程逐帧重排）；屏幕外卡片与工作台
+ * 首尾帧冻结见 dashboard-paint-freeze.ts，用来减少过渡中间的重排开销。
  */
 
 type PanelKey = "assistant" | "messages";
@@ -33,7 +29,7 @@ function emit() {
   listeners.forEach((cb) => cb());
 }
 
-/** 面板开关同步到这里；同一个值重复上报不触发渲染 */
+/** 面板开关同步到这里；同一个值重复上报不触发任何更新 */
 export function setRightPanelOpen(panel: PanelKey, open: boolean) {
   if (openState[panel] === open) return;
   openState[panel] = open;
@@ -47,24 +43,59 @@ function subscribe(onChange: () => void): () => void {
   };
 }
 
-function getSnapshot(): boolean {
-  return openState.assistant || openState.messages;
-}
-
-/** 服务端与水合首帧：都还没开，不挤压 */
-function getServerSnapshot(): boolean {
-  return false;
-}
-
 export function RightPanelPush({ children }: { children: ReactNode }) {
-  const pushed = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const ref = useRef<HTMLDivElement>(null);
+  const prevPushedRef = useRef(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    let freezeCleanup: (() => void) | null = null;
+
+    const clearFreeze = () => {
+      freezeCleanup?.();
+      freezeCleanup = null;
+    };
+
+    const scheduleFreeze = (pushed: boolean) => {
+      clearFreeze();
+      // 移动端抽屉覆盖，不挤压正文，无需冻结
+      if (!window.matchMedia("(min-width: 1024px)").matches) return;
+      // 首帧就启动旧快照淡出/新网格淡入；克隆与锁宽已拆到下一帧内部，
+      // 这里同步调用本身很轻，点击立刻能看到渐变。
+      freezeCleanup = beginDashboardPaintFreeze({
+        targetPadding: pushed ? getRightPanelWidth() : 0,
+      });
+    };
+
+    const apply = () => {
+      const pushed = openState.assistant || openState.messages;
+      el.style.setProperty("--right-panel-width", `${getRightPanelWidth()}px`);
+      el.classList.toggle("assistant-shell-pushed", pushed);
+      if (prevPushedRef.current !== pushed) {
+        prevPushedRef.current = pushed;
+        scheduleFreeze(pushed);
+      }
+    };
+
+    apply();
+    const unsubOpen = subscribe(apply);
+    const unsubWidth = subscribeRightPanelWidth(apply);
+    // 窗口变窄时把保存的宽度夹回可用范围；拖动中不跑（拖动已按视口夹取）
+    const onResize = () => setRightPanelWidth(getRightPanelWidth());
+    window.addEventListener("resize", onResize);
+
+    return () => {
+      unsubOpen();
+      unsubWidth();
+      window.removeEventListener("resize", onResize);
+      clearFreeze();
+    };
+  }, []);
 
   return (
-    <div
-      className={`assistant-shell-push min-h-screen transition-[padding] duration-300 ease-out ${
-        pushed ? "lg:pr-[570px]" : ""
-      }`}
-    >
+    <div ref={ref} className="assistant-shell-push min-h-screen transition-[padding] duration-300 ease-out">
       {children}
     </div>
   );

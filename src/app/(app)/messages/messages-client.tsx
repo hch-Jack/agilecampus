@@ -1,6 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useTransition,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import Link from "next/link";
 import { IdentityBadge } from "@/components/badges";
 import { FilePreviewModal } from "@/components/file-preview";
@@ -64,6 +74,63 @@ function fmtTime(tz: string, iso: string): string {
   const d = new Date(iso);
   if (dateIn(tz, d) === todayIn(tz)) return formatClockTime(tz, d);
   return formatShortDateTime(tz, d);
+}
+
+type ChatMessage = DmMessageView | GroupMessageView;
+
+/** 4s 轮询大部分时候内容没变：逐条比较后复用旧数组，避免整页消息无谓重渲染 */
+function sameMessages(a: ChatMessage[], b: ChatMessage[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      x.id !== y.id ||
+      x.content !== y.content ||
+      x.createdAt !== y.createdAt ||
+      x.attachment?.id !== y.attachment?.id
+    ) {
+      return false;
+    }
+    if ((x as DmMessageView).readAt !== (y as DmMessageView).readAt) return false;
+  }
+  return true;
+}
+
+/** 会话行签名：轮询内容没变时复用它，避免整列会话跟着重渲染 */
+function conversationSignature(c: UnifiedConversation): string {
+  if (c.kind === "dm") {
+    return [
+      "dm",
+      c.peerId,
+      c.peerName,
+      c.preview ?? "",
+      c.lastAt ?? "",
+      c.unread,
+      c.lastMine ? "1" : "0",
+      c.identity ?? "",
+      c.peerAvatarUrl ?? "",
+    ].join("|");
+  }
+  return [
+    "group",
+    c.groupId,
+    c.name,
+    c.preview ?? "",
+    c.lastAt ?? "",
+    c.unread,
+    c.memberCount,
+    c.lastMine ? "1" : "0",
+    c.lastSenderName ?? "",
+  ].join("|");
+}
+
+function sameConversations(a: UnifiedConversation[], b: UnifiedConversation[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (conversationSignature(a[i]) !== conversationSignature(b[i])) return false;
+  }
+  return true;
 }
 
 function fmtSize(bytes: number): string {
@@ -375,6 +442,7 @@ export function MessagesClient({
   initialTarget = null,
   initialSystem = false,
   variant = "page",
+  active = true,
 }: {
   timeZone: string;
   /** 助手「跳到某条消息」的深链目标；为空则按普通打开处理 */
@@ -383,6 +451,8 @@ export function MessagesClient({
   initialSystem?: boolean;
   /** page=整页消息（默认）；panel=右侧浮窗里的同一套界面（高度撑满抽屉、左栏收窄） */
   variant?: "page" | "panel";
+  /** 浮窗收起时停止轮询；重新打开会立即刷新一次 */
+  active?: boolean;
 }) {
   // 统一会话列表（私信 + 群聊混排）与群邀请
   const [convs, setConvs] = useState<UnifiedConversation[]>([]);
@@ -399,6 +469,10 @@ export function MessagesClient({
   const [peer, setPeer] = useState<DmPeer | null>(null);
   const [group, setGroup] = useState<GroupInfo | null>(null);
   const [msgs, setMsgs] = useState<(DmMessageView | GroupMessageView)[]>([]);
+  // 左栏宽度只在松手时提交；拖动中直接写 CSS 变量，避免整页消息重渲染
+  const splitMin = variant === "panel" ? 160 : 200;
+  const splitMax = variant === "panel" ? 320 : 440;
+  const [listWidth, setListWidth] = useState(variant === "panel" ? 220 : 280);
   // 一次性提示横幅（被移出群聊、群已解散、邀请处理异常等）
   const [notice, setNotice] = useState("");
 
@@ -428,7 +502,9 @@ export function MessagesClient({
   // 群文件：列表 + 存入资源库弹层
   const [groupFilesOpen, setGroupFilesOpen] = useState(false);
   const [groupFiles, setGroupFiles] = useState<GroupFileView[]>([]);
+  const [groupFilesFor, setGroupFilesFor] = useState<string | null>(null);
   const [groupFilesLoading, setGroupFilesLoading] = useState(false);
+  const [destinationsLoading, setDestinationsLoading] = useState(false);
   const [groupFilePreview, setGroupFilePreview] = useState<GroupFileView | null>(null);
   const [syncFile, setSyncFile] = useState<GroupFileView | null>(null);
   const [destinations, setDestinations] = useState<LibraryDestination[]>([]);
@@ -445,6 +521,7 @@ export function MessagesClient({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const paneGridRef = useRef<HTMLDivElement>(null);
   // 轮询取「当前打开的会话」：ref 由 effect 与选中动作同步，回调据此丢弃陈旧响应
   const activeRef = useRef<Selection>(null);
   // 滚动跟随：只有本来就在底部（或刚换会话 / 刚发送）时才自动贴底，
@@ -459,10 +536,96 @@ export function MessagesClient({
     activeRef.current = selection;
   }, [selection]);
 
+  const applyMessages = useCallback((next: ChatMessage[]) => {
+    setMsgs((prev) => (sameMessages(prev, next) ? prev : next));
+  }, []);
+
+  const clampSplit = useCallback(
+    (px: number) => Math.min(splitMax, Math.max(splitMin, Math.round(px))),
+    [splitMin, splitMax],
+  );
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try {
+        const saved = Number(window.localStorage.getItem("ac:messages-list-width"));
+        if (Number.isFinite(saved) && saved > 0) setListWidth(clampSplit(saved));
+      } catch {
+        // localStorage 不可用时保持默认
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [clampSplit]);
+
+  function commitListWidth(px: number) {
+    const next = clampSplit(px);
+    setListWidth(next);
+    try {
+      window.localStorage.setItem("ac:messages-list-width", String(next));
+    } catch {
+      // 忽略
+    }
+  }
+
+  function onSplitterPointerDown(e: ReactPointerEvent<HTMLDivElement>) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const grid = paneGridRef.current;
+    if (!grid) return;
+    const rect = grid.getBoundingClientRect();
+    let latest = listWidth;
+    let raf = 0;
+    let done = false;
+    const previousSelect = document.body.style.userSelect;
+    const previousCursor = document.body.style.cursor;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+
+    const finish = () => {
+      if (done) return;
+      done = true;
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+      document.body.style.userSelect = previousSelect;
+      document.body.style.cursor = previousCursor;
+      commitListWidth(latest);
+    };
+
+    const onMove = (ev: PointerEvent) => {
+      const x = ev.clientX;
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        latest = clampSplit(x - rect.left);
+        grid.style.setProperty("--msg-list-width", `${latest}px`);
+      });
+    };
+
+    window.addEventListener("pointermove", onMove, { passive: false });
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+  }
+
+  function onSplitterKeyDown(e: ReactKeyboardEvent<HTMLDivElement>) {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight" && e.key !== "Home") return;
+    e.preventDefault();
+    if (e.key === "Home") {
+      commitListWidth(variant === "panel" ? 220 : 280);
+      return;
+    }
+    commitListWidth(listWidth + (e.key === "ArrowRight" ? 24 : -24));
+  }
+
   const refreshConvs = useCallback(async () => {
     try {
       const r = await getConversationsAction();
-      if (r.ok) setConvs(r.data);
+      if (r.ok) {
+        startTransition(() => {
+          setConvs((prev) => (sameConversations(prev, r.data) ? prev : r.data));
+        });
+      }
     } catch {
       // 轮询失败静默，下一轮再试
     }
@@ -499,11 +662,13 @@ export function MessagesClient({
     try {
       const r = await openConversationAction(id);
       const a = activeRef.current;
-      if (r.ok && a?.kind === "dm" && a.id === id) setMsgs(r.data.messages);
+      if (r.ok && a?.kind === "dm" && a.id === id) {
+        startTransition(() => applyMessages(r.data.messages));
+      }
     } catch {
       // 同上
     }
-  }, []);
+  }, [applyMessages]);
 
   // 全量拉群消息（顺带把未读基线推到当前）。!ok 视为被移出/群解散：
   // 关掉面板并提示一次 —— 主动退群/解散会先清 selection，走不到这个分支，不会误报。
@@ -515,7 +680,7 @@ export function MessagesClient({
         if (a?.kind !== "group" || a.id !== id) return; // 已切走，丢弃陈旧响应
         if (r.ok) {
           setGroup(r.data.group);
-          setMsgs(r.data.messages);
+          startTransition(() => applyMessages(r.data.messages));
         } else {
           setSelection(null);
           activeRef.current = null;
@@ -530,11 +695,12 @@ export function MessagesClient({
         // 轮询失败静默，下一轮再试
       }
     },
-    [refreshConvs],
+    [refreshConvs, applyMessages],
   );
 
   // 轮询：统一列表、邀请、当前会话每 4s 刷新，双方/群内消息互通无需手动刷新页面
   useEffect(() => {
+    if (!active) return;
     const tick = async () => {
       await refreshConvs();
       await refreshInvites();
@@ -546,7 +712,14 @@ export function MessagesClient({
     tick();
     const timer = setInterval(tick, POLL_MS);
     return () => clearInterval(timer);
-  }, [refreshConvs, refreshInvites, refreshSystemMsgs, refreshDmMsgs, refreshGroupMsgs]);
+  }, [
+    active,
+    refreshConvs,
+    refreshInvites,
+    refreshSystemMsgs,
+    refreshDmMsgs,
+    refreshGroupMsgs,
+  ]);
 
   // 助手深链：打开目标会话，并等消息到位后滚到那条消息。
   // 已经停在消息页时再让助手跳一条，路由只会换 query、组件不卸载，
@@ -663,6 +836,7 @@ export function MessagesClient({
     setMembersOpen(false);
     setGroupFilesOpen(false);
     setGroupFiles([]);
+    setGroupFilesFor(null);
     setSyncFile(null);
     setMsgs([]);
     setSendError("");
@@ -683,6 +857,7 @@ export function MessagesClient({
     setMembersOpen(false);
     setGroupFilesOpen(false);
     setGroupFiles([]);
+    setGroupFilesFor(null);
     setSyncFile(null);
     setMsgs([]);
     setSendError("");
@@ -883,26 +1058,41 @@ export function MessagesClient({
     if (dest) setSyncFolderId(defaultSyncFolder(dest));
   }
 
-  async function loadGroupFiles(groupId: string) {
-    setGroupFilesLoading(true);
+  /** 只拉群文件列表；打开面板时不再顺带跑「目标资源库」那组重查询 */
+  async function loadGroupFiles(groupId: string, silent = false) {
+    if (!silent) setGroupFilesLoading(true);
     try {
-      const [filesRes, destRes] = await Promise.all([
-        listGroupFilesAction(groupId),
-        listLibraryDestinationsAction(),
-      ]);
-      if (filesRes.ok) setGroupFiles(filesRes.data);
-      else setSyncMsg(filesRes.error);
-      if (destRes.ok) {
-        setDestinations(destRes.data);
-        const dest =
-          destRes.data.find((d) => d.key === syncDestKey) ?? destRes.data[0];
-        if (dest) {
-          setSyncDestKey(dest.key);
-          setSyncFolderId(defaultSyncFolder(dest));
-        }
+      const filesRes = await listGroupFilesAction(groupId);
+      if (filesRes.ok) {
+        setGroupFiles(filesRes.data);
+        setGroupFilesFor(groupId);
+      } else {
+        setSyncMsg(filesRes.error);
       }
     } finally {
-      setGroupFilesLoading(false);
+      if (!silent) setGroupFilesLoading(false);
+    }
+  }
+
+  /** 目标资源库/文件夹按需加载：点「存入资源库」时才查，避免打开面板卡一下 */
+  async function loadDestinations() {
+    if (destinationsLoading) return;
+    setDestinationsLoading(true);
+    try {
+      const destRes = await listLibraryDestinationsAction();
+      if (!destRes.ok) {
+        setSyncMsg(destRes.error);
+        return;
+      }
+      setDestinations(destRes.data);
+      const dest =
+        destRes.data.find((d) => d.key === syncDestKey) ?? destRes.data[0];
+      if (dest) {
+        setSyncDestKey(dest.key);
+        setSyncFolderId(defaultSyncFolder(dest));
+      }
+    } finally {
+      setDestinationsLoading(false);
     }
   }
 
@@ -916,13 +1106,22 @@ export function MessagesClient({
     setGroupFilesOpen(true);
     setSyncFile(null);
     setSyncMsg("");
-    await loadGroupFiles(group.id);
+    if (groupFilesFor === group.id) {
+      // 有缓存先立即展开，再后台静默刷新，避免每次开面板都等一次往返
+      void loadGroupFiles(group.id, true);
+    } else {
+      await loadGroupFiles(group.id);
+    }
   }
 
   function startSyncFile(f: GroupFileView) {
     setSyncFile(f);
     setSyncMode("snapshot");
     setSyncMsg("");
+    if (destinations.length === 0) {
+      void loadDestinations();
+      return;
+    }
     const dest = destinations.find((d) => d.key === syncDestKey) ?? destinations[0];
     if (dest) {
       setSyncDestKey(dest.key);
@@ -932,6 +1131,10 @@ export function MessagesClient({
 
   async function submitSyncFile() {
     if (!group || !syncFile || syncBusy) return;
+    if (destinationsLoading) {
+      setSyncMsg("正在加载目标资源库，请稍候…");
+      return;
+    }
     const dest = destinations.find((d) => d.key === syncDestKey);
     if (!dest) {
       setSyncMsg("请选择目标资源库");
@@ -1020,8 +1223,8 @@ export function MessagesClient({
     pendingJumpRef.current = null;
     atBottomRef.current = true;
     forceBottomRef.current = true;
-    // 两个 action 成功时都回全量，客户端直接整表替换
-    setMsgs(r.data.messages);
+    // 两个 action 成功时都回全量；内容没变时复用旧数组，避免无谓重渲染
+    applyMessages(r.data.messages);
     if (a.kind === "group" && "group" in r.data) {
       const cur = activeRef.current;
       if (cur?.kind === "group" && cur.id === a.id) setGroup(r.data.group);
@@ -1117,7 +1320,7 @@ export function MessagesClient({
         : "";
 
   const sendForm = (
-    <form onSubmit={handleSend} className="border-t border-line p-3">
+    <form onSubmit={handleSend} className="shrink-0 border-t border-line p-3">
       {file && (
         <p className="mb-2 flex items-center gap-2 rounded-field bg-sunken px-2.5 py-1.5 text-xs text-ink-soft">
           <span aria-hidden>📄</span>
@@ -1244,15 +1447,37 @@ export function MessagesClient({
         </div>
       )}
       <div
+        ref={paneGridRef}
+        style={{ "--msg-list-width": `${listWidth}px` } as CSSProperties}
         className={
           variant === "panel"
             ? // 浮窗里撑满抽屉、不要外框（抽屉自带边框与底色），左栏收窄给聊天区腾地方
-              "grid min-h-0 flex-1 grid-cols-1 overflow-hidden sm:grid-cols-[220px_1fr]"
-            : "grid h-[72vh] min-h-[480px] grid-cols-1 overflow-hidden rounded-field border border-line bg-surface sm:grid-cols-[280px_1fr]"
+              "relative grid min-h-0 flex-1 grid-cols-1 overflow-hidden sm:grid-cols-[var(--msg-list-width,220px)_minmax(0,1fr)]"
+            : "relative grid h-[72vh] min-h-[480px] grid-cols-1 overflow-hidden rounded-field border border-line bg-surface sm:grid-cols-[var(--msg-list-width,280px)_minmax(0,1fr)]"
         }
       >
+        {/* 左栏与聊天区之间的可拖动分界（桌面端） */}
+        <div
+          role="separator"
+          tabIndex={0}
+          aria-orientation="vertical"
+          aria-label="拖动调整消息列表宽度"
+          aria-valuemin={splitMin}
+          aria-valuemax={splitMax}
+          aria-valuenow={listWidth}
+          onPointerDown={onSplitterPointerDown}
+          onKeyDown={onSplitterKeyDown}
+          title="拖动调整宽度（←/→，Home 复位）"
+          className="group absolute inset-y-0 z-20 hidden w-1.5 -translate-x-1/2 cursor-col-resize touch-none outline-none sm:block"
+          style={{ left: "var(--msg-list-width)" }}
+        >
+          <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-line transition-colors group-hover:bg-primary/60 group-focus-visible:bg-primary" />
+          <span className="absolute left-1/2 top-1/2 h-10 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-line opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
+        </div>
         {/* 左栏：搜索 + 建群 + 邀请 + 统一消息列表 */}
-        <aside className={`flex-col border-r border-line ${selection ? "hidden sm:flex" : "flex"}`}>
+        <aside
+          className={`min-w-0 flex-col border-r border-line ${selection ? "hidden sm:flex" : "flex"}`}
+        >
           <form onSubmit={handleSearch} className="border-b border-line p-3">
             <div className="flex gap-2">
               <input
@@ -1452,16 +1677,22 @@ export function MessagesClient({
                       >
                         <Avatar name={c.peerName} url={c.peerAvatarUrl} className="h-10 w-10 text-base" />
                         <span className="min-w-0 flex-1">
-                          <span className="flex items-center gap-1.5">
-                            <span className="truncate text-sm font-medium text-ink">{c.peerName}</span>
-                            <IdentityBadge identity={c.identity} className="scale-90" />
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink">
+                              {c.peerName}
+                            </span>
+                            <IdentityBadge identity={c.identity} className="shrink-0 scale-90" />
                           </span>
                           <span className="block truncate text-xs text-ink-faint">
                             {c.preview ? `${c.lastMine ? "我：" : ""}${c.preview}` : "打个招呼吧"}
                           </span>
                         </span>
                         <span className="flex shrink-0 flex-col items-end gap-1">
-                          {c.lastAt && <span className="text-[11px] text-ink-faint">{fmtTime(timeZone, c.lastAt)}</span>}
+                          {c.lastAt && (
+                            <span className="whitespace-nowrap text-[11px] text-ink-faint">
+                              {fmtTime(timeZone, c.lastAt)}
+                            </span>
+                          )}
                           {c.unread > 0 && <UnreadBadge count={c.unread} />}
                         </span>
                       </button>
@@ -1475,7 +1706,9 @@ export function MessagesClient({
                       >
                         <Avatar name={c.name} className="h-10 w-10 text-base" />
                         <span className="min-w-0 flex-1">
-                          <span className="truncate text-sm font-medium text-ink">{c.name}</span>
+                          <span className="block min-w-0 truncate text-sm font-medium text-ink">
+                            {c.name}
+                          </span>
                           <span className="block truncate text-xs text-ink-faint">
                             {c.preview
                               ? `${c.lastMine ? "我：" : c.lastSenderName ? `${c.lastSenderName}：` : ""}${c.preview}`
@@ -1483,7 +1716,11 @@ export function MessagesClient({
                           </span>
                         </span>
                         <span className="flex shrink-0 flex-col items-end gap-1">
-                          {c.lastAt && <span className="text-[11px] text-ink-faint">{fmtTime(timeZone, c.lastAt)}</span>}
+                          {c.lastAt && (
+                            <span className="whitespace-nowrap text-[11px] text-ink-faint">
+                              {fmtTime(timeZone, c.lastAt)}
+                            </span>
+                          )}
                           {c.unread > 0 && <UnreadBadge count={c.unread} />}
                         </span>
                       </button>
@@ -1500,22 +1737,29 @@ export function MessagesClient({
         </aside>
 
         {/* 右栏：聊天窗口（私信 / 群聊 / 系统消息） */}
-        <section className={`min-h-0 flex-col ${selection ? "flex" : "hidden sm:flex"}`}>
+        <section
+          className={`min-h-0 min-w-0 flex-col overflow-hidden ${selection ? "flex" : "hidden sm:flex"}`}
+        >
           {selection?.kind === "dm" && peer ? (
             <>
-              <header className="flex items-center gap-2 border-b border-line px-4 py-3">
+              <header className="flex min-w-0 shrink-0 flex-wrap items-center gap-2 border-b border-line px-4 py-3">
                 <button
                   type="button"
                   onClick={closePane}
-                  className="text-sm text-ink-soft hover:text-primary sm:hidden"
+                  className="shrink-0 text-sm text-ink-soft hover:text-primary sm:hidden"
                   aria-label="返回消息列表"
                 >
                   ←
                 </button>
-                <Avatar name={peer.name} url={peer.avatarUrl} className="h-8 w-8" />
-                <span className="text-sm font-semibold text-ink">{peer.name}</span>
-                <IdentityBadge identity={peer.identity} />
-                <span className="ml-auto text-xs text-ink-faint">消息自动留存</span>
+                <Avatar name={peer.name} url={peer.avatarUrl} className="h-8 w-8 shrink-0" />
+                <span
+                  className="min-w-0 max-w-full truncate text-sm font-semibold text-ink"
+                  title={peer.name}
+                >
+                  {peer.name}
+                </span>
+                <IdentityBadge identity={peer.identity} className="shrink-0" />
+                <span className="ml-auto shrink-0 text-xs text-ink-faint">消息自动留存</span>
               </header>
 
 
@@ -1562,25 +1806,30 @@ export function MessagesClient({
             </>
           ) : selection?.kind === "group" ? (
             <>
-              <header className="flex items-center gap-2 border-b border-line px-4 py-3">
+              <header className="flex min-w-0 shrink-0 flex-wrap items-center gap-2 border-b border-line px-4 py-3">
                 <button
                   type="button"
                   onClick={closePane}
-                  className="text-sm text-ink-soft hover:text-primary sm:hidden"
+                  className="shrink-0 text-sm text-ink-soft hover:text-primary sm:hidden"
                   aria-label="返回消息列表"
                 >
                   ←
                 </button>
-                <Avatar name={group?.name ?? "?"} className="h-8 w-8" />
-                <span className="text-sm font-semibold text-ink">{group?.name ?? "…"}</span>
+                <Avatar name={group?.name ?? "?"} className="h-8 w-8 shrink-0" />
+                <span
+                  className="min-w-0 max-w-full truncate text-sm font-semibold text-ink"
+                  title={group?.name}
+                >
+                  {group?.name ?? "…"}
+                </span>
                 {group && (
                   <>
-                    <span className="text-xs text-ink-faint">{group.memberCount} 人</span>
+                    <span className="shrink-0 text-xs text-ink-faint">{group.memberCount} 人</span>
                     {/* 群管理（邀请/踢人/退群/解散）入口：给个明确的按键，别让人靠猜「N 人」找入口 */}
                     <button
                       type="button"
                       onClick={() => setMembersOpen((v) => !v)}
-                      className={`ac-btn-ghost px-2.5 py-1 text-xs ${membersOpen ? "border-primary text-primary" : ""}`}
+                      className={`ac-btn-ghost shrink-0 whitespace-nowrap px-2.5 py-1 text-xs ${membersOpen ? "border-primary text-primary" : ""}`}
                       title="成员与群管理"
                     >
                       群管理
@@ -1588,7 +1837,7 @@ export function MessagesClient({
                     <button
                       type="button"
                       onClick={() => void toggleGroupFiles()}
-                      className={`ac-btn-ghost px-2.5 py-1 text-xs ${groupFilesOpen ? "border-primary text-primary" : ""}`}
+                      className={`ac-btn-ghost shrink-0 whitespace-nowrap px-2.5 py-1 text-xs ${groupFilesOpen ? "border-primary text-primary" : ""}`}
                       title="查看并同步群文件到资源库"
                     >
                       群文件
@@ -1599,7 +1848,7 @@ export function MessagesClient({
               </header>
 
               {membersOpen && group && (
-                <div className="border-b border-line p-3">
+                <div className="ac-step-in max-h-[46vh] min-w-0 shrink-0 overflow-y-auto overflow-x-hidden border-b border-line p-3">
                   <form onSubmit={handleInviteSubmit} className="flex gap-2">
                     <input
                       value={inviteName}
@@ -1674,30 +1923,39 @@ export function MessagesClient({
               )}
 
               {groupFilesOpen && group && (
-                <div className="border-b border-line p-3">
-                  <div className="flex items-center gap-2">
+                <div className="ac-step-in max-h-[46vh] min-w-0 shrink-0 overflow-y-auto overflow-x-hidden border-b border-line p-3">
+                  <div className="flex min-w-0 items-center gap-2">
                     <span className="text-xs font-medium text-ink-soft">群文件</span>
                     <span className="text-xs text-ink-faint">{groupFiles.length} 个</span>
                     <button
                       type="button"
-                      className="ml-auto text-xs text-primary underline"
+                      className="ml-auto shrink-0 text-xs text-primary underline"
                       onClick={() => void loadGroupFiles(group.id)}
                     >
-                      刷新
+                      {groupFilesLoading ? "刷新中…" : "刷新"}
                     </button>
                   </div>
-                  {groupFilesLoading ? (
-                    <p className="mt-2 text-xs text-ink-faint">加载中…</p>
+                  {groupFilesLoading && groupFiles.length === 0 ? (
+                    <div className="mt-2 space-y-1.5" aria-label="正在加载群文件">
+                      {[0, 1, 2].map((i) => (
+                        <div
+                          key={i}
+                          className="h-9 animate-pulse rounded-field bg-sunken"
+                          style={{ animationDelay: `${i * 80}ms` }}
+                        />
+                      ))}
+                    </div>
                   ) : groupFiles.length === 0 ? (
                     <p className="mt-2 text-xs text-ink-faint">
                       群里还没有文件，发一条带文件的消息吧。
                     </p>
                   ) : (
-                    <ul className="mt-2 max-h-64 space-y-1 overflow-y-auto">
-                      {groupFiles.map((f) => (
+                    <ul className="mt-2 space-y-1 overflow-x-hidden">
+                      {groupFiles.map((f, index) => (
                         <li
                           key={f.attachmentId}
-                          className="flex flex-wrap items-center gap-2 rounded px-1 py-1 hover:bg-sunken"
+                          className="ac-step-in flex min-w-0 flex-wrap items-center gap-2 rounded px-1 py-1 hover:bg-sunken"
+                          style={{ animationDelay: `${Math.min(index, 8) * 24}ms` }}
                         >
                           <div className="min-w-0 flex-1">
                             <span className="block truncate text-sm text-ink" title={f.filename}>
@@ -1710,7 +1968,7 @@ export function MessagesClient({
                           </div>
                           <button
                             type="button"
-                            className="text-xs text-primary underline"
+                            className="shrink-0 whitespace-nowrap text-xs text-primary underline"
                             onClick={() => setGroupFilePreview(f)}
                           >
                             预览
@@ -1718,13 +1976,13 @@ export function MessagesClient({
                           <a
                             href={`/api/dm/attachments/${f.attachmentId}`}
                             download={f.filename}
-                            className="text-xs text-primary underline"
+                            className="shrink-0 whitespace-nowrap text-xs text-primary underline"
                           >
                             下载
                           </a>
                           <button
                             type="button"
-                            className="text-xs text-ink-soft underline"
+                            className="shrink-0 whitespace-nowrap text-xs text-ink-soft underline"
                             onClick={() => startSyncFile(f)}
                           >
                             存入资源库
@@ -1735,15 +1993,20 @@ export function MessagesClient({
                   )}
 
                   {syncFile && (
-                    <div className="mt-2 rounded-field border border-line bg-surface p-2.5">
-                      <p className="text-xs font-medium text-ink">
+                    <div className="ac-pop-in mt-2 min-w-0 rounded-field border border-line bg-surface p-2.5">
+                      <p className="min-w-0 truncate text-xs font-medium text-ink">
                         存入资源库：{syncFile.filename}
                       </p>
-                      <div className="mt-2 flex flex-wrap gap-2">
+                      {destinationsLoading && destinations.length === 0 ? (
+                        <p className="mt-2 animate-pulse text-xs text-ink-faint">
+                          正在加载目标资源库…
+                        </p>
+                      ) : (
+                      <div className="mt-2 flex min-w-0 flex-wrap gap-2">
                         <select
                           value={syncDestKey}
                           onChange={(e) => chooseSyncDest(e.target.value)}
-                          className="ac-field min-w-0 flex-1 text-xs"
+                          className="ac-field min-w-0 max-w-full flex-1 truncate text-xs"
                           aria-label="目标资源库"
                         >
                           {destinations.map((d) => (
@@ -1755,7 +2018,7 @@ export function MessagesClient({
                         <select
                           value={syncFolderId}
                           onChange={(e) => setSyncFolderId(e.target.value)}
-                          className="ac-field min-w-0 flex-1 text-xs"
+                          className="ac-field min-w-0 max-w-full flex-1 truncate text-xs"
                           aria-label="目标文件夹"
                         >
                           {(destinations.find((d) => d.key === syncDestKey)?.folders ?? []).map(
@@ -1768,6 +2031,7 @@ export function MessagesClient({
                           )}
                         </select>
                       </div>
+                      )}
                       <div className="mt-2 space-y-1 text-xs text-ink-soft">
                         <label className="flex items-start gap-1.5">
                           <input
@@ -1792,7 +2056,7 @@ export function MessagesClient({
                         <button
                           type="button"
                           className="ac-btn px-2.5 py-1 text-xs"
-                          disabled={syncBusy}
+                          disabled={syncBusy || destinationsLoading || destinations.length === 0}
                           onClick={() => void submitSyncFile()}
                         >
                           {syncBusy ? "存入中…" : "确认存入"}

@@ -324,9 +324,25 @@ export function LibraryBrowser({
       )}
       {error && <p className="text-sm text-high">{error}</p>}
 
-      {/* Windows 资源管理器式工具栏：搜索 + 类型 + 排序 */}
+      {/* Windows 资源管理器式工具栏：类型在左、搜索居中、排序与升降序成组靠右 */}
       <div className="ac-card flex flex-wrap items-center gap-2 p-2.5">
-        <div className="relative min-w-[12rem] flex-1">
+        <label className="flex shrink-0 items-center gap-1.5 text-xs text-ink-faint">
+          文件类型
+          <select
+            value={type}
+            onChange={(e) => navigate({ type: e.target.value as LibraryFileType })}
+            aria-label="按文件类型筛选"
+            className="ac-field min-w-[5.5rem] py-1.5 text-xs"
+          >
+            {LIBRARY_FILE_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {LIBRARY_FILE_TYPE_LABELS[t]}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="relative min-w-[10rem] max-w-xl flex-1">
           <span
             aria-hidden
             className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-faint"
@@ -342,7 +358,8 @@ export function LibraryBrowser({
                 navigate({ q: search });
               }
             }}
-            placeholder="搜索当前文件夹及子文件夹…"
+            placeholder="搜索文件名…"
+            title="搜索当前文件夹及子文件夹"
             aria-label="搜索资源库文件"
             className="ac-field w-full py-1.5 pl-8 pr-8 text-sm"
           />
@@ -360,39 +377,33 @@ export function LibraryBrowser({
             </button>
           )}
         </div>
-        <select
-          value={type}
-          onChange={(e) => navigate({ type: e.target.value as LibraryFileType })}
-          aria-label="按文件类型筛选"
-          className="ac-field py-1.5 text-xs"
-        >
-          {LIBRARY_FILE_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {LIBRARY_FILE_TYPE_LABELS[t]}
-            </option>
-          ))}
-        </select>
-        <select
-          value={sort}
-          onChange={(e) => navigate({ sort: e.target.value as LibrarySortField })}
-          aria-label="排序方式"
-          className="ac-field py-1.5 text-xs"
-        >
-          {(Object.keys(SORT_LABELS) as LibrarySortField[]).map((field) => (
-            <option key={field} value={field}>
-              按{SORT_LABELS[field]}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          className="ac-btn-ghost px-2.5 py-1.5 text-xs"
-          onClick={() => navigate({ dir: dir === "asc" ? "desc" : "asc" })}
-          title={dir === "asc" ? "当前升序，点击切为降序" : "当前降序，点击切为升序"}
-        >
-          {dir === "asc" ? "↑ 升序" : "↓ 降序"}
-        </button>
-        {pending && <span className="text-xs text-ink-faint">搜索中…</span>}
+
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          <label className="flex items-center gap-1.5 text-xs text-ink-faint">
+            排序方式
+            <select
+              value={sort}
+              onChange={(e) => navigate({ sort: e.target.value as LibrarySortField })}
+              aria-label="排序方式"
+              className="ac-field min-w-[6rem] py-1.5 text-xs"
+            >
+              {(Object.keys(SORT_LABELS) as LibrarySortField[]).map((field) => (
+                <option key={field} value={field}>
+                  按{SORT_LABELS[field]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            className="ac-btn-ghost whitespace-nowrap px-2.5 py-1.5 text-xs"
+            onClick={() => navigate({ dir: dir === "asc" ? "desc" : "asc" })}
+            title={dir === "asc" ? "当前升序，点击切为降序" : "当前降序，点击切为升序"}
+          >
+            {dir === "asc" ? "↑ 升序" : "↓ 降序"}
+          </button>
+          {pending && <span className="text-xs text-ink-faint">搜索中…</span>}
+        </div>
       </div>
 
       <p className="text-xs text-ink-faint">
@@ -585,24 +596,29 @@ export function LibraryBrowser({
         )}
       </div>
 
-      <section className="ac-card p-4">
-        <h2 className="text-sm font-semibold text-ink">操作日志</h2>
-        <ul className="mt-2 space-y-1.5">
-          {operations.map((op) => (
-            <li key={op.id} className="text-xs text-ink-soft">
-              <span className="font-medium text-ink">{op.actorName}</span>{" "}
-              {OPERATION_LABEL[op.type] ?? op.type}
-              {op.newValue ? `「${op.newValue}」` : ""}
-              <span className="ml-1 text-ink-faint">
-                {op.note ? `· ${op.note} ` : ""}
-                {formatShortDateTime(timeZone, new Date(op.createdAt))}
-              </span>
-            </li>
-          ))}
-          {operations.length === 0 && (
-            <li className="text-xs text-ink-faint">暂无操作记录。</li>
-          )}
-        </ul>
+      <section className="ac-card overflow-hidden p-0">
+        <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
+          <h2 className="text-sm font-semibold text-ink">操作日志</h2>
+          <span className="text-xs text-ink-faint">{operations.length} 条</span>
+        </div>
+        <div className="h-48 overflow-y-auto overscroll-contain px-4 py-2.5">
+          <ul className="space-y-1.5 pr-1">
+            {operations.map((op) => (
+              <li key={op.id} className="text-xs text-ink-soft">
+                <span className="font-medium text-ink">{op.actorName}</span>{" "}
+                {OPERATION_LABEL[op.type] ?? op.type}
+                {op.newValue ? `「${op.newValue}」` : ""}
+                <span className="ml-1 text-ink-faint">
+                  {op.note ? `· ${op.note} ` : ""}
+                  {formatShortDateTime(timeZone, new Date(op.createdAt))}
+                </span>
+              </li>
+            ))}
+            {operations.length === 0 && (
+              <li className="text-xs text-ink-faint">暂无操作记录。</li>
+            )}
+          </ul>
+        </div>
       </section>
 
       {previewId && (

@@ -144,12 +144,13 @@ export function NavLinks({
                     ref={menuRef}
                     role="menu"
                     aria-label="选择资源库"
+                    className="ac-pop-in fixed z-50 rounded-card border border-line bg-surface/85 p-1 shadow-pop backdrop-blur"
                     style={{
                       top: menuPos.top,
                       left: menuPos.left,
                       width: menuPos.width,
+                      transformOrigin: "top left",
                     }}
-                    className="fixed z-50 rounded-card border border-line bg-surface/85 p-1 shadow-pop backdrop-blur"
                   >
                     <Link
                       href="/library"

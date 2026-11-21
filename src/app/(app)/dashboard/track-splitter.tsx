@@ -35,10 +35,13 @@ export function TrackSplitter({
   const clamp = (ratio: number) => Math.min(Math.max(ratio, min), max);
   // 方向键连按合并成一次提交，避免每按一下发一个保存请求
   const keyTimer = useRef<number | null>(null);
+  // 拖动中的清理函数：卸载时也要摘掉 window 监听，避免遗留 pointermove
+  const dragCleanupRef = useRef<(() => void) | null>(null);
 
   useEffect(
     () => () => {
       if (keyTimer.current) window.clearTimeout(keyTimer.current);
+      dragCleanupRef.current?.();
     },
     [],
   );
@@ -62,25 +65,45 @@ export function TrackSplitter({
     const prevSelect = document.body.style.userSelect;
     document.body.style.userSelect = "none";
     let moved = false;
-    let lastRatio = clamp(ratioAt(e.nativeEvent));
+    let latest = clamp(ratioAt(e.nativeEvent));
+    let raf = 0;
+    let done = false;
 
     const onMove = (ev: PointerEvent) => {
       moved = true;
-      lastRatio = ratioAt(ev);
-      onPreview(lastRatio);
+      latest = ratioAt(ev);
+      // 每帧最多提交一次预览：高频 pointermove（>120Hz）不再触发成倍 React 渲染，
+      // 画面仍按屏幕刷新率更新，动画观感不变。
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        onPreview(latest);
+      });
     };
-    const onEnd = () => {
+    // 只摘监听/还原选择，不提交：组件卸载时也能安全清理
+    const detach = () => {
+      if (raf) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      }
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onEnd);
       window.removeEventListener("pointercancel", onEnd);
       document.body.style.userSelect = prevSelect;
+      dragCleanupRef.current = null;
+    };
+    const onEnd = () => {
+      if (done) return;
+      done = true;
+      detach();
       if (!moved) return; // 只是点了一下，没有拖动，不必写库
       // pointercancel 也按最后位置提交：调用方靠 onCommit 清掉拖拽预览态，
       // 不提交的话预览会一直停在松手前的位置，且永远不落库
-      onPreview(lastRatio);
-      onCommit(lastRatio);
+      onPreview(latest);
+      onCommit(latest);
     };
 
+    dragCleanupRef.current = detach;
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onEnd);
     window.addEventListener("pointercancel", onEnd);

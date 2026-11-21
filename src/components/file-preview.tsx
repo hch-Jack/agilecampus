@@ -350,7 +350,7 @@ export function FilePreviewModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3 sm:p-5"
+      className="ac-backdrop-in fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3 sm:p-5"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -359,7 +359,7 @@ export function FilePreviewModal({
       {/* 宇宙主题的 --color-surface 只有 45% 不透明度，弹窗会透出星空与页面文字；
           project.css 给 .ac-file-preview 单独压厚（浅色主题仍是纯白 surface） */}
       <div
-        className="ac-file-preview relative flex h-[92vh] max-h-[1000px] w-[min(96vw,1440px)] flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-2xl"
+        className="ac-file-preview ac-modal-in relative flex h-[92vh] max-h-[1000px] w-[min(96vw,1440px)] flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2 sm:px-4 sm:py-2.5">
