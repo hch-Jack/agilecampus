@@ -1,5 +1,6 @@
 import { AppError } from "@/lib/errors";
 import { taskAttachmentAdapter } from "./adapters/task-attachment";
+import { libraryItemAdapter } from "@/lib/library/document-adapter";
 import type { DocumentSourceAdapter } from "./types";
 
 /**
@@ -23,3 +24,4 @@ export function hasDocumentSourceAdapter(type: string): boolean {
 }
 
 registerDocumentSourceAdapter(taskAttachmentAdapter);
+registerDocumentSourceAdapter(libraryItemAdapter);

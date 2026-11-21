@@ -57,6 +57,7 @@ export async function ensureDocument(
         format: source.format,
         filename: source.filename,
         mimeType: source.mimeType,
+        currentVersion: source.currentVersion ?? 1,
         createdById: userId,
       })
       .onConflictDoNothing({
@@ -66,6 +67,8 @@ export async function ensureDocument(
 
   const access = await getDocumentAccessBySource(userId, sourceType, sourceId);
   if (!access) throw new ForbiddenError("文档不存在或你没有访问权限");
+  // 来源已有历史（资源库）时回填 document_versions，让编辑器侧栏看到完整版本
+  await adapter.seedDocumentVersions?.(db, access.source, access.document.id);
   return access;
 }
 
@@ -230,6 +233,17 @@ export async function saveDocument(input: SaveInput): Promise<{ version: number;
         createdById: input.userId,
       });
 
+      await adapter.onVersionCommitted?.(tx, input.userId, access.source, {
+        version: updated.currentVersion,
+        filename: nowFilename,
+        mimeType: input.mimeType,
+        size: blob.size,
+        storageKey: blob.storageKey,
+        editorState: input.editorState ?? null,
+        note: input.note ?? "manual",
+        createdById: input.userId,
+      });
+
       await adapter.recordActivity(tx, input.userId, access.source, {
         type: "document_saved",
         newValue: nowFilename,
@@ -247,8 +261,11 @@ export async function saveDocument(input: SaveInput): Promise<{ version: number;
       savedAt: new Date().toISOString(),
       note: input.note ?? "manual",
     });
-    // 裁剪失败只影响磁盘占用，不影响本次保存
-    void pruneDocumentVersions(input.documentId).catch(() => {});
+    // 资源库条目的历史由 library_versions 管理，不再二次裁剪 document_versions
+    if (access.document.sourceType !== "library_item") {
+      // 裁剪失败只影响磁盘占用，不影响本次保存
+      void pruneDocumentVersions(input.documentId).catch(() => {});
+    }
     return result;
   } catch (e) {
     await deleteBlob(blob.storageKey);
@@ -443,6 +460,17 @@ export async function restoreDocumentVersion(input: {
       createdById: input.userId,
     });
 
+    await adapter.onVersionCommitted?.(tx, input.userId, access.source, {
+      version: updated.currentVersion,
+      filename: access.document.filename,
+      mimeType: src.mimeType,
+      size: src.size,
+      storageKey: src.storageKey,
+      editorState: src.editorState,
+      note: "restore",
+      createdById: input.userId,
+    });
+
     await adapter.recordActivity(tx, input.userId, access.source, {
       type: "document_saved",
       newValue: `恢复 v${input.version}`,
@@ -460,7 +488,9 @@ export async function restoreDocumentVersion(input: {
     savedAt: new Date().toISOString(),
     note: "restore",
   });
-  void pruneDocumentVersions(input.documentId).catch(() => {});
+  if (access.document.sourceType !== "library_item") {
+    void pruneDocumentVersions(input.documentId).catch(() => {});
+  }
   return result;
 }
 
@@ -613,7 +643,9 @@ export async function getDocumentState(documentId: string, userId: string) {
   const [lock, versions, editors, editorState] = await Promise.all([
     getLockView(documentId),
     listDocumentVersions(documentId),
-    access.canManage ? listDocumentEditors(documentId) : Promise.resolve([]),
+    access.canManage && access.source.grantsEnabled !== false
+      ? listDocumentEditors(documentId)
+      : Promise.resolve([]),
     getVersionEditorState(documentId, access.document.currentVersion),
   ]);
   return { access, lock, versions, editors, editorState };

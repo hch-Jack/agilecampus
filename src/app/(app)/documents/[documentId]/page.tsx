@@ -60,6 +60,7 @@ export default async function DocumentEditorPage({
     },
     canEdit: access.canEdit,
     canManage: access.canManage,
+    grantsEnabled: access.source.grantsEnabled !== false,
     editVia: access.editVia,
     role: access.role,
     lock: state.lock,

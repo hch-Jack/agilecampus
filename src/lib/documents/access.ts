@@ -32,7 +32,8 @@ export async function getDocumentAccess(
 
   const isOwner = source.ownerUserId === userId;
   const isAdmin = source.role === "admin";
-  const viaGrant = Boolean(grant);
+  // 资源库条目不允许文档级额外授权：教师只读的口径不能被旧授权打破
+  const viaGrant = source.grantsEnabled === false ? false : Boolean(grant);
   const editVia: EditVia = isOwner ? "owner" : isAdmin ? "admin" : viaGrant ? "grant" : null;
 
   return {

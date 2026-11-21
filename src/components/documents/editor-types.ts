@@ -32,6 +32,8 @@ export type DocumentEditorInitial = {
   };
   canEdit: boolean;
   canManage: boolean;
+  /** false = 不支持文档级额外授权（资源库：教师始终只读） */
+  grantsEnabled?: boolean;
   editVia: "owner" | "admin" | "grant" | null;
   role: "admin" | "teacher" | "student" | null;
   lock: LockView | null;

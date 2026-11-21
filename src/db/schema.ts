@@ -1097,3 +1097,204 @@ export const documentLocks = pgTable("document_locks", {
   acquiredAt: dbTimestampNow("acquired_at").notNull(),
   expiresAt: dbTimestamp("expires_at").notNull(),
 });
+
+// ---------------------------------------------------------------- 资源库（团队 / 个人）
+
+export const libraryKindEnum = pgEnum("library_kind", ["team", "personal"]);
+
+/**
+ * 一个团队一个库、一个用户一个库。文件夹/条目/日志都挂在这里，
+ * 权限由 kind + teamId/ownerId 推导，不额外存 ACL。
+ */
+export const libraries = pgTable(
+  "libraries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    kind: libraryKindEnum("kind").notNull(),
+    teamId: uuid("team_id").references(() => teams.id, { onDelete: "cascade" }),
+    ownerId: uuid("owner_id").references(() => users.id, { onDelete: "cascade" }),
+    // 同步水位：应用写，无默认值（避免 db:push 产生意外 ALTER）
+    lastSyncedAt: dbTimestamp("last_synced_at"),
+    createdAt: dbTimestampNow("created_at").notNull(),
+    updatedAt: dbTimestampNow("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("libraries_team_unique").on(t.teamId),
+    uniqueIndex("libraries_owner_unique").on(t.ownerId),
+    check(
+      "libraries_scope_chk",
+      sql`(${t.kind} = 'team' AND ${t.teamId} IS NOT NULL AND ${t.ownerId} IS NULL)
+        OR (${t.kind} = 'personal' AND ${t.teamId} IS NULL AND ${t.ownerId} IS NOT NULL)`,
+    ),
+  ],
+);
+
+/**
+ * 资源库文件夹。parentId 为空表示根层；同一库同一层用 lower(name) 去重。
+ * 默认文件夹（任务附件/私信/群聊/助手生成/群文件/手动上传）由服务幂等创建，
+ * isDefault=true 的文件夹不可删除或改名。
+ */
+export const libraryFolders = pgTable(
+  "library_folders",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    libraryId: uuid("library_id")
+      .notNull()
+      .references(() => libraries.id, { onDelete: "cascade" }),
+    parentId: uuid("parent_id").references((): AnyPgColumn => libraryFolders.id, {
+      onDelete: "restrict",
+    }),
+    name: text("name").notNull(),
+    isDefault: boolean("is_default").notNull().default(false),
+    createdAt: dbTimestampNow("created_at").notNull(),
+    updatedAt: dbTimestampNow("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("library_folders_name_unique").on(
+      t.libraryId,
+      sql`coalesce(${t.parentId}, '00000000-0000-0000-0000-000000000000'::uuid)`,
+      sql`lower(${t.name})`,
+    ),
+    index("library_folders_tree_idx").on(t.libraryId, t.parentId),
+  ],
+);
+
+/**
+ * 资源库条目：同一库、同一文件夹内 lower(filename) 相同即同一项。
+ * 所有版本共享不可变 blob key；currentStorageKey 是当前版本指针的冗余，
+ * 方便下载与 blob 引用检查。
+ */
+export const libraryItems = pgTable(
+  "library_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    libraryId: uuid("library_id")
+      .notNull()
+      .references(() => libraries.id, { onDelete: "cascade" }),
+    folderId: uuid("folder_id")
+      .notNull()
+      .references(() => libraryFolders.id, { onDelete: "restrict" }),
+    filename: text("filename").notNull(),
+    mimeType: text("mime_type"),
+    size: integer("size").notNull(),
+    currentVersion: integer("current_version").notNull().default(1),
+    currentStorageKey: text("current_storage_key").notNull(),
+    // manual | task | dm | group | agent | ai | mixed
+    origin: text("origin").notNull().default("manual"),
+    createdById: uuid("created_by_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: dbTimestampNow("created_at").notNull(),
+    updatedAt: dbTimestampNow("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("library_items_name_unique").on(
+      t.libraryId,
+      t.folderId,
+      sql`lower(${t.filename})`,
+    ),
+    index("library_items_folder_idx").on(t.libraryId, t.folderId, t.updatedAt),
+    check("library_items_version_chk", sql`${t.currentVersion} >= 1`),
+    check("library_items_size_chk", sql`${t.size} >= 0`),
+  ],
+);
+
+/** 不可变版本行：恢复历史 = 追加一条新版本，旧版本不动。 */
+export const libraryVersions = pgTable(
+  "library_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    libraryId: uuid("library_id")
+      .notNull()
+      .references(() => libraries.id, { onDelete: "cascade" }),
+    itemId: uuid("item_id")
+      .notNull()
+      .references(() => libraryItems.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    filename: text("filename").notNull(),
+    mimeType: text("mime_type"),
+    size: integer("size").notNull(),
+    storageKey: text("storage_key").notNull(),
+    /** 来源幂等键（如 task_attachment:<id>:<version>、dm_attachment:<id>）；手工版本为空 */
+    sourceKey: text("source_key"),
+    editorState: jsonb("editor_state"),
+    // initial | import | sync | manual | autosave | restore | save_as
+    note: text("note").notNull(),
+    // manual | task | dm | group | agent | ai | edit
+    origin: text("origin").notNull(),
+    createdById: uuid("created_by_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: dbTimestampNow("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("library_versions_item_version_unique").on(t.itemId, t.version),
+    uniqueIndex("library_versions_source_unique").on(t.itemId, t.sourceKey),
+    index("library_versions_item_time_idx").on(t.itemId, t.createdAt),
+    index("library_versions_storage_idx").on(t.storageKey),
+    check("library_versions_version_chk", sql`${t.version} >= 1`),
+  ],
+);
+
+/**
+ * 来源绑定：记录资源库条目来自哪个任务附件/私信附件/助手文件。
+ * live = 跟随源文档新版本；snapshot = 只保留首次/显式同步的内容。
+ */
+export const librarySourceLinks = pgTable(
+  "library_source_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    libraryId: uuid("library_id")
+      .notNull()
+      .references(() => libraries.id, { onDelete: "cascade" }),
+    itemId: uuid("item_id")
+      .notNull()
+      .references(() => libraryItems.id, { onDelete: "cascade" }),
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id").notNull(),
+    mode: text("mode").notNull().default("snapshot"),
+    // task | dm | group | agent
+    origin: text("origin").notNull(),
+    lastSourceVersion: integer("last_source_version"),
+    lastSyncedStorageKey: text("last_synced_storage_key"),
+    lastSyncedAt: dbTimestamp("last_synced_at"),
+    createdById: uuid("created_by_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: dbTimestampNow("created_at").notNull(),
+    updatedAt: dbTimestampNow("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("library_source_links_unique").on(t.libraryId, t.sourceType, t.sourceId),
+    index("library_source_links_source_idx").on(t.sourceType, t.sourceId),
+    index("library_source_links_item_idx").on(t.itemId),
+    check("library_source_links_mode_chk", sql`${t.mode} in ('live', 'snapshot')`),
+  ],
+);
+
+/**
+ * 操作日志。actorName 是快照：用户注销后团队仍能看到「谁做过什么」。
+ * itemId/folderId 允许 set null，删除对象后日志仍保留。
+ */
+export const libraryOperations = pgTable(
+  "library_operations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    libraryId: uuid("library_id")
+      .notNull()
+      .references(() => libraries.id, { onDelete: "cascade" }),
+    itemId: uuid("item_id").references(() => libraryItems.id, { onDelete: "set null" }),
+    folderId: uuid("folder_id").references(() => libraryFolders.id, { onDelete: "set null" }),
+    actorId: uuid("actor_id").references(() => users.id, { onDelete: "set null" }),
+    actorName: text("actor_name").notNull(),
+    type: text("type").notNull(),
+    oldValue: text("old_value"),
+    newValue: text("new_value"),
+    note: text("note"),
+    createdAt: dbTimestampNow("created_at").notNull(),
+  },
+  (t) => [
+    index("library_operations_library_time_idx").on(t.libraryId, t.createdAt),
+    index("library_operations_item_time_idx").on(t.itemId, t.createdAt),
+  ],
+);

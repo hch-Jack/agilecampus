@@ -9,6 +9,8 @@ type Props = {
   initialTab?: "versions" | "permissions";
   canEdit: boolean;
   canManage: boolean;
+  /** false = 资源库条目按团队角色授权，不提供逐人授权 */
+  grantsEnabled?: boolean;
   ownerUserId: string;
   collaborationEnabled: boolean;
   versions: DocumentVersionDto[];
@@ -62,6 +64,7 @@ export function EditorSidebar({
   initialTab = "versions",
   canEdit,
   canManage,
+  grantsEnabled = true,
   ownerUserId,
   collaborationEnabled,
   versions,
@@ -143,6 +146,11 @@ export function EditorSidebar({
 
             <section>
               <h3 className="mb-1.5 text-xs font-medium text-ink-soft">编辑者</h3>
+              {!grantsEnabled ? (
+                <p className="rounded border border-line p-2 text-xs text-ink-soft">
+                  资源库文件按团队角色授权：管理员与学生可编辑，教师只读。
+                </p>
+              ) : (
               <ul className="space-y-1.5">
                 <li className="flex items-center justify-between rounded border border-line px-2 py-1.5 text-xs">
                   <span className="text-ink">
@@ -180,9 +188,10 @@ export function EditorSidebar({
                   <li className="text-[11px] text-ink-faint">尚未额外授权任何成员。</li>
                 )}
               </ul>
+              )}
             </section>
 
-            {canManage && (
+            {canManage && grantsEnabled && (
               <section>
                 <h3 className="mb-1.5 text-xs font-medium text-ink-soft">添加编辑者</h3>
                 {candidates.length === 0 ? (

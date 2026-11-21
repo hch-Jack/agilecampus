@@ -112,6 +112,7 @@ export const WIDGET_IDS = [
   "milestones",
   "resource_usage",
   "recent_attachments",
+  "library",
   "approvals",
   "focus_timer",
   "note",
@@ -311,6 +312,13 @@ export const DASHBOARD_WIDGETS: Record<DashboardWidgetId, DashboardWidgetMeta> =
     defaultSize: { w: 4, h: 4 },
     minSize: { w: 3, h: 3 },
   },
+  library: {
+    id: "library",
+    title: "资源库",
+    description: "个人与团队资源库的文件数、最近更新与快捷入口",
+    defaultSize: { w: 3, h: 3 },
+    minSize: { w: 3, h: 3 },
+  },
   approvals: {
     id: "approvals",
     title: "待办审批",
@@ -356,7 +364,7 @@ export const DASHBOARD_WIDGETS: Record<DashboardWidgetId, DashboardWidgetMeta> =
  *   y2-8   看板（整行 12 列 × 7 行）—— 三个任务列同屏，不用横向挤
  *   y9-17  日程表（8 列 × 9 行）+ 最新记录 / 消息 / 我的项目（右 4 列）
  *   y18-20 第一排辅助卡：即将到期、里程碑、资源占用（要盯的）
- *   y21-23 第二排辅助卡：最近附件、我的团队、快捷入口（查资料的）
+ *   y21-23 第二排辅助卡：最近附件、我的团队、快捷入口、资源库（查资料的）
  *   y24-26 第三排小工具：时钟、专注、便签、倒计时（随手用的）
  *
  * 三排辅助卡按使用频率从「要处理」到「随手用」排：截止 / 里程碑 / 资源在最上，
@@ -377,9 +385,10 @@ const DEFAULT_ITEMS: DashboardLayoutItem[] = [
   { id: "upcoming", type: "upcoming", x: 0, y: 18, w: 4, h: 3 },
   { id: "milestones", type: "milestones", x: 4, y: 18, w: 4, h: 3 },
   { id: "resource_usage", type: "resource_usage", x: 8, y: 18, w: 4, h: 3 },
-  { id: "recent_attachments", type: "recent_attachments", x: 0, y: 21, w: 4, h: 3 },
-  { id: "my_teams", type: "my_teams", x: 4, y: 21, w: 4, h: 3 },
-  { id: "quick_links", type: "quick_links", x: 8, y: 21, w: 4, h: 3 },
+  { id: "recent_attachments", type: "recent_attachments", x: 0, y: 21, w: 3, h: 3 },
+  { id: "my_teams", type: "my_teams", x: 3, y: 21, w: 3, h: 3 },
+  { id: "quick_links", type: "quick_links", x: 6, y: 21, w: 3, h: 3 },
+  { id: "library", type: "library", x: 9, y: 21, w: 3, h: 3 },
   { id: "clock", type: "clock", x: 0, y: 24, w: 3, h: 3 },
   { id: "focus_timer", type: "focus_timer", x: 3, y: 24, w: 3, h: 3 },
   { id: "note", type: "note", x: 6, y: 24, w: 3, h: 3 },

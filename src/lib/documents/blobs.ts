@@ -17,6 +17,8 @@ export async function blobIsReferenced(storageKey: string): Promise<boolean> {
       or exists(select 1 from document_versions where storage_key = ${storageKey})
       or exists(select 1 from dm_attachments where storage_key = ${storageKey})
       or exists(select 1 from agent_files where storage_key = ${storageKey})
+      or exists(select 1 from library_versions where storage_key = ${storageKey})
+      or exists(select 1 from library_items where current_storage_key = ${storageKey})
     ) as used
   `)) as unknown as { used: boolean }[];
   return Boolean(rows[0]?.used);

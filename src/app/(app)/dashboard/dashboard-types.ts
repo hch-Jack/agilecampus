@@ -73,6 +73,24 @@ export type DashboardAttachment = {
   projectName: string;
 };
 
+/** 工作台资源库卡片：个人 / 团队文件数与最近更新 */
+export type DashboardLibraryFile = {
+  id: string;
+  filename: string;
+  size: number;
+  updatedAt: Date;
+  scope: "personal" | "team";
+  teamId?: string;
+  teamName: string;
+};
+
+export type DashboardLibrarySummary = {
+  personalCount: number;
+  teams: { id: string; name: string; itemCount: number }[];
+  totalCount: number;
+  recent: DashboardLibraryFile[];
+};
+
 /** 我的团队里待我审批的申请（有对应审核权限的成员视角；无权限者恒为空数组） */
 export type DashboardApproval = {
   id: string;
@@ -117,4 +135,5 @@ export type DashboardData = {
   resourceUsages: DashboardResourceUsage[];
   attachments: DashboardAttachment[];
   approvals: DashboardApproval[];
+  library: DashboardLibrarySummary | null;
 };

@@ -41,6 +41,9 @@ export default async function TeamsPage() {
                 <Link href={`/teams/${t.id}/projects`} className="ac-btn-ghost">
                   项目
                 </Link>
+                <Link href={`/teams/${t.id}/library`} className="ac-btn-ghost">
+                  资源库
+                </Link>
                 <Link href={`/teams/${t.id}/resources`} className="ac-btn-ghost">
                   资源占用
                 </Link>

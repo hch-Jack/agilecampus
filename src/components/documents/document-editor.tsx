@@ -6,6 +6,10 @@ import { decodeTextWithFallback, extOf } from "@/lib/file-preview";
 import { formatLabel, isSameEditableFormat, sheetBookTypeOf } from "@/lib/documents/format";
 import { importDocxToHtml } from "@/lib/documents/docx-import.client";
 import { grantEditorAction, revokeEditorAction, setCollaborationAction } from "@/app/(app)/documents/[documentId]/actions";
+import {
+  LibrarySaveAsDialog,
+  type LibrarySaveInput,
+} from "@/components/library/library-save-as-dialog";
 import { EditorSidebar } from "./editor-sidebar";
 import { RichTextEditor } from "./rich-text-editor";
 import { SheetEditor, type SheetEditorApi } from "./sheet-editor";
@@ -51,6 +55,15 @@ function decodeText(bytes: ArrayBuffer): { text: string; utf8: boolean } {
   return { text: utf8 ?? decodeTextWithFallback(bytes), utf8: utf8 !== null };
 }
 
+function downloadBlobBytes(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function defaultCopyName(filename: string): string {
   const dot = filename.lastIndexOf(".");
   if (dot <= 0) return `${filename}-副本`;
@@ -71,6 +84,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
   const router = useRouter();
   const documentId = initial.document.id;
   const format = initial.document.format;
+  const grantsEnabled = initial.grantsEnabled !== false;
   const markdown = ["md", "markdown", "mdx"].includes(extOf(initial.document.filename));
   const bookType = sheetBookTypeOf(initial.document.filename) ?? "xlsx";
 
@@ -105,6 +119,8 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
   const [revoked, setRevoked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [sidebar, setSidebar] = useState<null | "versions" | "permissions">(null);
+  const [saveAsOpen, setSaveAsOpen] = useState(false);
+  const [savedHint, setSavedHint] = useState("");
 
   const sheetApiRef = useRef<SheetEditorApi | null>(null);
   const savingRef = useRef(false);
@@ -666,14 +682,95 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
 
   function saveAs() {
     if (!canEdit || readOnly) return;
-    const suggested = defaultCopyName(docInfo.filename);
-    const name = window.prompt("另存为新文件名（保持相同扩展名）", suggested)?.trim();
-    if (!name) return;
-    if (!isSameEditableFormat(docInfo.filename, name, format)) {
-      window.alert("另存为只能使用与原文件相同的格式/扩展名");
-      return;
+    setSaveAsOpen(true);
+  }
+
+  async function saveToLibrary(input: LibrarySaveInput): Promise<{
+    ok: boolean;
+    error?: string;
+  }> {
+    const payload = await buildPayload();
+    if (!payload) return { ok: false, error: "当前内容尚未准备好，请稍后再试" };
+    try {
+      let res: Response;
+      if (payload.kind === "sheet") {
+        const query = new URLSearchParams({
+          filename: input.filename,
+          scope: input.scope,
+        });
+        if (input.teamId) query.set("teamId", input.teamId);
+        if (input.folderId) query.set("folderId", input.folderId);
+        res = await fetch(
+          `/api/documents/${documentId}/save-as-library-sheet?${query.toString()}`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/octet-stream" },
+            body: payload.bytes as unknown as BodyInit,
+          },
+        );
+      } else {
+        const content =
+          payload.kind === "text"
+            ? { kind: "text" as const, text: payload.text }
+            : { kind: "tiptap" as const, doc: payload.doc };
+        res = await fetch(`/api/documents/${documentId}/save-as-library`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            filename: input.filename,
+            scope: input.scope,
+            teamId: input.teamId,
+            folderId: input.folderId,
+            content,
+          }),
+        });
+      }
+      const data = (await res.json().catch(() => null)) as { error?: string } | null;
+      return res.ok ? { ok: true } : { ok: false, error: data?.error ?? "保存失败" };
+    } catch {
+      return { ok: false, error: "网络异常，请稍后重试" };
     }
-    void saveRef.current({ mode: "saveAs", saveAsName: name });
+  }
+
+  async function exportCopy(filename: string): Promise<boolean> {
+    const payload = await buildPayload();
+    if (!payload) return false;
+    try {
+      let res: Response;
+      if (payload.kind === "sheet") {
+        const query = new URLSearchParams({ filename });
+        res = await fetch(`/api/documents/${documentId}/export-sheet?${query.toString()}`, {
+          method: "POST",
+          headers: { "content-type": "application/octet-stream" },
+          body: payload.bytes as unknown as BodyInit,
+        });
+      } else {
+        const content =
+          payload.kind === "text"
+            ? { kind: "text" as const, text: payload.text }
+            : { kind: "tiptap" as const, doc: payload.doc };
+        res = await fetch(`/api/documents/${documentId}/export`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ filename, content }),
+        });
+      }
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string } | null;
+        window.alert(data?.error ?? "导出失败");
+        return false;
+      }
+      downloadBlobBytes(await res.blob(), filename);
+      return true;
+    } catch {
+      window.alert("导出失败，请稍后重试");
+      return false;
+    }
+  }
+
+  async function saveAsAttachment(filename: string): Promise<boolean> {
+    if (!canEdit || readOnly) return false;
+    return saveRef.current({ mode: "saveAs", saveAsName: filename });
   }
 
   // ---------------------------------------------------------------- 渲染
@@ -799,6 +896,12 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
         </div>
       </header>
 
+      {savedHint && (
+        <div className="border-b border-line bg-surface-2 px-3 py-1 text-xs text-done">
+          {savedHint}
+        </div>
+      )}
+
       {readOnlyReason && (
         <div className="flex flex-wrap items-center gap-2 border-b border-line bg-surface-2 px-3 py-1.5 text-xs text-ink-soft">
           <span>{readOnlyReason}</span>
@@ -904,6 +1007,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
             initialTab={sidebar}
             canEdit={canEdit}
             canManage={canManage}
+            grantsEnabled={grantsEnabled}
             ownerUserId={source.ownerUserId}
             collaborationEnabled={docInfo.collaborationEnabled}
             versions={versions}
@@ -997,6 +1101,25 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
           </div>
         </div>
       )}
+
+      <LibrarySaveAsDialog
+        open={saveAsOpen}
+        originalFilename={docInfo.filename}
+        defaultFilename={defaultCopyName(docInfo.filename)}
+        sourceType={initial.document.sourceType}
+        format={format}
+        onClose={() => setSaveAsOpen(false)}
+        onSaveToLibrary={saveToLibrary}
+        onDownload={exportCopy}
+        onSaveAsAttachment={saveAsAttachment}
+        onUpdateCurrent={() => {
+          if (dirtyRef.current) void saveRef.current({ mode: "manual" });
+        }}
+        onSaved={(message) => {
+          setSavedHint(message);
+          window.setTimeout(() => setSavedHint(""), 4000);
+        }}
+      />
     </div>
   );
 }

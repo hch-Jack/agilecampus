@@ -32,6 +32,10 @@ export type LoadedDocumentSource = {
   taskId: string | null;
   teamId: string | null;
   projectId: string | null;
+  /** 来源自身的当前版本号（资源库条目已有历史时，documents 从该版本起算） */
+  currentVersion?: number;
+  /** false = 不允许文档级额外授权（资源库：教师只读，不因授权变成可编辑） */
+  grantsEnabled?: boolean;
 };
 
 export type SourceContent = {
@@ -55,6 +59,19 @@ export type DocumentActivityEvent =
   | { type: "document_collaboration_changed"; newValue: string }
   | { type: "document_editor_granted"; newValue: string }
   | { type: "document_editor_revoked"; newValue: string };
+
+/** 一次已提交的文档版本（保存/恢复后由 documents 服务交给适配器镜像） */
+export type CommittedVersion = {
+  version: number;
+  filename: string;
+  mimeType: string | null;
+  size: number;
+  storageKey: string;
+  editorState: unknown;
+  note: string;
+  createdById: string | null;
+  createdAt?: Date;
+};
 
 /**
  * 文档来源适配器：把「文档」与「实际存放文件的地方」解耦。
@@ -86,6 +103,21 @@ export interface DocumentSourceAdapter {
     actorId: string,
     source: LoadedDocumentSource,
     event: DocumentActivityEvent,
+  ): Promise<void>;
+
+  /** 文档版本行插入后、同事务调用：资源库据此追加同号版本 */
+  onVersionCommitted?(
+    exec: DbExec,
+    actorId: string,
+    source: LoadedDocumentSource,
+    version: CommittedVersion,
+  ): Promise<void>;
+
+  /** 首次创建/打开 documents 行后调用：把来源已有历史回填到 document_versions */
+  seedDocumentVersions?(
+    exec: DbExec,
+    source: LoadedDocumentSource,
+    documentId: string,
   ): Promise<void>;
 
   /** 文档/来源删除时的额外清理（blob 由 documents 服务统一删除） */

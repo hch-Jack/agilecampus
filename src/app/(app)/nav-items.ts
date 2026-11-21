@@ -5,11 +5,14 @@ export const NAV_ITEMS = [
   { key: "/dashboard", href: "/dashboard", label: "工作台" },
   { key: "/projects", href: "/projects", label: "所有项目" },
   { key: "/teams", href: "/teams", label: "我的团队" },
+  { key: "/library", href: "/library", label: "资源库" },
   { key: "/settings", href: "/settings", label: "AI配置" },
 ] as const;
 
 // 当前路径落在哪个导航分区（含子页）
 export function activeNavKey(pathname: string): string {
+  // 团队资源库也归到「资源库」分区，而不是「我的团队」
+  if (/^\/teams\/[^/]+\/library(?:\/|$)/.test(pathname)) return "/library";
   for (const it of NAV_ITEMS) {
     if (pathname.startsWith(it.key)) return it.key;
   }

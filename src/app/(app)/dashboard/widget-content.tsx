@@ -29,6 +29,7 @@ import {
   ResourceUsageWidget,
 } from "./widgets/productivity";
 import { ApprovalsWidget } from "./widgets/approvals";
+import { LibraryWidget } from "./widgets/library";
 
 const STAT_KEYS: Partial<Record<DashboardWidgetId, WorkbenchStatKey>> = {
   stat_overdue: "overdue",
@@ -101,6 +102,8 @@ export function renderWidgetContent(
       return <ResourceUsageWidget usages={data.resourceUsages} tz={data.tz} />;
     case "recent_attachments":
       return <RecentAttachmentsWidget attachments={data.attachments} tz={data.tz} />;
+    case "library":
+      return <LibraryWidget summary={data.library} tz={data.tz} />;
     case "approvals":
       return <ApprovalsWidget approvals={data.approvals} tz={data.tz} />;
     case "focus_timer":
