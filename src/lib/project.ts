@@ -10,6 +10,7 @@ import {
 } from "@/db/schema";
 import { AppError, ForbiddenError } from "./errors";
 import { getTeamMembership, requireTeamRole } from "./team";
+import { TASK_WRITE_ROLES } from "./task-constants";
 
 // YYYY-MM-DD 且为真实存在之日（2026-02-30 之类 Postgres 会拒并报 500，先在此拦成可读错误）
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -140,6 +141,15 @@ export async function getProjectForUser(actorId: string, projectId: string) {
   const membership = await getTeamMembership(actorId, project.teamId);
   if (!membership) return null;
   return { project, role: membership.role };
+}
+
+// 任务数据库配置（属性定义/视图）的写权限口径，与 lib/task.ts 的 requireTaskWrite 同集：
+// 项目成员且角色 ∈ {admin, student}；teacher 只读。审批豁免那类特殊通道仍走 task.ts。
+export async function requireProjectTaskWrite(actorId: string, projectId: string) {
+  const access = await getProjectForUser(actorId, projectId);
+  if (!access) throw new ForbiddenError();
+  if (!TASK_WRITE_ROLES.includes(access.role)) throw new ForbiddenError();
+  return access;
 }
 
 export async function createMilestone(
