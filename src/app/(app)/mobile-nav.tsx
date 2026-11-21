@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { FolderIcon } from "@/components/file-type-icon";
 import { activeNavKey, NAV_ITEMS } from "./nav-items";
 
 type LibraryTeam = { id: string; name: string };
@@ -108,7 +109,7 @@ export function MobileNav({ libraryTeams }: { libraryTeams: LibraryTeam[] }) {
                               className="flex min-h-10 items-center gap-2 rounded-field px-2 text-sm text-ink-soft hover:bg-primary-soft hover:text-primary"
                               title={team.name}
                             >
-                              <span aria-hidden>📁</span>
+                              <FolderIcon className="h-4 w-4 shrink-0" />
                               <span className="min-w-0 truncate">{team.name}</span>
                             </Link>
                           ))

@@ -10,6 +10,7 @@ import {
 import type { SheetTable } from "@/lib/file-preview-office";
 import { detectEditableFormat } from "@/lib/documents/format";
 import { EditDocumentButton } from "@/components/documents/edit-document-button";
+import { FileTypeIcon } from "@/components/file-type-icon";
 
 /** 预览目标：url 是现成的下载路由（带会话鉴权），组件内按需取内容 */
 export type PreviewFile = {
@@ -363,9 +364,12 @@ export function FilePreviewModal({
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2 sm:px-4 sm:py-2.5">
-          <span className="shrink-0 rounded bg-sunken px-1.5 py-0.5 text-[11px] text-ink-soft">
-            {kindLabel(kind)}
-          </span>
+          <FileTypeIcon
+            filename={file.filename}
+            mimeType={file.mimeType}
+            className="h-5 w-5 shrink-0"
+            title={kindLabel(kind)}
+          />
           <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink" title={file.filename}>
             {file.filename}
           </span>
@@ -526,9 +530,11 @@ export function FilePreviewModal({
           {kind === "unsupported" && (
             <div className="grid min-h-0 flex-1 place-items-center p-6">
               <div className="text-center">
-                <p className="text-4xl" aria-hidden>
-                  📄
-                </p>
+                <FileTypeIcon
+                  filename={file.filename}
+                  mimeType={file.mimeType}
+                  className="mx-auto h-14 w-14"
+                />
                 <p className="mt-2 text-sm text-ink-soft">{unsupportedHint}</p>
                 <div className="mt-3">{downloadBtn}</div>
               </div>

@@ -18,6 +18,7 @@ import { MESSAGE_TAG_MAX, normalizeMessageTag } from "@/lib/message-tag";
 import { uploadFileRaw } from "@/lib/upload-client";
 import { Markdown } from "@/components/markdown";
 import { FilePreviewModal } from "@/components/file-preview";
+import { FileTypeIcon } from "@/components/file-type-icon";
 import { AssistantFileCards } from "@/components/assistant-file-cards";
 
 /**
@@ -752,9 +753,14 @@ export function AgentChat({
                           href={`/api/assistant/files/${a.id}`}
                           download={a.filename}
                           title={`${a.filename}（${formatFileSize(a.size)}）`}
-                          className="ac-badge max-w-full truncate bg-surface text-ink-soft hover:bg-primary-soft hover:text-primary"
+                          className="ac-badge inline-flex max-w-full items-center gap-1 bg-surface text-ink-soft hover:bg-primary-soft hover:text-primary"
                         >
-                          {a.filename}
+                          <FileTypeIcon
+                            filename={a.filename}
+                            mimeType={a.mimeType}
+                            className="h-3.5 w-3.5 shrink-0"
+                          />
+                          <span className="truncate">{a.filename}</span>
                         </a>
                       ))}
                     </div>
@@ -831,9 +837,14 @@ export function AgentChat({
               {attachments.map((a) => (
                 <span
                   key={a.id}
-                  className="ac-badge max-w-full bg-surface text-ink-soft"
+                  className="ac-badge inline-flex max-w-full items-center gap-1 bg-surface text-ink-soft"
                   title={`${a.filename}（${formatFileSize(a.size)}）`}
                 >
+                  <FileTypeIcon
+                    filename={a.filename}
+                    mimeType={a.mimeType}
+                    className="h-3.5 w-3.5 shrink-0"
+                  />
                   <span className="max-w-[10rem] truncate">{a.filename}</span>
                   <button
                     type="button"

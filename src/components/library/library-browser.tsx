@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { EditDocumentButton } from "@/components/documents/edit-document-button";
+import { FileTypeIcon, FolderIcon } from "@/components/file-type-icon";
 import { detectEditableFormat } from "@/lib/documents/format";
 import { formatShortDateTime } from "@/lib/time";
 import { MAX_FILE_SIZE, MAX_FILE_SIZE_LABEL } from "@/lib/file-limits";
@@ -439,9 +440,7 @@ export function LibraryBrowser({
                 className="group grid grid-cols-1 items-center gap-1 px-3 py-2 hover:bg-sunken sm:grid-cols-[minmax(0,1fr)_9.5rem_7rem_6.5rem_auto] sm:gap-2"
               >
                 <div className="flex min-w-0 items-center gap-2">
-                  <span aria-hidden className="text-base">
-                    📁
-                  </span>
+                  <FolderIcon className="h-4 w-4 shrink-0" />
                   <div className="min-w-0">
                     <Link
                       href={buildHref(folder.id)}
@@ -496,9 +495,11 @@ export function LibraryBrowser({
                   className="group grid grid-cols-1 items-center gap-1 px-3 py-2 hover:bg-sunken sm:grid-cols-[minmax(0,1fr)_9.5rem_7rem_6.5rem_auto] sm:gap-2"
                 >
                   <div className="flex min-w-0 items-start gap-2">
-                    <span aria-hidden className="mt-0.5 text-base">
-                      📄
-                    </span>
+                    <FileTypeIcon
+                      filename={item.filename}
+                      mimeType={item.mimeType}
+                      className="mt-0.5 h-4 w-4 shrink-0"
+                    />
                     <div className="min-w-0 flex-1">
                       <button
                         type="button"

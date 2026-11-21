@@ -14,6 +14,7 @@ import {
 import Link from "next/link";
 import { IdentityBadge } from "@/components/badges";
 import { FilePreviewModal } from "@/components/file-preview";
+import { FileTypeIcon } from "@/components/file-type-icon";
 import { RejectReasonDialog } from "@/components/reject-reason-dialog";
 import { useMessagesPanel } from "@/components/messages-panel-context";
 import { detectPreviewKind } from "@/lib/file-preview";
@@ -191,22 +192,6 @@ function AttachmentLink({
   const [previewing, setPreviewing] = useState(false);
   const url = `/api/dm/attachments/${att.id}`;
   const kind = detectPreviewKind(att.filename, att.mimeType);
-  const icon =
-    kind === "image"
-      ? "🖼️"
-      : kind === "video"
-        ? "🎬"
-        : kind === "audio"
-          ? "🎵"
-          : kind === "word"
-            ? "📝"
-            : kind === "excel"
-              ? "📊"
-              : kind === "ppt"
-                ? "📽️"
-                : kind === "pdf"
-                  ? "📕"
-                  : "📄";
 
   return (
     <div className="mt-1">
@@ -238,7 +223,11 @@ function AttachmentLink({
           className="flex min-w-0 items-center gap-1.5 text-left hover:underline"
           title="在线预览"
         >
-          <span aria-hidden>{icon}</span>
+          <FileTypeIcon
+            filename={att.filename}
+            mimeType={att.mimeType}
+            className="h-4 w-4 shrink-0"
+          />
           <span className="max-w-48 truncate">{att.filename}</span>
         </button>
         <span className={mine ? "text-white/70" : "text-ink-faint"}>{fmtSize(att.size)}</span>
@@ -1323,7 +1312,11 @@ export function MessagesClient({
     <form onSubmit={handleSend} className="shrink-0 border-t border-line p-3">
       {file && (
         <p className="mb-2 flex items-center gap-2 rounded-field bg-sunken px-2.5 py-1.5 text-xs text-ink-soft">
-          <span aria-hidden>📄</span>
+          <FileTypeIcon
+            filename={file.name}
+            mimeType={file.type}
+            className="h-4 w-4 shrink-0"
+          />
           <span className="min-w-0 flex-1 truncate">{file.name}</span>
           <button
             type="button"
@@ -1957,6 +1950,11 @@ export function MessagesClient({
                           className="ac-step-in flex min-w-0 flex-wrap items-center gap-2 rounded px-1 py-1 hover:bg-sunken"
                           style={{ animationDelay: `${Math.min(index, 8) * 24}ms` }}
                         >
+                          <FileTypeIcon
+                            filename={f.filename}
+                            mimeType={f.mimeType}
+                            className="h-4 w-4 shrink-0"
+                          />
                           <div className="min-w-0 flex-1">
                             <span className="block truncate text-sm text-ink" title={f.filename}>
                               {f.filename}

@@ -10,6 +10,7 @@ import {
   LibrarySaveAsDialog,
   type LibrarySaveInput,
 } from "@/components/library/library-save-as-dialog";
+import { FileTypeIcon } from "@/components/file-type-icon";
 import { EditorSidebar } from "./editor-sidebar";
 import { RichTextEditor } from "./rich-text-editor";
 import { SheetEditor, type SheetEditorApi } from "./sheet-editor";
@@ -826,6 +827,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
           </button>
         )}
         <span className="ac-badge">{formatLabel(format)}</span>
+        <FileTypeIcon filename={docInfo.filename} className="h-4 w-4 shrink-0" />
         <span className="min-w-0 max-w-[40vw] truncate text-sm font-medium text-ink" title={docInfo.filename}>
           {docInfo.filename}
         </span>

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { FileTypeIcon } from "@/components/file-type-icon";
 import { formatShortDateTime } from "@/lib/time";
 import type { DashboardLibrarySummary } from "../dashboard-types";
 import { WidgetEmpty, WidgetShell } from "./shell";
@@ -70,25 +71,31 @@ export function LibraryWidget({
       {summary.recent.length > 0 && (
         <ul className="mt-2 space-y-1.5">
           {summary.recent.slice(0, 5).map((file) => (
-            <li key={file.id}>
-              <Link
-                href={
-                  file.scope === "personal" || !file.teamId
-                    ? "/library"
-                    : `/teams/${file.teamId}/library`
-                }
-                className="dw-item block truncate font-medium text-ink hover:text-primary"
-                title={file.filename}
-              >
-                {file.filename}
-              </Link>
-              <p className="dw-meta mt-0.5 flex flex-wrap items-center gap-x-1.5 truncate text-ink-faint">
-                <span className="truncate">{file.teamName}</span>
-                <span aria-hidden>·</span>
-                <span>{fmtSize(file.size)}</span>
-                <span aria-hidden>·</span>
-                <span>{formatShortDateTime(tz, file.updatedAt)}</span>
-              </p>
+            <li key={file.id} className="flex items-start gap-1.5">
+              <FileTypeIcon
+                filename={file.filename}
+                className="mt-0.5 h-3.5 w-3.5 shrink-0"
+              />
+              <div className="min-w-0 flex-1">
+                <Link
+                  href={
+                    file.scope === "personal" || !file.teamId
+                      ? "/library"
+                      : `/teams/${file.teamId}/library`
+                  }
+                  className="dw-item block truncate font-medium text-ink hover:text-primary"
+                  title={file.filename}
+                >
+                  {file.filename}
+                </Link>
+                <p className="dw-meta mt-0.5 flex flex-wrap items-center gap-x-1.5 truncate text-ink-faint">
+                  <span className="truncate">{file.teamName}</span>
+                  <span aria-hidden>·</span>
+                  <span>{fmtSize(file.size)}</span>
+                  <span aria-hidden>·</span>
+                  <span>{formatShortDateTime(tz, file.updatedAt)}</span>
+                </p>
+              </div>
             </li>
           ))}
         </ul>
