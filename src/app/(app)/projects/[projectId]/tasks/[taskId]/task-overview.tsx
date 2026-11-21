@@ -2,9 +2,21 @@
 
 import { useActionState, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { updateTaskAction, type UpdateTaskState } from "../../actions";
 import { deleteTaskFromDetailAction, type FormState } from "./actions";
 import { LABEL_COLOR_CLASS } from "@/lib/board-columns";
+import type { PropertyDef } from "@/lib/properties";
+import { setTaskPropertiesAction } from "../../database-actions";
+import {
+  ClickToEdit,
+  TextEditor,
+  NumberEditor,
+  DateEditor,
+  CheckboxEditor,
+  ChoicesEditor,
+  MultiChoicesEditor,
+} from "../../database/cell-editors";
 
 export type TaskOverviewData = {
   id: string;
@@ -20,6 +32,7 @@ export type TaskOverviewData = {
   milestoneId: string | null;
   parentTaskId: string | null;
   labels: { id: string; name: string; color: string }[];
+  properties?: Record<string, unknown> | null;
 };
 
 // 任务的描述与属性两卡：只读展示 + 「编辑」就地切换为全字段编辑表单。
@@ -27,6 +40,7 @@ export type TaskOverviewData = {
 export function TaskOverview({
   projectId,
   task,
+  propertyDefs,
   canWrite,
   milestoneTitle,
   successors,
@@ -39,6 +53,7 @@ export function TaskOverview({
 }: {
   projectId: string;
   task: TaskOverviewData;
+  propertyDefs: PropertyDef[];
   canWrite: boolean;
   milestoneTitle: string | null;
   successors: { id: string; title: string; parentTaskId: string | null }[];
@@ -143,6 +158,18 @@ export function TaskOverview({
               </div>
             </div>
           </section>
+
+          {/* 任务数据库自定义属性：每行点击就地编辑（写走 setTaskPropertiesAction） */}
+          {propertyDefs.length > 0 && (
+            <TaskPropertiesSection
+              projectId={projectId}
+              taskId={task.id}
+              defs={propertyDefs}
+              properties={task.properties}
+              members={members}
+              canWrite={canWrite}
+            />
+          )}
         </>
       )}
 
@@ -166,6 +193,195 @@ export function TaskOverview({
         </form>
       )}
     </>
+  );
+}
+
+/** 详情页自定义属性区：每行 label + 点击就地编辑（写走 setTaskPropertiesAction，成功后回流） */
+function TaskPropertiesSection({
+  projectId,
+  taskId,
+  defs,
+  properties,
+  members,
+  canWrite,
+}: {
+  projectId: string;
+  taskId: string;
+  defs: PropertyDef[];
+  properties: Record<string, unknown> | null | undefined;
+  members: { id: string; name: string }[];
+  canWrite: boolean;
+}) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const props = properties ?? {};
+  const memberChoices = members.map((m) => ({ id: m.id, name: m.name }));
+
+  async function commit(defId: string, value: unknown) {
+    setBusy(true);
+    setError("");
+    const result = await setTaskPropertiesAction({ projectId, taskId, values: { [defId]: value } });
+    setBusy(false);
+    if (result && "error" in result) {
+      setError(result.error);
+      return;
+    }
+    router.refresh();
+  }
+
+  function PropRow({ def }: { def: PropertyDef }) {
+    const value = props[def.id];
+    const display = (() => {
+      switch (def.type) {
+        case "text":
+          return <span className="truncate text-sm text-ink">{typeof value === "string" && value ? value : "—"}</span>;
+        case "number":
+          return <span className="text-sm text-ink">{typeof value === "number" ? value : "—"}</span>;
+        case "select":
+          return typeof value === "string" ? (
+            <span
+              className={`ac-badge px-1.5 py-0 text-[11px] ${
+                LABEL_COLOR_CLASS[(def.options ?? []).find((o) => o.id === value)?.color ?? ""] ?? ""
+              }`}
+            >
+              {(def.options ?? []).find((o) => o.id === value)?.name ?? "未知选项"}
+            </span>
+          ) : (
+            <span className="text-sm text-ink-faint">—</span>
+          );
+        case "multi_select": {
+          const ids = Array.isArray(value) ? value : [];
+          if (ids.length === 0) return <span className="text-sm text-ink-faint">—</span>;
+          return (
+            <span className="flex flex-wrap gap-1">
+              {ids.map((id) => {
+                const opt = (def.options ?? []).find((o) => o.id === id);
+                return (
+                  <span
+                    key={String(id)}
+                    className={`ac-badge px-1.5 py-0 text-[11px] ${LABEL_COLOR_CLASS[opt?.color ?? ""] ?? ""}`}
+                  >
+                    {opt?.name ?? "未知选项"}
+                  </span>
+                );
+              })}
+            </span>
+          );
+        }
+        case "date":
+          return <span className="text-sm text-ink">{typeof value === "string" && value ? value : "—"}</span>;
+        case "person":
+          return (
+            <span className="text-sm text-ink">
+              {typeof value === "string" && value
+                ? (members.find((m) => m.id === value)?.name ?? "未知成员")
+                : "—"}
+            </span>
+          );
+        case "checkbox":
+          return value === true ? <span className="text-sm">☑</span> : <span className="text-sm text-ink-faint">—</span>;
+        default:
+          return <span className="text-sm text-ink-faint">—</span>;
+      }
+    })();
+
+    if (!canWrite) return display;
+
+    return (
+      <ClickToEdit
+        canEdit
+        className="min-w-0"
+        display={display}
+        onCommit={(v) => void commit(def.id, v)}
+        renderEditor={(commitValue, close) => {
+          switch (def.type) {
+            case "text":
+              return (
+                <TextEditor
+                  initial={typeof value === "string" ? value : ""}
+                  onSubmit={(v) => commitValue(v)}
+                  onClose={close}
+                />
+              );
+            case "number":
+              return (
+                <NumberEditor
+                  initial={typeof value === "number" ? value : null}
+                  onSubmit={(v) => commitValue(v)}
+                  onClose={close}
+                />
+              );
+            case "select":
+              return (
+                <ChoicesEditor
+                  variant="inline"
+                  choices={(def.options ?? []).map((o) => ({ id: o.id, name: o.name, color: o.color }))}
+                  selected={typeof value === "string" ? value : null}
+                  onSubmit={(v) => commitValue(v)}
+                  onClose={close}
+                />
+              );
+            case "multi_select":
+              return (
+                <MultiChoicesEditor
+                  variant="inline"
+                  choices={(def.options ?? []).map((o) => ({ id: o.id, name: o.name, color: o.color }))}
+                  selected={Array.isArray(value) ? value.map(String) : []}
+                  onSubmit={(ids) => commitValue(ids.length ? ids : null)}
+                  onClose={close}
+                />
+              );
+            case "date":
+              return (
+                <DateEditor
+                  variant="inline"
+                  initial={typeof value === "string" ? value : null}
+                  onSubmit={(v) => commitValue(v)}
+                  onClose={close}
+                />
+              );
+            case "person":
+              return (
+                <ChoicesEditor
+                  variant="inline"
+                  choices={memberChoices}
+                  selected={typeof value === "string" ? value : null}
+                  onSubmit={(v) => commitValue(v)}
+                  onClose={close}
+                />
+              );
+            case "checkbox":
+              return (
+                <CheckboxEditor
+                  checked={value === true}
+                  onToggle={() => void commit(def.id, value === true ? null : true)}
+                />
+              );
+            default:
+              return null;
+          }
+        }}
+      />
+    );
+  }
+
+  return (
+    <section className="ac-card space-y-2 p-5">
+      <h2 className="text-xs font-medium text-ink-soft">自定义属性</h2>
+      <div className="space-y-1.5">
+        {defs.map((def) => (
+          <div key={def.id} className="flex items-start gap-3 text-sm">
+            <span className="w-28 shrink-0 pt-0.5 text-xs text-ink-faint">{def.name}</span>
+            <div className="min-w-0 flex-1">
+              <PropRow def={def} />
+            </div>
+          </div>
+        ))}
+      </div>
+      {busy && <p className="text-xs text-ink-faint">保存中…</p>}
+      {error && <p className="text-xs text-high">{error}</p>}
+    </section>
   );
 }
 

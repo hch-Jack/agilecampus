@@ -53,6 +53,7 @@ export function TaskDatabaseModule({
   milestones,
   labels,
   canWrite,
+  viewerRole,
 }: {
   projectId: string;
   tasks: StoreTask[];
@@ -62,6 +63,7 @@ export function TaskDatabaseModule({
   milestones: { id: string; title: string }[];
   labels: { id: string; name: string; color: string }[];
   canWrite: boolean;
+  viewerRole: "admin" | "teacher" | "student";
 }) {
   return (
     <DatabaseStoreProvider
@@ -73,6 +75,7 @@ export function TaskDatabaseModule({
       milestones={milestones}
       labels={labels}
       canWrite={canWrite}
+      viewerRole={viewerRole}
     >
       <ModuleInner />
     </DatabaseStoreProvider>

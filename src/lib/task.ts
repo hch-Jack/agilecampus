@@ -505,6 +505,7 @@ export async function getTaskDetail(actorId: string, taskId: string) {
       assigneeId: tasks.assigneeId,
       assigneeName: users.name,
       requireApproval: tasks.requireApproval,
+      properties: tasks.properties,
       updatedAt: tasks.updatedAt,
       createdAt: tasks.createdAt,
     })

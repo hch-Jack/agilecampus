@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { tasks as tasksTable } from "@/db/schema";
 import { getProjectForUser, listProjectMilestones } from "@/lib/project";
 import { getTaskDetail, listSubtasks, listProjectDependencies } from "@/lib/task";
+import { listPropertyDefs } from "@/lib/properties";
 import { listTeamMembers } from "@/lib/team";
 import { listTeamLabels } from "@/lib/label";
 import { listAttachments } from "@/lib/attachment";
@@ -47,7 +48,7 @@ export default async function TaskDetailPage({
   const task = await getTaskDetail(session.user.id, taskId).catch(() => null);
   if (!task || task.projectId !== projectId) notFound();
 
-  const [subtasks, dependencies, milestones, activities, attachments, comments, taskFeedUnread] =
+  const [subtasks, dependencies, milestones, activities, attachments, comments, taskFeedUnread, propertyDefs] =
     await Promise.all([
       listSubtasks(session.user.id, taskId),
       listProjectDependencies(session.user.id, projectId),
@@ -56,9 +57,10 @@ export default async function TaskDetailPage({
       listAttachments(session.user.id, taskId),
       listTaskComments(session.user.id, taskId),
       getFeedUnreadCount(session.user.id, taskFeedScope(taskId)),
+      listPropertyDefs(session.user.id, projectId),
     ]);
-  // teacher 只读，无须成员表（仅子任务添加表单用）
-  const members = canWrite ? await listTeamMembers(access.project.teamId) : [];
+  // teacher 也取成员表：自定义属性「人员」列显示成员名需要 id→名映射
+  const members = await listTeamMembers(access.project.teamId);
 
   // 父任务与后置任务的标题，合并一次查询
   const successorIds = dependencies
@@ -186,7 +188,9 @@ export default async function TaskDetailPage({
           milestoneId: task.milestoneId,
           parentTaskId: task.parentTaskId,
           labels: task.labels,
+          properties: task.properties,
         }}
+        propertyDefs={propertyDefs}
         canWrite={canWrite}
         milestoneTitle={milestoneTitle}
         successors={successors}

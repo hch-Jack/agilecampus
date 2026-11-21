@@ -1,8 +1,11 @@
 "use client";
 
-// 任务数据库的表格视图（PR2a：展示 + 列显隐 + 全类型筛选/排序；行内编辑在 PR2b）。
-// 数据来自 store（applyViewFilters/applyViewSorts 已按视图 config 过滤排序），
-// 顶层任务行可展开只读的直接子任务缩进行；点任务名进详情页。
+// 任务数据库的表格视图（PR2b）：PR2a 的展示/列显隐/筛选排序 + 全单元格行内编辑。
+// - 原生字段走 updateTaskFields / patchStatus（状态保留审批语义：学生置 done 且
+//   requireApproval → 弹 CompletionRequestModal，与看板拖拽同一体验）
+// - 自定义属性走 setTaskProps（键级合并，方案 D5）
+// - 列头：自定义属性带 ⋯ 管理菜单（改名/选项/排序/删除），工具行有「＋属性」
+// - 子任务保持只读缩进行（方案 §8，编辑走详情页）
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { LABEL_COLOR_CLASS } from "@/lib/board-columns";
@@ -10,6 +13,17 @@ import { PRIORITY_BADGE, STATUS_BADGE, STATUS_TEXT, PRIORITY_TEXT } from "@/lib/
 import { applyViewFilters, applyViewSorts } from "@/lib/board-filters";
 import type { FieldKey, TaskViewConfig } from "@/lib/database-views";
 import type { PropertyOption } from "@/db/schema";
+import { CompletionRequestModal } from "@/components/completion-request-modal";
+import {
+  ClickToEdit,
+  TextEditor,
+  NumberEditor,
+  DateEditor,
+  CheckboxEditor,
+  ChoicesEditor,
+  MultiChoicesEditor,
+} from "./cell-editors";
+import { AddPropertyButton, PropertyColumnMenu } from "./property-menu";
 import { buildFilterContext } from "./filter-sort-bar";
 import { useTaskDatabase } from "./database-store";
 
@@ -32,8 +46,8 @@ function OptionChip({ option }: { option: PropertyOption | undefined }) {
   );
 }
 
-/** 自定义属性单元格展示 */
-function PropCell({ defId, value }: { defId: string; value: unknown }) {
+/** 自定义属性单元格展示（编辑态由 TaskCell 统一接管） */
+function PropDisplay({ defId, value }: { defId: string; value: unknown }) {
   const { defs, members } = useTaskDatabase();
   const def = defs.find((d) => d.id === defId);
   if (!def) return <span className="text-xs text-ink-faint">—</span>;
@@ -66,26 +80,57 @@ function PropCell({ defId, value }: { defId: string; value: unknown }) {
       return <span className="truncate text-xs text-ink-soft">{name ?? "—"}</span>;
     }
     case "checkbox":
-      return <span className="text-xs">{value === true ? "☑" : <span className="text-ink-faint">—</span>}</span>;
+      return value === true ? (
+        <span className="text-xs">☑</span>
+      ) : (
+        <span className="text-xs text-ink-faint">—</span>
+      );
     default:
       return <span className="text-xs text-ink-faint">—</span>;
   }
 }
 
-export function TableTaskView({ config, onChangeConfig }: { config: TaskViewConfig; onChangeConfig(next: TaskViewConfig): void }) {
+export function TableTaskView({
+  config,
+  onChangeConfig,
+}: {
+  config: TaskViewConfig;
+  onChangeConfig(next: TaskViewConfig): void;
+}) {
   const store = useTaskDatabase();
-  const { tasks, defs, milestones, labels } = store;
+  const { tasks, defs, members, milestones, labels, canWrite, viewerRole } = store;
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [columnsOpen, setColumnsOpen] = useState(false);
+  // 学生把 requireApproval 任务置 done → 不直接提交，弹完成申请（与看板拖拽同一流程）
+  const [completionTask, setCompletionTask] = useState<{ id: string; title: string } | null>(null);
 
   const ctx = useMemo(() => buildFilterContext(store), [store]);
   const milestoneName = useMemo(() => new Map(milestones.map((m) => [m.id, m.title])), [milestones]);
   const labelById = useMemo(() => new Map(labels.map((l) => [l.id, l])), [labels]);
 
-  // 表格只摆顶层任务；子任务作为展开行（只读，编辑走详情页——方案 §8）
+  const statusChoices = useMemo(
+    () => (["todo", "doing", "done"] as const).map((s) => ({ id: s, name: STATUS_TEXT[s] ?? s })),
+    [],
+  );
+  const priorityChoices = useMemo(
+    () => (["high", "medium", "low"] as const).map((p) => ({ id: p, name: PRIORITY_TEXT[p] ?? p })),
+    [],
+  );
+  const memberChoices = useMemo(() => members.map((m) => ({ id: m.id, name: m.name })), [members]);
+  const milestoneChoices = useMemo(
+    () => milestones.map((m) => ({ id: m.id, name: m.title })),
+    [milestones],
+  );
+  const labelChoices = useMemo(() => labels.map((l) => ({ id: l.id, name: l.name, color: l.color })), [labels]);
+
   const topLevel = useMemo(() => tasks.filter((t) => !t.parentTaskId), [tasks]);
   const rows = useMemo(
-    () => applyViewSorts(applyViewFilters(topLevel, config.filters ?? [], ctx), config.sorts ?? [], ctx),
+    () =>
+      applyViewSorts(
+        applyViewFilters(topLevel, config.filters ?? [], ctx),
+        config.sorts ?? [],
+        ctx,
+      ),
     [topLevel, config.filters, config.sorts, ctx],
   );
   const subtasksByParent = useMemo(() => {
@@ -121,12 +166,257 @@ export function TableTaskView({ config, onChangeConfig }: { config: TaskViewConf
       return next;
     });
 
+  /** 状态提交：学生 + 需审批 + 置 done → 弹完成申请；其余直接 patchStatus */
+  function commitStatus(task: { id: string; title: string; status: string; requireApproval: boolean }, target: string | null) {
+    if (!target || target === task.status) return;
+    if (
+      target === "done" &&
+      task.status !== "done" &&
+      viewerRole === "student" &&
+      task.requireApproval
+    ) {
+      setCompletionTask({ id: task.id, title: task.title });
+      return;
+    }
+    void store.patchStatus(task.id, target as "todo" | "doing" | "done");
+  }
+
+  /** 原生字段单元格（编辑态由 ClickToEdit 壳管理） */
+  function NativeCell({ task, column }: { task: (typeof rows)[number]; column: FieldKey }) {
+    switch (column) {
+      case "status":
+        return (
+          <ClickToEdit
+            canEdit={canWrite}
+            className="w-fit"
+            display={
+              <span className={`ac-badge ${STATUS_BADGE[task.status]}`}>{STATUS_TEXT[task.status]}</span>
+            }
+            onCommit={(v) => commitStatus(task, typeof v === "string" ? v : null)}
+            renderEditor={(commit, close) => (
+              <ChoicesEditor
+                choices={statusChoices}
+                selected={task.status}
+                onSubmit={(v) => commit(v)}
+                onClose={close}
+              />
+            )}
+          />
+        );
+      case "priority":
+        return (
+          <ClickToEdit
+            canEdit={canWrite}
+            className="w-fit"
+            display={
+              <span className={`ac-badge ${PRIORITY_BADGE[task.priority]}`}>
+                {PRIORITY_TEXT[task.priority]}
+              </span>
+            }
+            onCommit={(v) => void store.updateTaskFields(task.id, { priority: (v as "low" | "medium" | "high" | null) ?? undefined })}
+            renderEditor={(commit, close) => (
+              <ChoicesEditor
+                choices={priorityChoices}
+                selected={task.priority}
+                allowClear={false}
+                onSubmit={(v) => commit(v)}
+                onClose={close}
+              />
+            )}
+          />
+        );
+      case "assignee":
+        return (
+          <ClickToEdit
+            canEdit={canWrite}
+            className="max-w-full"
+            display={<span className="truncate text-xs text-ink-soft">{task.assigneeName ?? "—"}</span>}
+            onCommit={(v) => void store.updateTaskFields(task.id, { assigneeId: (v as string | null) ?? null })}
+            renderEditor={(commit, close) => (
+              <ChoicesEditor
+                choices={memberChoices}
+                selected={task.assigneeId}
+                onSubmit={(v) => commit(v)}
+                onClose={close}
+              />
+            )}
+          />
+        );
+      case "milestone":
+        return (
+          <ClickToEdit
+            canEdit={canWrite}
+            className="max-w-full"
+            display={
+              <span className="truncate text-xs text-ink-soft">
+                {task.milestoneId ? (milestoneName.get(task.milestoneId) ?? "—") : "—"}
+              </span>
+            }
+            onCommit={(v) => void store.updateTaskFields(task.id, { milestoneId: (v as string | null) ?? null })}
+            renderEditor={(commit, close) => (
+              <ChoicesEditor
+                choices={milestoneChoices}
+                selected={task.milestoneId}
+                onSubmit={(v) => commit(v)}
+                onClose={close}
+              />
+            )}
+          />
+        );
+      case "startDate":
+      case "dueDate": {
+        const key = column as "startDate" | "dueDate";
+        return (
+          <ClickToEdit
+            canEdit={canWrite}
+            display={<span className="text-xs text-ink-soft">{task[key] ?? "—"}</span>}
+            onCommit={(v) => void store.updateTaskFields(task.id, { [key]: (v as string | null) ?? null })}
+            renderEditor={(commit, close) => (
+              <DateEditor
+                initial={task[key]}
+                onSubmit={(v) => commit(v)}
+                onClose={close}
+              />
+            )}
+          />
+        );
+      }
+      case "label": {
+        const chips = task.labels
+          .map((l) => labelById.get(l.id))
+          .filter((l): l is NonNullable<typeof l> => !!l);
+        return (
+          <ClickToEdit
+            canEdit={canWrite}
+            className="max-w-full"
+            display={
+              chips.length === 0 ? (
+                <span className="text-xs text-ink-faint">—</span>
+              ) : (
+                <span className="flex flex-wrap gap-1">
+                  {chips.slice(0, 3).map((l) => (
+                    <span
+                      key={l.id}
+                      className={`ac-badge px-1.5 py-0 text-[11px] ${LABEL_COLOR_CLASS[l.color] ?? ""}`}
+                    >
+                      {l.name}
+                    </span>
+                  ))}
+                  {chips.length > 3 && (
+                    <span className="text-[11px] text-ink-faint">+{chips.length - 3}</span>
+                  )}
+                </span>
+              )
+            }
+            onCommit={(v) => void store.updateTaskFields(task.id, { labelIds: (v as string[]) ?? [] })}
+            renderEditor={(commit, close) => (
+              <MultiChoicesEditor
+                choices={labelChoices}
+                selected={task.labels.map((l) => l.id)}
+                onSubmit={(ids) => commit(ids)}
+                onClose={close}
+              />
+            )}
+          />
+        );
+      }
+      default:
+        return null;
+    }
+  }
+
+  /** 自定义属性单元格 */
+  function PropCell({ task, defId }: { task: (typeof rows)[number]; defId: string }) {
+    const def = defs.find((d) => d.id === defId);
+    if (!def) return <span className="text-xs text-ink-faint">—</span>;
+    const value = task.properties?.[defId];
+
+    if (def.type === "checkbox") {
+      // checkbox 无编辑态：即点即存
+      return (
+        <span className="flex items-center">
+          <CheckboxEditor
+            checked={value === true}
+            onToggle={() => void store.setTaskProps(task.id, { [defId]: value === true ? null : true })}
+          />
+        </span>
+      );
+    }
+
+    return (
+      <ClickToEdit
+        canEdit={canWrite}
+        className="max-w-full"
+        display={<PropDisplay defId={defId} value={value} />}
+        onCommit={(v) => void store.setTaskProps(task.id, { [defId]: v })}
+        renderEditor={(commit, close) => {
+          switch (def.type) {
+            case "text":
+              return (
+                <TextEditor
+                  initial={typeof value === "string" ? value : ""}
+                  onSubmit={(v) => commit(v)}
+                  onClose={close}
+                />
+              );
+            case "number":
+              return (
+                <NumberEditor
+                  initial={typeof value === "number" ? value : null}
+                  onSubmit={(v) => commit(v)}
+                  onClose={close}
+                />
+              );
+            case "select":
+              return (
+                <ChoicesEditor
+                  choices={(def.options ?? []).map((o) => ({ id: o.id, name: o.name, color: o.color }))}
+                  selected={typeof value === "string" ? value : null}
+                  onSubmit={(v) => commit(v)}
+                  onClose={close}
+                />
+              );
+            case "multi_select":
+              return (
+                <MultiChoicesEditor
+                  choices={(def.options ?? []).map((o) => ({ id: o.id, name: o.name, color: o.color }))}
+                  selected={Array.isArray(value) ? value.map(String) : []}
+                  onSubmit={(ids) => commit(ids.length ? ids : null)}
+                  onClose={close}
+                />
+              );
+            case "date":
+              return (
+                <DateEditor
+                  initial={typeof value === "string" ? value : null}
+                  onSubmit={(v) => commit(v)}
+                  onClose={close}
+                />
+              );
+            case "person":
+              return (
+                <ChoicesEditor
+                  choices={memberChoices}
+                  selected={typeof value === "string" ? value : null}
+                  onSubmit={(v) => commit(v)}
+                  onClose={close}
+                />
+              );
+            default:
+              return null;
+          }
+        }}
+      />
+    );
+  }
+
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
         <span className="text-xs text-ink-faint">
           {rows.length === total ? `共 ${total} 个任务` : `筛选后 ${rows.length} / ${total} 个任务`}
         </span>
+        {canWrite && <AddPropertyButton />}
         <details className="relative" open={columnsOpen}>
           <summary
             className="ac-btn-ghost cursor-pointer list-none px-2 py-0.5 text-xs"
@@ -186,8 +476,9 @@ export function TableTaskView({ config, onChangeConfig }: { config: TaskViewConf
                 <span key={c.key}>{c.label}</span>
               ))}
               {visibleProps.map((d) => (
-                <span key={d.id} className="truncate">
-                  {d.name}
+                <span key={d.id} className="flex min-w-0 items-center gap-0.5">
+                  <span className="min-w-0 truncate">{d.name}</span>
+                  <PropertyColumnMenu def={d} />
                 </span>
               ))}
             </div>
@@ -197,10 +488,10 @@ export function TableTaskView({ config, onChangeConfig }: { config: TaskViewConf
               return (
                 <div key={task.id} className="border-b border-line last:border-b-0">
                   <div
-                    className="grid items-center gap-2 px-3 py-2 text-sm transition-colors hover:bg-sunken"
+                    className="grid items-start gap-2 px-3 py-2 text-sm transition-colors hover:bg-sunken"
                     style={{ gridTemplateColumns: gridCols }}
                   >
-                    <div className="flex min-w-0 items-center gap-1.5">
+                    <div className="flex min-w-0 items-center gap-1.5 py-1">
                       {subs.length > 0 ? (
                         <button
                           type="button"
@@ -213,88 +504,41 @@ export function TableTaskView({ config, onChangeConfig }: { config: TaskViewConf
                       ) : (
                         <span className="w-3 shrink-0" />
                       )}
-                      <Link
-                        href={`/projects/${store.projectId}/tasks/${task.id}`}
-                        className="truncate text-ink hover:text-primary"
-                        title={task.title}
-                      >
-                        {task.title}
-                      </Link>
-                    </div>
-                    {visibleNative.map((c) => {
-                      switch (c.key) {
-                        case "status":
-                          return (
-                            <span key={c.key}>
-                              <span className={`ac-badge ${STATUS_BADGE[task.status]}`}>
-                                {STATUS_TEXT[task.status]}
-                              </span>
-                            </span>
-                          );
-                        case "priority":
-                          return (
-                            <span key={c.key}>
-                              <span className={`ac-badge ${PRIORITY_BADGE[task.priority]}`}>
-                                {PRIORITY_TEXT[task.priority]}
-                              </span>
-                            </span>
-                          );
-                        case "assignee":
-                          return (
-                            <span key={c.key} className="truncate text-xs text-ink-soft">
-                              {task.assigneeName ?? "—"}
-                            </span>
-                          );
-                        case "milestone":
-                          return (
-                            <span key={c.key} className="truncate text-xs text-ink-soft">
-                              {task.milestoneId ? (milestoneName.get(task.milestoneId) ?? "—") : "—"}
-                            </span>
-                          );
-                        case "startDate":
-                          return (
-                            <span key={c.key} className="text-xs text-ink-soft">
-                              {task.startDate ?? "—"}
-                            </span>
-                          );
-                        case "dueDate":
-                          return (
-                            <span key={c.key} className="text-xs text-ink-soft">
-                              {task.dueDate ?? "—"}
-                            </span>
-                          );
-                        case "label": {
-                          const chips = task.labels
-                            .map((l) => labelById.get(l.id))
-                            .filter((l): l is NonNullable<typeof l> => !!l);
-                          if (chips.length === 0)
-                            return (
-                              <span key={c.key} className="text-xs text-ink-faint">
-                                —
-                              </span>
-                            );
-                          return (
-                            <span key={c.key} className="flex flex-wrap gap-1">
-                              {chips.slice(0, 3).map((l) => (
-                                <span
-                                  key={l.id}
-                                  className={`ac-badge px-1.5 py-0 text-[11px] ${LABEL_COLOR_CLASS[l.color] ?? ""}`}
-                                >
-                                  {l.name}
-                                </span>
-                              ))}
-                              {chips.length > 3 && (
-                                <span className="text-[11px] text-ink-faint">+{chips.length - 3}</span>
-                              )}
-                            </span>
-                          );
+                      <ClickToEdit
+                        canEdit={canWrite}
+                        className="min-w-0 flex-1"
+                        display={
+                          <Link
+                            href={`/projects/${store.projectId}/tasks/${task.id}`}
+                            className="truncate text-ink hover:text-primary"
+                            title={task.title}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {task.title}
+                          </Link>
                         }
-                        default:
-                          return null;
-                      }
-                    })}
+                        onCommit={(v) =>
+                          typeof v === "string" && v && void store.updateTaskFields(task.id, { title: v })
+                        }
+                        renderEditor={(commit, close) => (
+                          <TextEditor
+                            initial={task.title}
+                            multiline
+                            onSubmit={(v) => commit(v)}
+                            onClose={close}
+                          />
+                        )}
+                      />
+                    </div>
+                    {visibleNative.map((c) => (
+                      <div key={c.key} className="relative min-w-0 py-1">
+                        <NativeCell task={task} column={c.key} />
+                      </div>
+                    ))}
                     {visibleProps.map((d) => (
-                      <PropCell key={d.id} defId={d.id} value={task.properties?.[d.id]} />
+                      <div key={d.id} className="relative min-w-0 py-1">
+                        <PropCell task={task} defId={d.id} />
+                      </div>
                     ))}
                   </div>
                   {open &&
@@ -337,7 +581,7 @@ export function TableTaskView({ config, onChangeConfig }: { config: TaskViewConf
                           </span>
                         ))}
                         {visibleProps.map((d) => (
-                          <PropCell key={d.id} defId={d.id} value={sub.properties?.[d.id]} />
+                          <PropDisplay key={d.id} defId={d.id} value={sub.properties?.[d.id]} />
                         ))}
                       </div>
                     ))}
@@ -346,6 +590,15 @@ export function TableTaskView({ config, onChangeConfig }: { config: TaskViewConf
             })}
           </div>
         </div>
+      )}
+
+      {completionTask && (
+        <CompletionRequestModal
+          taskId={completionTask.id}
+          projectId={store.projectId}
+          taskTitle={completionTask.title}
+          onClose={() => setCompletionTask(null)}
+        />
       )}
     </div>
   );

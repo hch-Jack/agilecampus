@@ -156,6 +156,51 @@ export async function moveTaskAction(input: {
   return null;
 }
 
+// 任务数据库表格行内编辑的原生字段通道（PR2b）：不含 status——状态变更走
+// moveTaskAction（保留撤回完成申请等拖拽语义），审批拦截在 lib/updateTask 不受影响。
+// 字段补丁 schema（taskId/projectId 在外层 input 上，不进 patch）
+const updateTaskFieldSchema = z.object({
+  title: z.string().trim().min(1, "请填写任务标题").optional(),
+  description: z.string().nullable().optional(),
+  assigneeId: z.uuid().nullable().optional(),
+  milestoneId: z.uuid().nullable().optional(),
+  priority: z.enum(["low", "medium", "high"]).optional(),
+  startDate: z.iso.date("日期格式不正确").nullable().optional(),
+  dueDate: z.iso.date("日期格式不正确").nullable().optional(),
+  // 全量替换语义（同编辑表单）：空数组 = 清空全部标签
+  labelIds: z.array(z.uuid()).optional(),
+});
+
+export async function updateTaskFieldAction(input: {
+  taskId: string;
+  projectId: string;
+  patch: z.infer<typeof updateTaskFieldSchema>;
+}): Promise<FormState> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+  const parsed = updateTaskFieldSchema.safeParse(input.patch);
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+  if (!z.uuid().safeParse(input.taskId).success || !z.uuid().safeParse(input.projectId).success)
+    return { error: "参数无效" };
+
+  const { labelIds, ...patch } = parsed.data;
+  // 空补丁无事可做（含仅空标签数组 = 清空标签，仍属有效操作）
+  if (Object.keys(patch).length === 0 && labelIds === undefined) return { error: "参数无效" };
+
+  try {
+    await updateTask(session.user.id, input.taskId, patch);
+    if (labelIds !== undefined) {
+      await setTaskLabels(session.user.id, input.taskId, labelIds);
+    }
+  } catch (e) {
+    if (e instanceof AppError) return { error: e.message };
+    throw e;
+  }
+  revalidatePath(`/projects/${input.projectId}`);
+  revalidatePath(`/projects/${input.projectId}/tasks/${input.taskId}`);
+  return null;
+}
+
 // 个人任务计划段：日历里给自己排「打算什么时候做这任务」，可多段（区间或单天）。
 // 注意这不是改任务官方起止日——任务排期不动，这里只动个人记录。
 /** 色板键（含历史键）或自定义 #rrggbb —— 与存储层的判定共用一份实现 */

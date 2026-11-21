@@ -250,7 +250,7 @@ export default async function ProjectPage({
         />
       </section>
 
-      {/* 任务数据库：Notion 式多视图（表格 + 视图持久化 + 按类型筛选/排序），PR3/PR4 接入看板/时间线 */}
+      {/* 任务数据库：Notion 式多视图（表格行内编辑 + 视图持久化 + 按类型筛选/排序），PR3/PR4 接入看板/时间线 */}
       <TaskDatabaseModule
         projectId={projectId}
         tasks={projectTasks}
@@ -260,6 +260,7 @@ export default async function ProjectPage({
         milestones={projectMilestones.map((m) => ({ id: m.id, title: m.title }))}
         labels={teamLabels.map((l) => ({ id: l.id, name: l.name, color: l.color }))}
         canWrite={canWrite}
+        viewerRole={role}
       />
 
       {/* 新建任务与附件中心并排一行：任务卡收窄，附件中心做固定宽度的入口卡 */}

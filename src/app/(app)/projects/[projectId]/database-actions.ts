@@ -139,6 +139,7 @@ export async function setTaskPropertiesAction(input: unknown): Promise<PropsResu
   try {
     const properties = await setTaskProperties(session.user.id, parsed.data.taskId, parsed.data.values);
     revalidatePath(`/projects/${parsed.data.projectId}`);
+    revalidatePath(`/projects/${parsed.data.projectId}/tasks/${parsed.data.taskId}`);
     return { ok: true, properties };
   } catch (e) {
     if (e instanceof AppError) return { error: e.message };
