@@ -4,6 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { createTask, updateTask, setTaskSuccessors } from "@/lib/task";
+import { setTaskProperties } from "@/lib/properties";
 import {
   addTaskPlanSegment,
   clearTaskPlan,
@@ -103,13 +104,18 @@ export async function createMilestoneAction(
   return null;
 }
 
-// 拖拽可改的字段白名单。校验与授权仍全数落在 updateTask
-//（指派人须属团队、里程碑须属项目、起止日须落在项目周期内且起≤止），故此处只做形状校验。
+// 拖拽可改的字段白名单。校验与授权仍全数落在 updateTask / setTaskProperties
+//（指派人须属团队、里程碑须属项目、起止日须落在项目周期内且起≤止、属性值按类型校验），故此处只做形状校验。
 const movePatchSchema = z.object({
   status: z.enum(["todo", "doing", "done"]).optional(),
   assigneeId: z.uuid().nullable().optional(),
   priority: z.enum(["low", "medium", "high"]).optional(),
   milestoneId: z.uuid().nullable().optional(),
+  // 时间线视图拖拽改期走同一通道
+  startDate: z.iso.date("日期格式不正确").nullable().optional(),
+  dueDate: z.iso.date("日期格式不正确").nullable().optional(),
+  // 任务数据库自定义属性补丁（键=属性 id，null/空=清值）；键级合并与校验在 lib/properties
+  propValues: z.record(z.uuid(), z.unknown()).optional(),
 });
 
 const moveTaskSchema = z.object({
@@ -132,11 +138,16 @@ export async function moveTaskAction(input: {
   if (Object.keys(parsed.data.patch).length === 0) return { error: "参数无效" };
 
   try {
+    // 自定义属性不在 updateTask 白名单内（防越权设计），单独走键级合并
+    const { propValues, ...nativePatch } = parsed.data.patch;
     // 落列即表态：拖回待办/进行中 = 撤回完成申请。待审批卡的原状态可能恰是目标状态，
     // 光靠「status 有变化」判断撤不干净，故显式带上 withdrawPending。
-    await updateTask(session.user.id, parsed.data.taskId, parsed.data.patch, {
+    await updateTask(session.user.id, parsed.data.taskId, nativePatch, {
       withdrawPending: true,
     });
+    if (propValues && Object.keys(propValues).length > 0) {
+      await setTaskProperties(session.user.id, parsed.data.taskId, propValues);
+    }
   } catch (e) {
     if (e instanceof AppError) return { error: e.message };
     throw e;

@@ -10,6 +10,10 @@ export type { TaskPriority, TaskStatus };
 export const TASK_STATUSES = ["todo", "doing", "done"] as const satisfies readonly TaskStatus[];
 export const TASK_PRIORITIES = ["low", "medium", "high"] as const satisfies readonly TaskPriority[];
 
+// 任务写操作角色（requireTaskWrite 口径）：admin/student 可写，teacher 只读。
+// 任务属性/视图等数据库配置的写权限沿用同一口径，故提到这里共用。
+export const TASK_WRITE_ROLES: readonly string[] = ["admin", "student"];
+
 // 中文文案（动态流 diff、下拉选项、提示语用）。键序即展示序：todo→doing→done、low→medium→high
 export const STATUS_TEXT: Record<string, string> = { todo: "待办", doing: "进行中", done: "已完成" };
 export const PRIORITY_TEXT: Record<string, string> = { low: "低", medium: "中", high: "高" };

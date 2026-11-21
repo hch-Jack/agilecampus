@@ -358,6 +358,10 @@ export const tasks = pgTable(
     title: text("title").notNull(),
     description: text("description"),
     completionNote: text("completion_note"),
+    // 任务数据库自定义属性值：Record<属性id, 值>，定义在 database_properties。
+    // 校验与 jsonb 键级合并收口在 lib/properties.ts；NULL = 从未写过自定义值。
+    // 只标键→unknown 的宽松形状：值按属性类型各异（字符串/数字/选项id/数组…），校验在 lib
+    properties: jsonb("properties").$type<Record<string, unknown>>(),
     assigneeId: uuid("assignee_id").references(() => users.id, {
       onDelete: "set null",
     }),
@@ -918,4 +922,66 @@ export const taskPlans = pgTable(
     ),
     index("task_plans_user_idx").on(t.userId),
   ],
+);
+
+// ------------------------------------------------------- 任务数据库（Notion 化）
+
+// 自定义属性类型。"person" = 人员，值是团队成员 userId（v1 单人）
+export const propertyTypeEnum = pgEnum("property_type", [
+  "text",
+  "number",
+  "select",
+  "multi_select",
+  "date",
+  "person",
+  "checkbox",
+]);
+export type PropertyType = (typeof propertyTypeEnum.enumValues)[number];
+
+// 单选/多选选项：id 稳定（改名换色不变 id），color 取 lib/board-columns 的 LABEL_COLORS 键
+export type PropertyOption = { id: string; name: string; color: string };
+
+// 视图种类（人物库已取消，无 cards）
+export const viewKindEnum = pgEnum("view_kind", ["table", "board", "timeline"]);
+export type ViewKind = (typeof viewKindEnum.enumValues)[number];
+
+// 属性定义：每个项目一份。值本体不在此表——以 properties JSONB 存在 tasks 行上（键=属性 id）。
+// 删属性/删选项时由 lib/properties.ts 事务剥离任务上已存的值。
+export const databaseProperties = pgTable(
+  "database_properties",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    type: propertyTypeEnum("type").notNull(),
+    // 仅 select/multi_select 使用；其他类型为 null
+    options: jsonb("options").$type<PropertyOption[]>(),
+    position: doublePrecision("position").notNull().default(0),
+    createdAt: dbTimestampNow("created_at").notNull(),
+    updatedAt: dbTimestampNow("updated_at").notNull(),
+  },
+  (t) => [index("database_properties_project_idx").on(t.projectId)],
+);
+
+// 视图配置：项目共享（D3）。config 结构属应用层，读写收口在 lib/database-views.ts（同
+// dashboardLayout 惯例）。无持久视图时前端用派生的内置默认视图（表格/看板/时间线），
+// 首次编辑才落库（D4，零迁移）。视图写权限与任务写一致（admin/student）。
+export const projectViews = pgTable(
+  "project_views",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    kind: viewKindEnum("kind").notNull(),
+    name: text("name").notNull(),
+    config: jsonb("config"),
+    position: doublePrecision("position").notNull().default(0),
+    createdById: uuid("created_by_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: dbTimestampNow("created_at").notNull(),
+    updatedAt: dbTimestampNow("updated_at").notNull(),
+  },
+  (t) => [index("project_views_project_idx").on(t.projectId)],
 );

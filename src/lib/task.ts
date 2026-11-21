@@ -15,15 +15,13 @@ import {
   type TaskStatus,
 } from "@/db/schema";
 import { AppError, ApprovalRequestedError, ForbiddenError } from "./errors";
-import { PRIORITY_TEXT, STATUS_TEXT } from "./task-constants";
+import { PRIORITY_TEXT, STATUS_TEXT, TASK_WRITE_ROLES } from "./task-constants";
+import { resolveTaskPropertyValues, applyTaskProperties } from "./properties";
 import { getTeamMembership } from "./team";
 import { getProjectForUser, validateDateRange } from "./project";
 import { notifyTaskAssigned, notifyTaskCompleted } from "./notify";
 import { recordTaskActivity } from "./activity";
 import { requestTaskCompletion, withdrawTaskApprovals } from "./approval";
-
-// 任务写操作角色：admin + student（teacher 只读，设计文档 §5）
-const TASK_WRITE_ROLES = ["admin", "student"];
 
 // 动态值统一截断，空值归一为「无」
 function activityText(v: string | null | undefined, fallback = "无") {
@@ -109,6 +107,8 @@ export async function createTask(
     parentTaskId?: string;
     /** 完成是否需要审批；缺省 true（沿用既有审批口径） */
     requireApproval?: boolean;
+    /** 任务数据库自定义属性初始值（键=属性 id）。校验/合并收口在 lib/properties.ts */
+    properties?: Record<string, unknown>;
   },
   opts?: { tx?: DbTx },
 ) {
@@ -118,6 +118,11 @@ export async function createTask(
   if (input.milestoneId) await validateMilestone(projectId, input.milestoneId);
   if (input.parentTaskId) await validateParentTask(projectId, input.parentTaskId);
   validateTaskDates(access.project, input.startDate, input.dueDate);
+  // 属性值在建任务前先校验：非法值整个 createTask 报错，不留半截任务
+  const resolvedProps =
+    input.properties && Object.keys(input.properties).length > 0
+      ? await resolveTaskPropertyValues(projectId, access.project.teamId, input.properties)
+      : null;
 
   const [task] = await exec
     .insert(tasks)
@@ -139,6 +144,9 @@ export async function createTask(
 
   // 动态：创建记录（传入事务 exec 时同事务写入）
   await recordTaskActivity(exec, [{ taskId: task.id, actorId, type: "created" }]);
+
+  // 自定义属性初始值：建任务后键级合并（初始值不记动态，创建记录已覆盖）
+  if (resolvedProps) await applyTaskProperties(exec, task.id, resolvedProps);
 
   // 非事务路径：即时通知（fire-and-forget，通知内部已吞异常）。事务路径由调用方提交后补发。
   if (!opts?.tx && task.assigneeId) void notifyTaskAssigned(task);
@@ -403,6 +411,7 @@ export async function listProjectTasks(actorId: string, projectId: string) {
       updatedAt: tasks.updatedAt,
       completionNote: tasks.completionNote,
       requireApproval: tasks.requireApproval,
+      properties: tasks.properties,
     })
     .from(tasks)
     .leftJoin(users, eq(tasks.assigneeId, users.id))
