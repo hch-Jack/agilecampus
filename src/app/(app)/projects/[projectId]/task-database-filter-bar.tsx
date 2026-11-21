@@ -1,297 +1,296 @@
 "use client";
 
-// 任务数据库（只读总览表）的筛选条：条件写入 URL 的 dbf 参数（JSON 编码），
-// 与看板筛选（assignee/priority/... 各自参数）共存于同一条 URL——更新时只动 dbf 键。
-// 服务端 applyDbFilters 按 URL 过滤（刷新/分享保持），本组件只负责编辑与跳转。
+// 任务数据库（只读总览表）的筛选条：与看板 FilterBar 同款的点选式 chips——
+// 每个维度一排可点选的值（点「张三」只看张三的任务，再点取消），多选=任一命中。
+// 条件写入 URL 的 dbf 参数（JSON 编码），与看板筛选参数共存同一条 URL（只动 dbf 键）。
 import { useMemo } from "react";
-import type { PropertyType } from "@/db/schema";
-import { LABEL_COLOR_CLASS } from "@/lib/board-columns";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { PRIORITY_TEXT, STATUS_TEXT } from "@/lib/task-constants";
 import {
-  DB_FILTER_PARAM,
-  DB_OP_LABELS,
-  dbFieldMeta,
-  opsForDbKind,
+  EMPTY_DB_FILTERS,
   parseDbFilters,
   serializeDbFilters,
-  type DbFilterClause,
-  type DbFilterContext,
-  type DbFilterOp,
+  type DbFilters,
 } from "@/lib/task-database-filters";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-
-const FIELD_LABELS: Record<string, string> = {
-  title: "任务",
-  status: "状态",
-  priority: "优先级",
-  assignee: "负责人",
-  milestone: "里程碑",
-  label: "标签",
-  startDate: "开始日",
-  dueDate: "截止日",
-};
 
 type Choice = { id: string; name: string; color?: string };
+
+function Group({ name, children }: { name: string; children: React.ReactNode }) {
+  return (
+    <span className="flex flex-wrap items-center gap-1.5">
+      <span className="text-xs font-medium text-ink-soft">{name}</span>
+      {children}
+    </span>
+  );
+}
+
+function Chip({
+  on,
+  onClick,
+  children,
+}: {
+  on: boolean;
+  onClick(): void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full border px-2.5 py-0.5 text-xs transition-colors ${
+        on
+          ? "border-primary bg-primary-soft text-primary"
+          : "border-line bg-surface text-ink-soft hover:border-primary/50 hover:text-primary"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
 
 export function TaskDatabaseFilterBar({
   defs,
   members,
   milestones,
+  labels,
 }: {
-  defs: { id: string; name: string; type: string; options: { id: string; name: string; color: string }[] | null }[];
+  defs: {
+    id: string;
+    name: string;
+    type: string;
+    options: { id: string; name: string; color: string }[] | null;
+  }[];
   members: { id: string; name: string }[];
   milestones: { id: string; title: string }[];
+  labels: { id: string; name: string; color: string }[];
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const clauses = useMemo(() => parseDbFilters(searchParams.get("dbf")), [searchParams]);
+  const filters = useMemo(() => parseDbFilters(searchParams.get("dbf")), [searchParams]);
 
-  const ctx = useMemo<DbFilterContext>(
-    () => ({
-      defs: new Map(
-        defs.map((d) => [
-          d.id,
-          { type: d.type as PropertyType, optionIds: (d.options ?? []).map((o) => o.id) },
-        ]),
-      ),
-      milestoneOrder: new Map(milestones.map((m, i) => [m.id, i])),
-      members: new Map(members.map((m) => [m.id, m.name])),
-    }),
-    [defs, members, milestones],
-  );
-
-  function push(next: DbFilterClause[]) {
+  function push(next: DbFilters) {
     const params = new URLSearchParams(searchParams.toString());
     const serialized = serializeDbFilters(next);
-    if (serialized) params.set(DB_FILTER_PARAM, encodeURIComponent(serialized));
-    else params.delete(DB_FILTER_PARAM);
+    if (serialized) params.set("dbf", encodeURIComponent(serialized));
+    else params.delete("dbf");
     const qs = params.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   }
 
-  const choicesFor = (field: string): Choice[] => {
-    if (field === "status")
-      return ["todo", "doing", "done"].map((s) => ({ id: s, name: STATUS_TEXT[s] ?? s }));
-    if (field === "priority")
-      return ["high", "medium", "low"].map((p) => ({ id: p, name: PRIORITY_TEXT[p] ?? p }));
-    if (field === "assignee") return members.map((m) => ({ id: m.id, name: m.name }));
-    if (field === "milestone") return milestones.map((m) => ({ id: m.id, name: m.title }));
-    if (field === "label") return [];
-    if (field.startsWith("prop:")) {
-      const def = defs.find((d) => d.id === field.slice(5));
-      if (!def) return [];
-      if (def.type === "select" || def.type === "multi_select")
-        return (def.options ?? []).map((o) => ({ id: o.id, name: o.name, color: o.color }));
-      if (def.type === "person") return members.map((m) => ({ id: m.id, name: m.name }));
-    }
-    return [];
+  const dirty =
+    filters.status.length > 0 ||
+    filters.assignee.length > 0 ||
+    filters.priority.length > 0 ||
+    filters.label.length > 0 ||
+    filters.milestone.length > 0 ||
+    filters.overdue ||
+    Object.values(filters.props).some((v) => v.length > 0);
+
+  const memberChoices = members.map((m) => ({ id: m.id, name: m.name }));
+  const milestoneChoices = [
+    ...milestones.map((m) => ({ id: m.id, name: m.title })),
+    { id: "none", name: "无里程碑" },
+  ];
+  const statusChoices = (["todo", "doing", "done"] as const).map((s) => ({
+    id: s,
+    name: STATUS_TEXT[s] ?? s,
+  }));
+  const priorityChoices = (["high", "medium", "low"] as const).map((p) => ({
+    id: p,
+    name: PRIORITY_TEXT[p] ?? p,
+  }));
+
+  /** 点选自定义属性的一个值（toggle） */
+  const toggleProp = (defId: string, value: string) => {
+    const cur = filters.props[defId] ?? [];
+    const next = cur.includes(value) ? cur.filter((x) => x !== value) : [...cur, value];
+    const props = { ...filters.props };
+    if (next.length) props[defId] = next;
+    else delete props[defId];
+    push({ ...filters, props });
   };
 
-  const fieldLabel = (field: string) =>
-    field.startsWith("prop:")
-      ? (defs.find((d) => d.id === field.slice(5))?.name ?? "已删属性")
-      : (FIELD_LABELS[field] ?? field);
-
-  const addFilter = (field: string) => {
-    const meta = dbFieldMeta(field, ctx);
-    if (!meta) return;
-    const ops = opsForDbKind(meta.kind);
-    const clause: DbFilterClause = { field, op: ops[0] };
-    if (ops[0] === "in" || ops[0] === "hasAny") clause.value = [];
-    push([...clauses, clause].slice(0, 10));
-  };
-  const patchClause = (index: number, patch: Partial<DbFilterClause>) => {
-    push(clauses.map((c, i) => (i === index ? { ...c, ...patch } : c)));
-  };
-
-  function ValueEditor({ clause, onChange }: { clause: DbFilterClause; onChange(value: unknown): void }) {
-    const meta = dbFieldMeta(clause.field, ctx);
-    if (!meta) return null;
-    const op = clause.op as DbFilterOp;
-    const NO_VALUE: DbFilterOp[] = ["isEmpty", "isNotEmpty", "isTrue", "isFalse"];
-    if (NO_VALUE.includes(op)) return null;
-
-    const choices = choicesFor(clause.field);
-    const selected = Array.isArray(clause.value) ? (clause.value as string[]) : [];
-    const toggle = (id: string) =>
-      onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
-
-    if (
-      meta.kind === "enum" ||
-      meta.kind === "multi" ||
-      (meta.kind === "select" && op !== "isEmpty" && op !== "isNotEmpty") ||
-      (meta.kind === "person" && (op === "in" || op === "notIn"))
-    ) {
-      const label =
-        selected.length === 0
-          ? "选择…"
-          : selected.length <= 2
-            ? choices
-                .filter((c) => selected.includes(c.id))
-                .map((c) => c.name)
-                .join("、")
-            : `${selected.length} 项`;
+  function PropGroup({
+    def,
+  }: {
+    def: { id: string; name: string; type: string; options: { id: string; name: string; color: string }[] | null };
+  }) {
+    const values = filters.props[def.id] ?? [];
+    if (def.type === "select") {
+      const choices: Choice[] = [
+        ...(def.options ?? []).map((o) => ({ id: o.id, name: o.name, color: o.color })),
+        { id: "none", name: "未设置" },
+      ];
+      if ((def.options ?? []).length === 0) return null;
       return (
-        <details className="relative">
-          <summary className="ac-btn-ghost cursor-pointer list-none whitespace-nowrap px-2 py-0.5 text-xs">
-            {label}
-          </summary>
-          <div className="absolute left-0 top-full z-30 mt-1 max-h-64 w-44 overflow-auto rounded-lg border border-line bg-surface p-1 shadow-lg">
-            {choices.length === 0 && (
-              <p className="px-2 py-1.5 text-xs text-ink-faint">暂无可选项</p>
-            )}
-            {choices.map((c) => (
-              <label
-                key={c.id}
-                className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs text-ink hover:bg-sunken"
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.includes(c.id)}
-                  onChange={() => toggle(c.id)}
-                  className="accent-primary"
-                />
-                {c.color && (
-                  <span className={`ac-badge px-1.5 py-0 text-[11px] ${LABEL_COLOR_CLASS[c.color] ?? ""}`}>
-                    {c.name}
-                  </span>
-                )}
-                {!c.color && <span className="truncate">{c.name}</span>}
-              </label>
-            ))}
-          </div>
-        </details>
+        <Group name={def.name}>
+          {choices.map((c) => (
+            <Chip key={c.id} on={values.includes(c.id)} onClick={() => toggleProp(def.id, c.id)}>
+              {c.name}
+            </Chip>
+          ))}
+        </Group>
       );
     }
-
-    if (meta.kind === "text" && (op === "contains" || op === "notContains")) {
+    if (def.type === "multi_select") {
+      if ((def.options ?? []).length === 0) return null;
       return (
-        <input
-          value={typeof clause.value === "string" ? clause.value : ""}
-          onChange={(e) => onChange(e.target.value || undefined)}
-          placeholder="关键字"
-          className="ac-field w-28 px-1.5 py-0.5 text-xs"
-        />
+        <Group name={def.name}>
+          {(def.options ?? []).map((o) => (
+            <Chip key={o.id} on={values.includes(o.id)} onClick={() => toggleProp(def.id, o.id)}>
+              {o.name}
+            </Chip>
+          ))}
+        </Group>
       );
     }
-    if (meta.kind === "number") {
+    if (def.type === "person") {
       return (
-        <input
-          type="number"
-          value={typeof clause.value === "number" ? clause.value : ""}
-          onChange={(e) => onChange(e.target.value === "" ? undefined : Number(e.target.value))}
-          className="ac-field w-20 px-1.5 py-0.5 text-xs"
-        />
+        <Group name={def.name}>
+          {[...memberChoices, { id: "none", name: "未设置" }].map((c) => (
+            <Chip key={c.id} on={values.includes(c.id)} onClick={() => toggleProp(def.id, c.id)}>
+              {c.name}
+            </Chip>
+          ))}
+        </Group>
       );
     }
-    if (meta.kind === "date") {
+    if (def.type === "checkbox") {
       return (
-        <input
-          type="date"
-          value={typeof clause.value === "string" ? clause.value : ""}
-          onChange={(e) => onChange(e.target.value || undefined)}
-          className="ac-field px-1.5 py-0.5 text-xs"
-        />
+        <Group name={def.name}>
+          <Chip on={values.includes("checked")} onClick={() => toggleProp(def.id, "checked")}>
+            已勾选
+          </Chip>
+          <Chip on={values.includes("unchecked")} onClick={() => toggleProp(def.id, "unchecked")}>
+            未勾选
+          </Chip>
+        </Group>
       );
     }
-    return null;
+    return null; // text/number/date 不做点选筛选
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-line bg-sunken px-3 py-2 text-sm">
-      <details className="relative">
-        <summary className="ac-btn-ghost cursor-pointer list-none whitespace-nowrap px-2 py-0.5 text-xs">
-          筛选{clauses.length > 0 && ` (${clauses.length})`} +
-        </summary>
-        <div className="absolute left-0 top-full z-30 mt-1 max-h-72 w-40 overflow-auto rounded-lg border border-line bg-surface p-1 shadow-lg">
-          {Object.entries(FIELD_LABELS).map(([field, label]) => (
-            <button
-              key={field}
-              type="button"
-              onClick={() => addFilter(field)}
-              className="block w-full rounded px-2 py-1 text-left text-xs text-ink hover:bg-sunken"
+    <div className="space-y-2 rounded-xl border border-line bg-sunken p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <Group name="状态">
+          {statusChoices.map((c) => (
+            <Chip
+              key={c.id}
+              on={filters.status.includes(c.id)}
+              onClick={() =>
+                push({
+                  ...filters,
+                  status: filters.status.includes(c.id)
+                    ? filters.status.filter((x) => x !== c.id)
+                    : [...filters.status, c.id],
+                })
+              }
             >
-              {label}
-            </button>
+              {c.name}
+            </Chip>
           ))}
-          {defs.length > 0 && (
-            <p className="mt-1 border-t border-line px-2 pt-1 text-[11px] text-ink-faint">自定义属性</p>
-          )}
-          {defs.map((d) => (
-            <button
-              key={d.id}
-              type="button"
-              onClick={() => addFilter(`prop:${d.id}`)}
-              className="block w-full rounded px-2 py-1 text-left text-xs text-ink hover:bg-sunken"
-            >
-              {d.name}
-            </button>
-          ))}
-        </div>
-      </details>
+        </Group>
 
-      {clauses.map((clause, index) => {
-        const meta = dbFieldMeta(clause.field, ctx);
-        return (
-          <span
-            key={`${clause.field}:${clause.op}:${index}`}
-            className="inline-flex flex-wrap items-center gap-1 rounded-lg border border-line bg-surface px-1.5 py-0.5 text-xs"
-          >
-            <details className="relative">
-              <summary className="cursor-pointer list-none whitespace-nowrap px-1 text-ink-soft hover:text-primary">
-                {fieldLabel(clause.field)} ▾
-              </summary>
-              <div className="absolute left-0 top-full z-30 mt-1 max-h-72 w-40 overflow-auto rounded-lg border border-line bg-surface p-1 shadow-lg">
-                {Object.entries(FIELD_LABELS).map(([field, label]) => (
-                  <button
-                    key={field}
-                    type="button"
-                    onClick={() => patchClause(index, { field, op: opsForDbKind(dbFieldMeta(field, ctx)?.kind ?? "text")[0], value: undefined })}
-                    className="block w-full rounded px-2 py-1 text-left text-xs text-ink hover:bg-sunken"
-                  >
-                    {label}
-                  </button>
-                ))}
-                {defs.map((d) => (
-                  <button
-                    key={d.id}
-                    type="button"
-                    onClick={() =>
-                      patchClause(index, { field: `prop:${d.id}`, op: opsForDbKind(dbFieldMeta(`prop:${d.id}`, ctx)?.kind ?? "text")[0], value: undefined })
-                    }
-                    className="block w-full rounded px-2 py-1 text-left text-xs text-ink hover:bg-sunken"
-                  >
-                    {d.name}
-                  </button>
-                ))}
-              </div>
-            </details>
-            {meta && (
-              <select
-                value={clause.op}
-                onChange={(e) => patchClause(index, { op: e.target.value, value: undefined })}
-                className="ac-field w-auto px-1.5 py-0.5 text-xs"
-              >
-                {opsForDbKind(meta.kind).map((op) => (
-                  <option key={op} value={op}>
-                    {DB_OP_LABELS[op]}
-                  </option>
-                ))}
-              </select>
-            )}
-            <ValueEditor clause={clause} onChange={(value) => patchClause(index, { value })} />
-            <button
-              type="button"
-              onClick={() => push(clauses.filter((_, i) => i !== index))}
-              className="px-1 text-ink-faint hover:text-high"
-              aria-label="删除筛选条件"
+        <Group name="负责人">
+          {[...memberChoices, { id: "none", name: "未指派" }].map((m) => (
+            <Chip
+              key={m.id}
+              on={filters.assignee.includes(m.id)}
+              onClick={() =>
+                push({
+                  ...filters,
+                  assignee: filters.assignee.includes(m.id)
+                    ? filters.assignee.filter((x) => x !== m.id)
+                    : [...filters.assignee, m.id],
+                })
+              }
             >
-              ×
-            </button>
-          </span>
-        );
-      })}
+              {m.name}
+            </Chip>
+          ))}
+        </Group>
+
+        <Group name="优先级">
+          {priorityChoices.map((p) => (
+            <Chip
+              key={p.id}
+              on={filters.priority.includes(p.id)}
+              onClick={() =>
+                push({
+                  ...filters,
+                  priority: filters.priority.includes(p.id)
+                    ? filters.priority.filter((x) => x !== p.id)
+                    : [...filters.priority, p.id],
+                })
+              }
+            >
+              {p.name}
+            </Chip>
+          ))}
+        </Group>
+
+        {labels.length > 0 && (
+          <Group name="标签">
+            {labels.map((l) => (
+              <Chip
+                key={l.id}
+                on={filters.label.includes(l.id)}
+                onClick={() =>
+                  push({
+                    ...filters,
+                    label: filters.label.includes(l.id)
+                      ? filters.label.filter((x) => x !== l.id)
+                      : [...filters.label, l.id],
+                  })
+                }
+              >
+                {l.name}
+              </Chip>
+            ))}
+          </Group>
+        )}
+
+        {milestones.length > 0 && (
+          <Group name="里程碑">
+            {milestoneChoices.map((m) => (
+              <Chip
+                key={m.id}
+                on={filters.milestone.includes(m.id)}
+                onClick={() =>
+                  push({
+                    ...filters,
+                    milestone: filters.milestone.includes(m.id)
+                      ? filters.milestone.filter((x) => x !== m.id)
+                      : [...filters.milestone, m.id],
+                  })
+                }
+              >
+                {m.name}
+              </Chip>
+            ))}
+          </Group>
+        )}
+
+        <Chip on={filters.overdue} onClick={() => push({ ...filters, overdue: !filters.overdue })}>
+          仅看逾期
+        </Chip>
+
+        {dirty && (
+          <button
+            type="button"
+            onClick={() => push(EMPTY_DB_FILTERS)}
+            className="text-xs text-ink-faint hover:text-high"
+          >
+            清除筛选
+          </button>
+        )}
+      </div>
+
+      {defs.map((d) => (
+        <PropGroup key={d.id} def={d} />
+      ))}
     </div>
   );
 }
