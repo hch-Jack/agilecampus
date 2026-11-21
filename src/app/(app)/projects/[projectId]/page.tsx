@@ -15,6 +15,8 @@ import {
 } from "@/lib/approval";
 import { getMyPermissions } from "@/lib/team-permissions";
 import { countProjectAttachments } from "@/lib/attachment";
+import { listPropertyDefs } from "@/lib/properties";
+import { parseDbFilters, applyDbFilters } from "@/lib/task-database-filters";
 import { AcceptanceControl } from "./acceptance-control";
 import { parseFilters, applyFilters } from "@/lib/board-filters";
 import { todayIn } from "@/lib/time";
@@ -24,6 +26,7 @@ import { MilestoneSection } from "./milestone-section";
 import { NewTaskForm } from "./new-task-form";
 import { ProjectOverview } from "./project-overview";
 import { TaskDatabase } from "./task-database";
+import { TaskDatabaseFilterBar } from "./task-database-filter-bar";
 import { Board } from "./board";
 import { FilterBar } from "./filter-bar";
 import { ProjectCommentList } from "./project-comment-list";
@@ -54,6 +57,7 @@ export default async function ProjectPage({
     teamLabels,
     projectBoardComments,
     attachmentCount,
+    propertyDefs,
   ] = await Promise.all([
     listProjectMilestones(session.user.id, projectId),
     listProjectTasks(session.user.id, projectId),
@@ -63,7 +67,25 @@ export default async function ProjectPage({
     listTeamLabels(session.user.id, project.teamId),
     listProjectBoardComments(session.user.id, projectId),
     countProjectAttachments(projectId),
+    listPropertyDefs(session.user.id, projectId),
   ]);
+
+  // 任务数据库（只读总览表）的按类型筛选：URL dbf 参数 → 子句 → 内存过滤
+  const dbClauses = parseDbFilters(typeof sp.dbf === "string" ? sp.dbf : null);
+  const dbTasks = applyDbFilters(
+    projectTasks,
+    dbClauses,
+    {
+      defs: new Map(
+        propertyDefs.map((d) => [
+          d.id,
+          { type: d.type, optionIds: (d.options ?? []).map((o) => o.id) },
+        ]),
+      ),
+      milestoneOrder: new Map(projectMilestones.map((m, i) => [m.id, i])),
+      members: new Map(members.map((m) => [m.id, m.name])),
+    },
+  );
 
   const filters = parseFilters(
     new URLSearchParams(
@@ -245,12 +267,26 @@ export default async function ProjectPage({
       </section>
 
       {/* 任务数据库：Notion 数据库式的任务总览（只读，操作在看板/详情页） */}
-      <TaskDatabase
-        projectId={projectId}
-        tasks={projectTasks}
-        milestones={projectMilestones.map((m) => ({ id: m.id, title: m.title }))}
-        progress={progress}
-      />
+      {/* 任务数据库：Notion 式只读总览表 + 按类型筛选（URL dbf 参数，服务端过滤） */}
+      <section className="space-y-2">
+        <TaskDatabaseFilterBar
+          defs={propertyDefs.map((d) => ({
+            id: d.id,
+            name: d.name,
+            type: d.type,
+            options: d.options,
+          }))}
+          members={members.map((m) => ({ id: m.id, name: m.name }))}
+          milestones={projectMilestones.map((m) => ({ id: m.id, title: m.title }))}
+        />
+        <TaskDatabase
+          projectId={projectId}
+          tasks={dbTasks}
+          milestones={projectMilestones.map((m) => ({ id: m.id, title: m.title }))}
+          progress={progress}
+          total={projectTasks.length}
+        />
+      </section>
 
       {/* 新建任务与附件中心并排一行：任务卡收窄，附件中心做固定宽度的入口卡 */}
       <div
