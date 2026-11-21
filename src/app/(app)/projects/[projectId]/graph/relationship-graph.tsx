@@ -7,6 +7,7 @@ import {
   formatMonthDay,
   parseDay,
 } from "@/lib/gantt";
+import { STATUS_TEXT } from "@/lib/task-constants";
 import {
   BAR_HEIGHT,
   BAR_MIN_WIDTH_PX,
@@ -38,11 +39,6 @@ const STATUS_BAR: Record<string, string> = {
   todo: "bg-todo",
   doing: "bg-doing",
   done: "bg-done",
-};
-const STATUS_TEXT: Record<string, string> = {
-  todo: "待办",
-  doing: "进行中",
-  done: "已完成",
 };
 // 左侧标题列固定宽度，与 lineLeft / SVG 覆盖层的偏移保持一致（w-56 = 14rem）
 const LABEL_WIDTH_REM = 14;

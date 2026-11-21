@@ -8,28 +8,7 @@ import {
   deleteSubtaskAction,
   type FormState,
 } from "./actions";
-
-// 状态徽章配色（软色 token 只有优先级有，状态用 /10 透明度，同完成情况块先例）。
-// 导出供详情页 page.tsx 复用，保证两处徽章视觉一致。
-export const STATUS_BADGE: Record<string, string> = {
-  todo: "bg-todo/10 text-todo",
-  doing: "bg-doing/10 text-doing",
-  done: "bg-done/10 text-done",
-};
-
-export const STATUS_LABEL: Record<string, string> = {
-  todo: "待办",
-  doing: "进行中",
-  done: "已完成",
-};
-
-// 与 task-card.tsx / 详情页顶部共用同一组优先级软色（本地复制，避免跨页依赖）
-const PRIORITY_BADGE: Record<string, string> = {
-  high: "bg-high-soft text-high",
-  medium: "bg-medium-soft text-medium",
-  low: "bg-low-soft text-low",
-};
-const PRIORITY_LABEL: Record<string, string> = { high: "高", medium: "中", low: "低" };
+import { PRIORITY_BADGE, PRIORITY_TEXT, STATUS_BADGE, STATUS_TEXT } from "@/lib/task-constants";
 
 export type SubtaskRowData = {
   id: string;
@@ -138,7 +117,7 @@ function SubtaskRow({
           </form>
         ) : (
           <span className={`ac-badge shrink-0 ${STATUS_BADGE[subtask.status] ?? ""}`}>
-            {STATUS_LABEL[subtask.status] ?? subtask.status}
+            {STATUS_TEXT[subtask.status] ?? subtask.status}
           </span>
         )}
 
@@ -160,7 +139,7 @@ function SubtaskRow({
                 PRIORITY_BADGE[subtask.priority] ?? PRIORITY_BADGE.medium
               }`}
             >
-              {PRIORITY_LABEL[subtask.priority] ?? subtask.priority}
+              {PRIORITY_TEXT[subtask.priority] ?? subtask.priority}
             </span>
           </span>
           <span className="mt-1 block text-xs text-ink-faint">

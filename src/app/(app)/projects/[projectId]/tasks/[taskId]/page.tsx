@@ -15,23 +15,11 @@ import { getFeedUnreadCount, listTaskActivities, taskFeedScope } from "@/lib/act
 import { ActivityFeed } from "@/components/activity-feed";
 import { formatDateTime } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
-import {
-  SubtaskList,
-  STATUS_BADGE,
-  STATUS_LABEL,
-  type SubtaskRowData,
-} from "./subtask-list";
+import { SubtaskList, type SubtaskRowData } from "./subtask-list";
+import { PRIORITY_BADGE, PRIORITY_TEXT, STATUS_BADGE, STATUS_TEXT } from "@/lib/task-constants";
 import { AttachmentList, type AttachmentRowData } from "./attachment-list";
 import { CommentList, type CommentRowData } from "./comment-list";
 import { TaskOverview } from "./task-overview";
-
-// 优先级软色 token（与 task-card.tsx 的 PRIORITY_BADGE 同映射，本地复制以免动共享文件）
-const PRIORITY_BADGE: Record<string, string> = {
-  high: "bg-high-soft text-high",
-  medium: "bg-medium-soft text-medium",
-  low: "bg-low-soft text-low",
-};
-const PRIORITY_LABEL: Record<string, string> = { high: "高", medium: "中", low: "低" };
 
 // 时间一律走 lib/time.ts，按**用户自己的**时区格式化（原来那套手搓的取的是宿主进程时区）
 
@@ -168,10 +156,10 @@ export default async function TaskDetailPage({
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="font-display text-2xl font-semibold text-ink">{task.title}</h1>
           <span className={`ac-badge ${STATUS_BADGE[task.status] ?? ""}`}>
-            {STATUS_LABEL[task.status] ?? task.status}
+            {STATUS_TEXT[task.status] ?? task.status}
           </span>
           <span className={`ac-badge ${PRIORITY_BADGE[task.priority] ?? ""}`}>
-            {PRIORITY_LABEL[task.priority] ?? task.priority}
+            {PRIORITY_TEXT[task.priority] ?? task.priority}
           </span>
         </div>
         <p className="text-xs text-ink-faint">
