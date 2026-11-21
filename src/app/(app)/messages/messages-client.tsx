@@ -1117,7 +1117,7 @@ export function MessagesClient({
         : "";
 
   const sendForm = (
-    <form onSubmit={handleSend} className="shrink-0 border-t border-line p-3">
+    <form onSubmit={handleSend} className="border-t border-line p-3">
       {file && (
         <p className="mb-2 flex items-center gap-2 rounded-field bg-sunken px-2.5 py-1.5 text-xs text-ink-soft">
           <span aria-hidden>📄</span>
@@ -1475,9 +1475,7 @@ export function MessagesClient({
                       >
                         <Avatar name={c.name} className="h-10 w-10 text-base" />
                         <span className="min-w-0 flex-1">
-                          {/* block 而非 inline：truncate 的 overflow:hidden 对 inline 元素不生效，
-                              长群名会溢出压到右侧时间上（DM 行名字在 flex 容器里故无此问题） */}
-                          <span className="block truncate text-sm font-medium text-ink">{c.name}</span>
+                          <span className="truncate text-sm font-medium text-ink">{c.name}</span>
                           <span className="block truncate text-xs text-ink-faint">
                             {c.preview
                               ? `${c.lastMine ? "我：" : c.lastSenderName ? `${c.lastSenderName}：` : ""}${c.preview}`
@@ -1505,7 +1503,7 @@ export function MessagesClient({
         <section className={`min-h-0 flex-col ${selection ? "flex" : "hidden sm:flex"}`}>
           {selection?.kind === "dm" && peer ? (
             <>
-              <header className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-3">
+              <header className="flex items-center gap-2 border-b border-line px-4 py-3">
                 <button
                   type="button"
                   onClick={closePane}
@@ -1515,11 +1513,9 @@ export function MessagesClient({
                   ←
                 </button>
                 <Avatar name={peer.name} url={peer.avatarUrl} className="h-8 w-8" />
-                <span className="min-w-0 truncate text-sm font-semibold text-ink" title={peer.name}>
-                  {peer.name}
-                </span>
+                <span className="text-sm font-semibold text-ink">{peer.name}</span>
                 <IdentityBadge identity={peer.identity} />
-                <span className="ml-auto shrink-0 text-xs text-ink-faint">消息自动留存</span>
+                <span className="ml-auto text-xs text-ink-faint">消息自动留存</span>
               </header>
 
 
@@ -1566,28 +1562,25 @@ export function MessagesClient({
             </>
           ) : selection?.kind === "group" ? (
             <>
-              <header className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-3">
+              <header className="flex items-center gap-2 border-b border-line px-4 py-3">
                 <button
                   type="button"
                   onClick={closePane}
-                  className="shrink-0 text-sm text-ink-soft hover:text-primary sm:hidden"
+                  className="text-sm text-ink-soft hover:text-primary sm:hidden"
                   aria-label="返回消息列表"
                 >
                   ←
                 </button>
-                <Avatar name={group?.name ?? "?"} className="h-8 w-8 shrink-0" />
-                {/* min-w-0 truncate：长群名主动让位，保证右侧按钮完整可见 */}
-                <span className="min-w-0 truncate text-sm font-semibold text-ink" title={group?.name}>
-                  {group?.name ?? "…"}
-                </span>
+                <Avatar name={group?.name ?? "?"} className="h-8 w-8" />
+                <span className="text-sm font-semibold text-ink">{group?.name ?? "…"}</span>
                 {group && (
                   <>
-                    <span className="shrink-0 text-xs text-ink-faint">{group.memberCount} 人</span>
+                    <span className="text-xs text-ink-faint">{group.memberCount} 人</span>
                     {/* 群管理（邀请/踢人/退群/解散）入口：给个明确的按键，别让人靠猜「N 人」找入口 */}
                     <button
                       type="button"
                       onClick={() => setMembersOpen((v) => !v)}
-                      className={`ac-btn-ghost shrink-0 whitespace-nowrap px-2.5 py-1 text-xs ${membersOpen ? "border-primary text-primary" : ""}`}
+                      className={`ac-btn-ghost px-2.5 py-1 text-xs ${membersOpen ? "border-primary text-primary" : ""}`}
                       title="成员与群管理"
                     >
                       群管理
@@ -1595,18 +1588,18 @@ export function MessagesClient({
                     <button
                       type="button"
                       onClick={() => void toggleGroupFiles()}
-                      className={`ac-btn-ghost shrink-0 whitespace-nowrap px-2.5 py-1 text-xs ${groupFilesOpen ? "border-primary text-primary" : ""}`}
+                      className={`ac-btn-ghost px-2.5 py-1 text-xs ${groupFilesOpen ? "border-primary text-primary" : ""}`}
                       title="查看并同步群文件到资源库"
                     >
                       群文件
                     </button>
                   </>
                 )}
-                <span className="ml-auto shrink-0 text-xs text-ink-faint">消息自动留存</span>
+                <span className="ml-auto text-xs text-ink-faint">消息自动留存</span>
               </header>
 
               {membersOpen && group && (
-                <div className="max-h-[46vh] shrink-0 overflow-y-auto border-b border-line p-3">
+                <div className="border-b border-line p-3">
                   <form onSubmit={handleInviteSubmit} className="flex gap-2">
                     <input
                       value={inviteName}
@@ -1681,7 +1674,7 @@ export function MessagesClient({
               )}
 
               {groupFilesOpen && group && (
-                <div className="max-h-[46vh] shrink-0 overflow-y-auto border-b border-line p-3">
+                <div className="border-b border-line p-3">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-medium text-ink-soft">群文件</span>
                     <span className="text-xs text-ink-faint">{groupFiles.length} 个</span>
