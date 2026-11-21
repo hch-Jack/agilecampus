@@ -23,6 +23,7 @@ import {
   listPendingApprovalsForApprover,
 } from "@/lib/approval";
 import { listMyRecentAttachments } from "@/lib/attachment";
+import { getDashboardLibrarySummary } from "@/lib/library/summary";
 import { countUnread } from "@/lib/dm";
 import { countGroupUnread, countPendingGroupInvites } from "@/lib/group-chat";
 import {
@@ -76,6 +77,7 @@ export async function loadDashboardData(
     STAT_WIDGET_IDS.some((id) => needs(id));
   const needFeed = needs("activity_feed");
   const needMessages = needs("unread_messages");
+  const needLibrary = needs("library");
   const needTz =
     needTasks ||
     needFeed ||
@@ -83,6 +85,7 @@ export async function loadDashboardData(
     needs("milestones") ||
     needs("resource_usage") ||
     needs("recent_attachments") ||
+    needs("library") ||
     needs("approvals") ||
     needs("clock") ||
     needs("countdown");
@@ -108,7 +111,7 @@ export async function loadDashboardData(
     needFeed ? cachedListMyTaskActivities(userId) : [], // 全量口径，不受任何筛选影响
     needFeed ? cachedGetFeedUnreadCount(userId, WORKBENCH_SCOPE) : 0,
     needs("my_projects") ? cachedListMyProjects(userId) : [],
-    needs("my_teams") ? cachedListMyTeams(userId) : [],
+    needs("my_teams") || needLibrary ? cachedListMyTeams(userId) : [],
     needMessages ? cachedCountUnread(userId) : 0,
     needMessages ? cachedCountGroupUnread(userId) : 0,
     needMessages ? cachedCountPendingGroupInvites(userId) : 0,
@@ -121,6 +124,13 @@ export async function loadDashboardData(
     cachedIsApproverAnywhere(userId),
     needs("approvals") ? cachedListPendingApprovalsForApprover(userId) : [],
   ]);
+
+  const library = needLibrary
+    ? await getDashboardLibrarySummary(
+        userId,
+        teams.map((team) => ({ id: team.id, name: team.name })),
+      )
+    : null;
 
   // 个人计划段：本人对这些任务自记的「打算什么时候做」（可多段区间或单天），供日程表日历编辑/展示
   const taskIds = myTasks.map((t) => t.id);
@@ -233,5 +243,6 @@ export async function loadDashboardData(
     resourceUsages,
     attachments,
     approvals: pendingApprovals,
+    library,
   };
 }

@@ -106,7 +106,7 @@ export default async function ProjectPage({
           <h1 className="min-w-0 font-display text-2xl font-semibold text-ink">
             {project.name}
           </h1>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Link
               href={`/projects/${projectId}/timeline`}
               className="ac-btn-ghost whitespace-nowrap"
@@ -150,6 +150,12 @@ export default async function ProjectPage({
                 <path d="M6 4.2h2.2v3.8H10M6 11.8h2.2V7.9H10" />
               </svg>
               流程图
+            </Link>
+            <Link
+              href={`/teams/${project.teamId}/library`}
+              className="ac-btn-ghost whitespace-nowrap"
+            >
+              团队资源库
             </Link>
           </div>
         </div>

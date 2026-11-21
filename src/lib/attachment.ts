@@ -1,7 +1,17 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
-import { projects, taskAttachments, tasks, teamMembers, users } from "@/db/schema";
+import {
+  projects,
+  taskAttachments,
+  tasks,
+  teamMembers,
+  users,
+} from "@/db/schema";
+import {
+  deleteBlobIfUnreferenced,
+  deleteDocumentsForSource,
+} from "./documents/blobs";
 import { AppError, ForbiddenError } from "./errors";
 import { getProjectForUser } from "./project";
 import { requireTaskWrite } from "./task";
@@ -292,7 +302,10 @@ export async function deleteAttachment(
   await requireTaskWrite(actorId, row.projectId);
 
   await db.delete(taskAttachments).where(eq(taskAttachments.id, attachmentId));
-  await deleteBlob(row.storageKey);
+  // 附件行删掉后，文档行不会自动级联（sourceId 是多态文本）：
+  // 由 helper 删文档/版本行并按引用检查清理版本 blob。
+  await deleteDocumentsForSource("task_attachment", attachmentId);
+  await deleteBlobIfUnreferenced(row.storageKey);
   await recordTaskActivity(db, [
     { taskId: row.taskId, actorId, type: "attachment_deleted", newValue: row.filename },
   ]);

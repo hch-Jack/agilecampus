@@ -166,6 +166,11 @@ const ACTIVITY_LABELS: Record<string, string> = {
   subtask_deleted: "删除子任务",
   attachment_added: "上传附件",
   attachment_deleted: "删除附件",
+  document_saved: "保存在线文档",
+  document_saved_as: "另存为文档",
+  document_collaboration_changed: "切换协作模式",
+  document_editor_granted: "授予编辑权限",
+  document_editor_revoked: "撤销编辑权限",
 };
 
 function clip(text: string, max: number): string {

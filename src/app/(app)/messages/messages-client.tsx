@@ -44,6 +44,13 @@ import {
   sendMessageAction,
 } from "./actions";
 import { decideApprovalAction } from "@/app/(app)/dashboard/actions";
+import {
+  listGroupFilesAction,
+  listLibraryDestinationsAction,
+  syncGroupFileAction,
+} from "@/app/(app)/library/actions";
+import type { LibraryDestination } from "@/app/(app)/library/actions";
+import type { GroupFileView } from "@/lib/group-files";
 import type { SystemMessageRow } from "@/lib/approval";
 import { SystemApprovalModal } from "./system-approval-modal";
 
@@ -418,6 +425,19 @@ export function MessagesClient({
   const [groupOpError, setGroupOpError] = useState("");
   const [responding, setResponding] = useState(false); // 正在处理某条邀请
 
+  // 群文件：列表 + 存入资源库弹层
+  const [groupFilesOpen, setGroupFilesOpen] = useState(false);
+  const [groupFiles, setGroupFiles] = useState<GroupFileView[]>([]);
+  const [groupFilesLoading, setGroupFilesLoading] = useState(false);
+  const [groupFilePreview, setGroupFilePreview] = useState<GroupFileView | null>(null);
+  const [syncFile, setSyncFile] = useState<GroupFileView | null>(null);
+  const [destinations, setDestinations] = useState<LibraryDestination[]>([]);
+  const [syncDestKey, setSyncDestKey] = useState("personal");
+  const [syncFolderId, setSyncFolderId] = useState("");
+  const [syncMode, setSyncMode] = useState<"live" | "snapshot">("snapshot");
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncMsg, setSyncMsg] = useState("");
+
   const [draft, setDraft] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [sendError, setSendError] = useState("");
@@ -641,6 +661,9 @@ export function MessagesClient({
     setPeer(p);
     setGroup(null);
     setMembersOpen(false);
+    setGroupFilesOpen(false);
+    setGroupFiles([]);
+    setSyncFile(null);
     setMsgs([]);
     setSendError("");
     // 换会话：没给深链目标就照旧贴底
@@ -658,6 +681,9 @@ export function MessagesClient({
     setPeer(null);
     setGroup(null);
     setMembersOpen(false);
+    setGroupFilesOpen(false);
+    setGroupFiles([]);
+    setSyncFile(null);
     setMsgs([]);
     setSendError("");
     pendingJumpRef.current = jumpTo ?? null;
@@ -838,6 +864,99 @@ export function MessagesClient({
     }
     closePane();
     refreshConvs();
+  }
+
+  // —— 群文件 ——
+
+  function defaultSyncFolder(dest: LibraryDestination): string {
+    const preferred = dest.scope === "personal" ? "群聊" : "群文件";
+    return (
+      dest.folders.find((f) => f.name === preferred)?.id ??
+      dest.folders[0]?.id ??
+      ""
+    );
+  }
+
+  function chooseSyncDest(key: string) {
+    setSyncDestKey(key);
+    const dest = destinations.find((d) => d.key === key);
+    if (dest) setSyncFolderId(defaultSyncFolder(dest));
+  }
+
+  async function loadGroupFiles(groupId: string) {
+    setGroupFilesLoading(true);
+    try {
+      const [filesRes, destRes] = await Promise.all([
+        listGroupFilesAction(groupId),
+        listLibraryDestinationsAction(),
+      ]);
+      if (filesRes.ok) setGroupFiles(filesRes.data);
+      else setSyncMsg(filesRes.error);
+      if (destRes.ok) {
+        setDestinations(destRes.data);
+        const dest =
+          destRes.data.find((d) => d.key === syncDestKey) ?? destRes.data[0];
+        if (dest) {
+          setSyncDestKey(dest.key);
+          setSyncFolderId(defaultSyncFolder(dest));
+        }
+      }
+    } finally {
+      setGroupFilesLoading(false);
+    }
+  }
+
+  async function toggleGroupFiles() {
+    if (!group) return;
+    if (groupFilesOpen) {
+      setGroupFilesOpen(false);
+      setSyncFile(null);
+      return;
+    }
+    setGroupFilesOpen(true);
+    setSyncFile(null);
+    setSyncMsg("");
+    await loadGroupFiles(group.id);
+  }
+
+  function startSyncFile(f: GroupFileView) {
+    setSyncFile(f);
+    setSyncMode("snapshot");
+    setSyncMsg("");
+    const dest = destinations.find((d) => d.key === syncDestKey) ?? destinations[0];
+    if (dest) {
+      setSyncDestKey(dest.key);
+      setSyncFolderId(defaultSyncFolder(dest));
+    }
+  }
+
+  async function submitSyncFile() {
+    if (!group || !syncFile || syncBusy) return;
+    const dest = destinations.find((d) => d.key === syncDestKey);
+    if (!dest) {
+      setSyncMsg("请选择目标资源库");
+      return;
+    }
+    setSyncBusy(true);
+    setSyncMsg("");
+    try {
+      const r = await syncGroupFileAction({
+        groupId: group.id,
+        attachmentId: syncFile.attachmentId,
+        scope: dest.scope,
+        teamId: dest.teamId,
+        folderId: syncFolderId || null,
+        mode: syncMode,
+      });
+      if (!r.ok) {
+        setSyncMsg(r.error);
+        return;
+      }
+      setSyncMsg(`已存入 ${dest.label}（v${r.data.version}）`);
+      setSyncFile(null);
+    } finally {
+      setSyncBusy(false);
+    }
   }
 
   // —— 系统消息（审批通知） ——
@@ -1399,6 +1518,7 @@ export function MessagesClient({
                 <span className="ml-auto text-xs text-ink-faint">消息自动留存</span>
               </header>
 
+
               <div
                 ref={listRef}
                 onScroll={handleListScroll}
@@ -1464,6 +1584,14 @@ export function MessagesClient({
                       title="成员与群管理"
                     >
                       群管理
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void toggleGroupFiles()}
+                      className={`ac-btn-ghost px-2.5 py-1 text-xs ${groupFilesOpen ? "border-primary text-primary" : ""}`}
+                      title="查看并同步群文件到资源库"
+                    >
+                      群文件
                     </button>
                   </>
                 )}
@@ -1545,6 +1673,143 @@ export function MessagesClient({
                 </div>
               )}
 
+              {groupFilesOpen && group && (
+                <div className="border-b border-line p-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-ink-soft">群文件</span>
+                    <span className="text-xs text-ink-faint">{groupFiles.length} 个</span>
+                    <button
+                      type="button"
+                      className="ml-auto text-xs text-primary underline"
+                      onClick={() => void loadGroupFiles(group.id)}
+                    >
+                      刷新
+                    </button>
+                  </div>
+                  {groupFilesLoading ? (
+                    <p className="mt-2 text-xs text-ink-faint">加载中…</p>
+                  ) : groupFiles.length === 0 ? (
+                    <p className="mt-2 text-xs text-ink-faint">
+                      群里还没有文件，发一条带文件的消息吧。
+                    </p>
+                  ) : (
+                    <ul className="mt-2 max-h-64 space-y-1 overflow-y-auto">
+                      {groupFiles.map((f) => (
+                        <li
+                          key={f.attachmentId}
+                          className="flex flex-wrap items-center gap-2 rounded px-1 py-1 hover:bg-sunken"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <span className="block truncate text-sm text-ink" title={f.filename}>
+                              {f.filename}
+                            </span>
+                            <span className="block truncate text-xs text-ink-faint">
+                              {fmtSize(f.size)} · {f.senderName} ·{" "}
+                              {fmtTime(timeZone, f.createdAt)}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            className="text-xs text-primary underline"
+                            onClick={() => setGroupFilePreview(f)}
+                          >
+                            预览
+                          </button>
+                          <a
+                            href={`/api/dm/attachments/${f.attachmentId}`}
+                            download={f.filename}
+                            className="text-xs text-primary underline"
+                          >
+                            下载
+                          </a>
+                          <button
+                            type="button"
+                            className="text-xs text-ink-soft underline"
+                            onClick={() => startSyncFile(f)}
+                          >
+                            存入资源库
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {syncFile && (
+                    <div className="mt-2 rounded-field border border-line bg-surface p-2.5">
+                      <p className="text-xs font-medium text-ink">
+                        存入资源库：{syncFile.filename}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <select
+                          value={syncDestKey}
+                          onChange={(e) => chooseSyncDest(e.target.value)}
+                          className="ac-field min-w-0 flex-1 text-xs"
+                          aria-label="目标资源库"
+                        >
+                          {destinations.map((d) => (
+                            <option key={d.key} value={d.key}>
+                              {d.label}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          value={syncFolderId}
+                          onChange={(e) => setSyncFolderId(e.target.value)}
+                          className="ac-field min-w-0 flex-1 text-xs"
+                          aria-label="目标文件夹"
+                        >
+                          {(destinations.find((d) => d.key === syncDestKey)?.folders ?? []).map(
+                            (folder) => (
+                              <option key={folder.id} value={folder.id}>
+                                {" ".repeat(folder.depth * 2)}
+                                {folder.name}
+                              </option>
+                            ),
+                          )}
+                        </select>
+                      </div>
+                      <div className="mt-2 space-y-1 text-xs text-ink-soft">
+                        <label className="flex items-start gap-1.5">
+                          <input
+                            type="radio"
+                            className="mt-0.5"
+                            checked={syncMode === "live"}
+                            onChange={() => setSyncMode("live")}
+                          />
+                          <span>实时跟进：同群同名新文件自动接续成新版本</span>
+                        </label>
+                        <label className="flex items-start gap-1.5">
+                          <input
+                            type="radio"
+                            className="mt-0.5"
+                            checked={syncMode === "snapshot"}
+                            onChange={() => setSyncMode("snapshot")}
+                          />
+                          <span>仅同步当前版本</span>
+                        </label>
+                      </div>
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          type="button"
+                          className="ac-btn px-2.5 py-1 text-xs"
+                          disabled={syncBusy}
+                          onClick={() => void submitSyncFile()}
+                        >
+                          {syncBusy ? "存入中…" : "确认存入"}
+                        </button>
+                        <button
+                          type="button"
+                          className="ac-btn-ghost px-2.5 py-1 text-xs"
+                          onClick={() => setSyncFile(null)}
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {syncMsg && <p className="mt-2 text-xs text-ink-soft">{syncMsg}</p>}
+                </div>
+              )}
               <div
                 ref={listRef}
                 onScroll={handleListScroll}
@@ -1614,6 +1879,18 @@ export function MessagesClient({
           )}
         </section>
       </div>
+
+      {groupFilePreview && (
+        <FilePreviewModal
+          file={{
+            url: `/api/dm/attachments/${groupFilePreview.attachmentId}`,
+            filename: groupFilePreview.filename,
+            mimeType: groupFilePreview.mimeType,
+            size: groupFilePreview.size,
+          }}
+          onClose={() => setGroupFilePreview(null)}
+        />
+      )}
     </div>
   );
 }

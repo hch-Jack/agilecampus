@@ -10,6 +10,7 @@ import {
   readStoredContent,
   type FileContentInput,
 } from "@/lib/blob-store";
+import { deleteBlobIfUnreferenced } from "@/lib/documents/blobs";
 import { MAX_FILE_SIZE } from "@/lib/file-limits";
 import type { MessageAttachment } from "./assistant-panel-shared";
 import { ASSISTANT_ATTACHMENTS_MAX } from "./assistant-panel-shared";
@@ -123,7 +124,8 @@ export async function deleteAgentFile(actorId: string, fileId: string): Promise<
     .where(and(eq(agentFiles.id, fileId), eq(agentFiles.ownerId, actorId)))
     .returning({ id: agentFiles.id, storageKey: agentFiles.storageKey });
   if (deleted.length === 0) throw new AppError("文件不存在");
-  await deleteBlob(deleted[0].storageKey);
+  // 资源库可能共享同一个 storageKey：只有无人引用时才真正删盘
+  await deleteBlobIfUnreferenced(deleted[0].storageKey);
 }
 
 /**
