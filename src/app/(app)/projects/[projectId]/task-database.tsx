@@ -46,13 +46,16 @@ export function TaskDatabase({
   tasks,
   milestones,
   progress,
+  total,
 }: {
   projectId: string;
-  /** listProjectTasks 的全量任务（含子任务） */
+  /** 经筛选后的任务（含子任务）；未筛选时与 total 相等 */
   tasks: TaskDatabaseRow[];
   milestones: { id: string; title: string }[];
   /** 顶层任务的子任务完成度（splitBoardTasks 聚合，与看板同源） */
   progress: Map<string, SubtaskProgress>;
+  /** 筛选前的任务总数（可缺省，缺省不显示对比） */
+  total?: number;
 }) {
   const milestoneName = new Map(milestones.map((m) => [m.id, m.title]));
   const done = tasks.filter((t) => t.status === "done").length;
@@ -61,7 +64,11 @@ export function TaskDatabase({
     <section className="ac-card overflow-hidden p-0">
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-5 py-3">
         <h2 className="font-medium text-ink">任务数据库</h2>
-        <span className="ac-badge bg-surface text-ink-soft">{tasks.length}</span>
+        <span className="ac-badge bg-surface text-ink-soft">
+          {total !== undefined && total !== tasks.length
+            ? `筛选后 ${tasks.length} / ${total}`
+            : tasks.length}
+        </span>
         <span className="ml-auto text-xs text-ink-faint">
           已完成 {done} · 点任务名进详情
         </span>
