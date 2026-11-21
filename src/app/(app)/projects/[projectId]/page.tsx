@@ -15,6 +15,8 @@ import {
 } from "@/lib/approval";
 import { getMyPermissions } from "@/lib/team-permissions";
 import { countProjectAttachments } from "@/lib/attachment";
+import { listPropertyDefs } from "@/lib/properties";
+import { listProjectViews } from "@/lib/database-views";
 import { AcceptanceControl } from "./acceptance-control";
 import { parseFilters, applyFilters } from "@/lib/board-filters";
 import { todayIn } from "@/lib/time";
@@ -23,7 +25,7 @@ import { ActivityFeed } from "@/components/activity-feed";
 import { MilestoneSection } from "./milestone-section";
 import { NewTaskForm } from "./new-task-form";
 import { ProjectOverview } from "./project-overview";
-import { TaskDatabase } from "./task-database";
+import { TaskDatabaseModule } from "./database/task-database-module";
 import { Board } from "./board";
 import { FilterBar } from "./filter-bar";
 import { ProjectCommentList } from "./project-comment-list";
@@ -54,6 +56,8 @@ export default async function ProjectPage({
     teamLabels,
     projectBoardComments,
     attachmentCount,
+    propertyDefs,
+    projectViews,
   ] = await Promise.all([
     listProjectMilestones(session.user.id, projectId),
     listProjectTasks(session.user.id, projectId),
@@ -63,6 +67,8 @@ export default async function ProjectPage({
     listTeamLabels(session.user.id, project.teamId),
     listProjectBoardComments(session.user.id, projectId),
     countProjectAttachments(projectId),
+    listPropertyDefs(session.user.id, projectId),
+    listProjectViews(session.user.id, projectId),
   ]);
 
   const filters = parseFilters(
@@ -244,12 +250,16 @@ export default async function ProjectPage({
         />
       </section>
 
-      {/* 任务数据库：Notion 数据库式的任务总览（只读，操作在看板/详情页） */}
-      <TaskDatabase
+      {/* 任务数据库：Notion 式多视图（表格 + 视图持久化 + 按类型筛选/排序），PR3/PR4 接入看板/时间线 */}
+      <TaskDatabaseModule
         projectId={projectId}
         tasks={projectTasks}
+        defs={propertyDefs}
+        views={projectViews}
+        members={members.map((m) => ({ id: m.id, name: m.name }))}
         milestones={projectMilestones.map((m) => ({ id: m.id, title: m.title }))}
-        progress={progress}
+        labels={teamLabels.map((l) => ({ id: l.id, name: l.name, color: l.color }))}
+        canWrite={canWrite}
       />
 
       {/* 新建任务与附件中心并排一行：任务卡收窄，附件中心做固定宽度的入口卡 */}
