@@ -11,6 +11,7 @@ import { getFeedUnreadCount, WORKBENCH_SCOPE } from "@/lib/activity";
 import { formatInputValue, todayIn } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
 import { DASHBOARD_WIDGETS, WIDGET_IDS } from "@/lib/dashboard-layout";
+import { PRIORITY_TEXT } from "@/lib/task-constants";
 
 /**
  * 控制台助手（工作台）的快照 —— 与项目快照的分工：
@@ -32,8 +33,6 @@ const TASK_LIST_LIMIT = 20;
 // 我自己的上下文：条数与单条长度都收一收，免得它把待办段挤掉
 const CONTEXT_ITEM_LIMIT = 20;
 const CONTEXT_ENTRY_LIMIT = 300;
-
-const PRIORITY_LABEL: Record<string, string> = { low: "低", medium: "中", high: "高" };
 
 /** 卡片目录（静态）：给模型「能加什么」的清单，省去一次读工具往返 */
 const WIDGET_CATALOG = WIDGET_IDS.map(
@@ -127,7 +126,7 @@ export async function buildPersonalSnapshot(actorId: string): Promise<string> {
         shownTasks
           .map(
             (t) =>
-              `- [${t.status}] ${t.title}｜${PRIORITY_LABEL[t.priority] ?? t.priority}｜${t.dueDate ? `截止 ${t.dueDate}` : "无截止"}｜项目 ${t.projectName}｜taskId=${t.id}`,
+              `- [${t.status}] ${t.title}｜${PRIORITY_TEXT[t.priority] ?? t.priority}｜${t.dueDate ? `截止 ${t.dueDate}` : "无截止"}｜项目 ${t.projectName}｜taskId=${t.id}`,
           )
           .join("\n") +
         (tasks.length > shownTasks.length

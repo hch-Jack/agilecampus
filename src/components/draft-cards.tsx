@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { buildContinuationText, isContinuableTool } from "@/lib/agent/continuation";
 import { LABEL_COLORS, LABEL_COLOR_CLASS } from "@/lib/board-columns";
+import { PRIORITY_TEXT, STATUS_TEXT } from "@/lib/task-constants";
 import {
   isLayoutSavedDetail,
   LAYOUT_SAVED_EVENT,
@@ -262,9 +263,6 @@ const PATCH_FIELDS: Record<
   milestoneId: { label: "里程碑", kind: "milestone" },
   priority: { label: "优先级", kind: "priority" },
 };
-
-const STATUS_TEXT: Record<string, string> = { todo: "待办", doing: "进行中", done: "已完成" };
-const PRIORITY_TEXT: Record<string, string> = { low: "低", medium: "中", high: "高" };
 
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

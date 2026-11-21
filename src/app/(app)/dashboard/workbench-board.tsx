@@ -11,6 +11,7 @@ import {
 } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { PRIORITY_BADGE } from "@/lib/task-constants";
 import {
   DndContext,
   DragOverlay,
@@ -58,14 +59,7 @@ export type WorkbenchTask = {
 };
 
 // 与 TASK_WRITE_ROLES（lib/task.ts）同集：admin/student 可写，teacher 只读。
-// 常量未导出，本地复制以免动共享文件（先例：任务详情页 PRIORITY_BADGE）。
 const WRITE_ROLES = ["admin", "student"];
-
-const PRIORITY_BADGE: Record<string, string> = {
-  high: "bg-high-soft text-high",
-  medium: "bg-medium-soft text-medium",
-  low: "bg-low-soft text-low",
-};
 
 // 三列固定（照 board-columns.ts 的 status 分支；不共用 deriveColumns，其签名绑 members/milestones）
 const COLUMNS = [

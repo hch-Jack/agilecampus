@@ -15,6 +15,7 @@ import {
   type TaskStatus,
 } from "@/db/schema";
 import { AppError, ApprovalRequestedError, ForbiddenError } from "./errors";
+import { PRIORITY_TEXT, STATUS_TEXT } from "./task-constants";
 import { getTeamMembership } from "./team";
 import { getProjectForUser, validateDateRange } from "./project";
 import { notifyTaskAssigned, notifyTaskCompleted } from "./notify";
@@ -23,10 +24,6 @@ import { requestTaskCompletion, withdrawTaskApprovals } from "./approval";
 
 // 任务写操作角色：admin + student（teacher 只读，设计文档 §5）
 const TASK_WRITE_ROLES = ["admin", "student"];
-
-// 动态展示文本：状态/优先级转中文，值存展示文本而非枚举，读端免映射
-const STATUS_TEXT: Record<TaskStatus, string> = { todo: "待办", doing: "进行中", done: "已完成" };
-const PRIORITY_TEXT: Record<TaskPriority, string> = { low: "低", medium: "中", high: "高" };
 
 // 动态值统一截断，空值归一为「无」
 function activityText(v: string | null | undefined, fallback = "无") {

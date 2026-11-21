@@ -7,6 +7,7 @@ import {
   type BoardFilters,
   type GroupBy,
 } from "@/lib/board-filters";
+import { PRIORITY_OPTIONS } from "@/lib/task-constants";
 
 type Option = { id: string; name: string };
 
@@ -16,12 +17,6 @@ const GROUP_LABEL: Record<GroupBy, string> = {
   priority: "优先级",
   milestone: "里程碑",
 };
-
-const PRIORITY_OPTIONS: Option[] = [
-  { id: "high", name: "高" },
-  { id: "medium", name: "中" },
-  { id: "low", name: "低" },
-];
 
 export function FilterBar({
   members,
