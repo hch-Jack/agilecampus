@@ -1475,7 +1475,9 @@ export function MessagesClient({
                       >
                         <Avatar name={c.name} className="h-10 w-10 text-base" />
                         <span className="min-w-0 flex-1">
-                          <span className="truncate text-sm font-medium text-ink">{c.name}</span>
+                          {/* block 而非 inline：truncate 的 overflow:hidden 对 inline 元素不生效，
+                              长群名会溢出压到右侧时间上（DM 行名字在 flex 容器里故无此问题） */}
+                          <span className="block truncate text-sm font-medium text-ink">{c.name}</span>
                           <span className="block truncate text-xs text-ink-faint">
                             {c.preview
                               ? `${c.lastMine ? "我：" : c.lastSenderName ? `${c.lastSenderName}：` : ""}${c.preview}`
