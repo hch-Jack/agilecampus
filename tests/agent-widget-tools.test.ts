@@ -157,7 +157,7 @@ describe("manage_dashboard_widgets：草案不落库，确认才写", () => {
       "移动便签「先记一笔」到第 5 列、第 1 行",
       "把便签「先记一笔」改成 6×4 格",
       "网格缩放改为 90%",
-      "删除专注计时（3×3 格）",
+      "删除专注计时（4×3 格）",
     ]);
 
     await commitPersonalDraft(student.id, "manage_dashboard_widgets", env.draft);
