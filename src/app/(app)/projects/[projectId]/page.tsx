@@ -70,22 +70,8 @@ export default async function ProjectPage({
     listPropertyDefs(session.user.id, projectId),
   ]);
 
-  // 任务数据库（只读总览表）的按类型筛选：URL dbf 参数 → 子句 → 内存过滤
-  const dbClauses = parseDbFilters(typeof sp.dbf === "string" ? sp.dbf : null);
-  const dbTasks = applyDbFilters(
-    projectTasks,
-    dbClauses,
-    {
-      defs: new Map(
-        propertyDefs.map((d) => [
-          d.id,
-          { type: d.type, optionIds: (d.options ?? []).map((o) => o.id) },
-        ]),
-      ),
-      milestoneOrder: new Map(projectMilestones.map((m, i) => [m.id, i])),
-      members: new Map(members.map((m) => [m.id, m.name])),
-    },
-  );
+  // 任务数据库（只读总览表）的按类型筛选：URL dbf 参数 → 点选式筛选态
+  const dbFilters = parseDbFilters(typeof sp.dbf === "string" ? sp.dbf : null);
 
   const filters = parseFilters(
     new URLSearchParams(
@@ -100,6 +86,20 @@ export default async function ProjectPage({
   const now = new Date();
   const today = todayIn(tz, now);
   const visibleTasks = applyFilters(projectTasks, filters, today);
+  // 任务数据库的过滤（看板同款点选式：「仅看逾期」需要 today 口径一致）
+  const dbTasks = applyDbFilters(
+    projectTasks,
+    dbFilters,
+    {
+      defs: new Map(
+        propertyDefs.map((d) => [
+          d.id,
+          { type: d.type, optionIds: (d.options ?? []).map((o) => o.id) },
+        ]),
+      ),
+    },
+    today,
+  );
   // 看板只摆顶层任务：子任务不单独成卡，改为父卡底部的进度条。
   // 进度按项目全量子任务聚合，不受筛选影响（筛选的是父任务卡片）。
   const { topLevel, progress } = splitBoardTasks(projectTasks);
@@ -278,6 +278,7 @@ export default async function ProjectPage({
           }))}
           members={members.map((m) => ({ id: m.id, name: m.name }))}
           milestones={projectMilestones.map((m) => ({ id: m.id, title: m.title }))}
+          labels={teamLabels.map((l) => ({ id: l.id, name: l.name, color: l.color }))}
         />
         <TaskDatabase
           projectId={projectId}

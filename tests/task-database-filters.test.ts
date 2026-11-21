@@ -3,36 +3,30 @@ import {
   applyDbFilters,
   parseDbFilters,
   serializeDbFilters,
-  dbFieldMeta,
-  opsForDbKind,
+  EMPTY_DB_FILTERS,
   type DbFilterableTask,
   type DbFilterContext,
 } from "@/lib/task-database-filters";
 
 const PROP_A = "aaaaaaaa-1111-1111-1111-111111111111"; // select
-const PROP_N = "aaaaaaaa-2222-2222-2222-222222222222"; // number
-const PROP_T = "aaaaaaaa-3333-3333-3333-333333333333"; // text
-const PROP_D = "aaaaaaaa-4444-4444-4444-444444444444"; // date
-const PROP_P = "aaaaaaaa-5555-5555-5555-555555555555"; // person
-const PROP_C = "aaaaaaaa-6666-6666-6666-666666666666"; // checkbox
-const PROP_M = "aaaaaaaa-7777-7777-7777-777777777777"; // multi_select
+const PROP_M = "aaaaaaaa-2222-2222-2222-222222222222"; // multi_select
+const PROP_P = "aaaaaaaa-3333-3333-3333-333333333333"; // person
+const PROP_C = "aaaaaaaa-4444-4444-4444-444444444444"; // checkbox
+const PROP_T = "aaaaaaaa-5555-5555-5555-555555555555"; // text（不做点选筛选）
 const U1 = "bbbbbbbb-1111-1111-1111-111111111111";
 const M1 = "cccccccc-1111-1111-1111-111111111111";
 const OPT_HIGH = "dddddddd-0000-0000-0000-000000000000";
 const OPT_LOW = "dddddddd-1111-1111-1111-111111111111";
+const TODAY = "2026-11-21";
 
 const CTX: DbFilterContext = {
   defs: new Map([
     [PROP_A, { type: "select" as const, optionIds: [OPT_HIGH, OPT_LOW] }],
-    [PROP_N, { type: "number" as const, optionIds: [] }],
-    [PROP_T, { type: "text" as const, optionIds: [] }],
-    [PROP_D, { type: "date" as const, optionIds: [] }],
+    [PROP_M, { type: "multi_select" as const, optionIds: [OPT_HIGH, OPT_LOW] }],
     [PROP_P, { type: "person" as const, optionIds: [] }],
     [PROP_C, { type: "checkbox" as const, optionIds: [] }],
-    [PROP_M, { type: "multi_select" as const, optionIds: [OPT_HIGH, OPT_LOW] }],
+    [PROP_T, { type: "text" as const, optionIds: [] }],
   ]),
-  milestoneOrder: new Map([[M1, 0]]),
-  members: new Map([[U1, "阿超"]]),
 };
 
 function task(over: Partial<DbFilterableTask> = {}): DbFilterableTask {
@@ -52,133 +46,142 @@ function task(over: Partial<DbFilterableTask> = {}): DbFilterableTask {
 }
 
 describe("URL 序列化往返", () => {
-  it("parse(serialize(clauses)) 还原原句（含值）", () => {
-    const clauses = [
-      { field: "title", op: "contains", value: "部署" },
-      { field: `prop:${PROP_N}`, op: "gt", value: 3 },
-      { field: "status", op: "in", value: ["todo"] },
-      { field: "dueDate", op: "isEmpty" },
-    ];
-    expect(parseDbFilters(serializeDbFilters(clauses))).toEqual(clauses);
+  it("parse(serialize(f)) 还原筛选态", () => {
+    const f = {
+      status: ["todo"],
+      assignee: [U1, "none"],
+      priority: ["high"],
+      label: ["11111111-1111-1111-1111-111111111111"],
+      milestone: [M1],
+      overdue: true,
+      props: { [PROP_A]: [OPT_HIGH, "none"], [PROP_C]: ["checked"] },
+    };
+    expect(parseDbFilters(serializeDbFilters(f))).toEqual(f);
   });
 
-  it("空/垃圾输入返回空数组", () => {
-    expect(parseDbFilters(null)).toEqual([]);
-    expect(parseDbFilters("")).toEqual([]);
-    expect(parseDbFilters("not-json")).toEqual([]);
-    expect(parseDbFilters(JSON.stringify({ a: 1 }))).toEqual([]);
-    expect(parseDbFilters(JSON.stringify(["垃圾"]))).toEqual([]);
+  it("空态序列化为空串，垃圾输入还原为空态", () => {
+    expect(serializeDbFilters(EMPTY_DB_FILTERS)).toBe("");
+    expect(parseDbFilters(null)).toEqual(EMPTY_DB_FILTERS);
+    expect(parseDbFilters("not-json")).toEqual(EMPTY_DB_FILTERS);
+    expect(parseDbFilters(JSON.stringify({ a: 1 }))).toEqual(EMPTY_DB_FILTERS);
   });
 
-  it("形状非法的子句被剔除，超上限截断", () => {
-    expect(parseDbFilters(JSON.stringify([{ field: "", op: "in" }]))).toEqual([]);
-    expect(parseDbFilters(JSON.stringify([{ field: "title", op: "" }]))).toEqual([]);
-    const many = Array.from({ length: 12 }, (_, i) => ({ field: "title", op: "contains", value: String(i) }));
-    expect(parseDbFilters(serializeDbFilters(many))).toHaveLength(10);
-  });
-});
-
-describe("dbFieldMeta", () => {
-  it("原生字段与自定义属性映射到正确档位；失效字段返回 null", () => {
-    expect(dbFieldMeta("title", CTX)?.kind).toBe("text");
-    expect(dbFieldMeta("status", CTX)?.kind).toBe("enum");
-    expect(dbFieldMeta("assignee", CTX)?.kind).toBe("person");
-    expect(dbFieldMeta("label", CTX)?.kind).toBe("multi");
-    expect(dbFieldMeta(`prop:${PROP_A}`, CTX)?.kind).toBe("select");
-    expect(dbFieldMeta(`prop:${PROP_M}`, CTX)?.kind).toBe("multi");
-    expect(dbFieldMeta(`prop:${PROP_C}`, CTX)?.kind).toBe("checkbox");
-    expect(dbFieldMeta("prop:99999999-9999-9999-9999-999999999999", CTX)).toBeNull();
-    expect(dbFieldMeta("galaxy", CTX)).toBeNull();
-  });
-
-  it("各类型操作符清单", () => {
-    expect(opsForDbKind("text")).toContain("contains");
-    expect(opsForDbKind("checkbox")).toEqual(["isTrue", "isFalse"]);
-    expect(opsForDbKind("enum")).toEqual(["in", "notIn"]);
-    expect(opsForDbKind("date")).toContain("before");
+  it("非法值逐项剔除：非法枚举/非法 uuid/非法 prop 键都不进结果", () => {
+    const parsed = parseDbFilters(
+      JSON.stringify({
+        status: ["todo", "galaxy"],
+        assignee: [U1, "不是id"],
+        priority: ["high", "urgent"],
+        label: ["不是id"],
+        milestone: [M1, "nope"],
+        overdue: "yes",
+        props: { "不是uuid": [OPT_HIGH], [PROP_A]: [OPT_HIGH, "垃圾", OPT_LOW] },
+      }),
+    );
+    expect(parsed.status).toEqual(["todo"]);
+    expect(parsed.assignee).toEqual([U1]);
+    expect(parsed.priority).toEqual(["high"]);
+    expect(parsed.label).toEqual([]);
+    expect(parsed.milestone).toEqual([M1]);
+    expect(parsed.overdue).toBe(false);
+    expect(parsed.props[PROP_A]).toEqual([OPT_HIGH, OPT_LOW]);
+    expect(Object.keys(parsed.props)).not.toContain("不是uuid");
   });
 });
 
 describe("applyDbFilters", () => {
-  it("自定义属性：text/number/select/checkbox 操作符", () => {
+  it("原生维度：状态/负责人（含未指派）/优先级任一命中", () => {
     const tasks = [
-      task({ id: "1", properties: { [PROP_T]: "数据清洗", [PROP_N]: 3, [PROP_A]: OPT_HIGH, [PROP_C]: true } }),
-      task({ id: "2", properties: { [PROP_T]: "论文实验", [PROP_N]: 7.5, [PROP_A]: OPT_LOW } }),
+      task({ id: "1", status: "done", assigneeId: U1, priority: "high" }),
+      task({ id: "2", status: "todo", priority: "low" }),
+      task({ id: "3", status: "doing" }),
+    ];
+    const run = (over: Partial<typeof EMPTY_DB_FILTERS>) =>
+      applyDbFilters(tasks, { ...EMPTY_DB_FILTERS, ...over }, CTX, TODAY).map((t) => t.id);
+    expect(run({ status: ["todo", "doing"] })).toEqual(["2", "3"]);
+    expect(run({ assignee: [U1] })).toEqual(["1"]);
+    expect(run({ assignee: ["none"] })).toEqual(["2", "3"]);
+    expect(run({ priority: ["high", "low"] })).toEqual(["1", "2"]);
+    expect(run({})).toEqual(["1", "2", "3"]);
+  });
+
+  it("标签与里程碑（含无里程碑）", () => {
+    const tasks = [
+      task({ id: "1", milestoneId: M1, labels: [{ id: "L1" }] }),
+      task({ id: "2" }),
+    ];
+    const run = (over: Partial<typeof EMPTY_DB_FILTERS>) =>
+      applyDbFilters(tasks, { ...EMPTY_DB_FILTERS, ...over }, CTX, TODAY).map((t) => t.id);
+    expect(run({ label: ["L1"] })).toEqual(["1"]);
+    expect(run({ milestone: [M1] })).toEqual(["1"]);
+    expect(run({ milestone: ["none"] })).toEqual(["2"]);
+  });
+
+  it("仅看逾期：有截止日 < 今天 且未完成（today 由调用方传入）", () => {
+    const tasks = [
+      task({ id: "overdue", dueDate: "2026-11-20" }),
+      task({ id: "future", dueDate: "2026-12-01" }),
+      task({ id: "doneOk", dueDate: "2026-11-20", status: "done" }),
+      task({ id: "noDue" }),
+    ];
+    const filtered = applyDbFilters(
+      tasks,
+      { ...EMPTY_DB_FILTERS, overdue: true },
+      CTX,
+      TODAY,
+    ).map((t) => t.id);
+    expect(filtered).toEqual(["overdue"]);
+  });
+
+  it("自定义属性：单选（含未设置）/多选（任一含未设置）/人员/checkbox", () => {
+    const tasks = [
+      task({ id: "1", assigneeId: U1, properties: { [PROP_A]: OPT_HIGH, [PROP_M]: [OPT_HIGH], [PROP_P]: U1, [PROP_C]: true } }),
+      task({ id: "2", properties: { [PROP_A]: OPT_LOW, [PROP_M]: [], [PROP_C]: false } }),
       task({ id: "3", properties: {} }),
     ];
-    const run = (clause: object) =>
-      applyDbFilters(tasks, [clause as never], CTX).map((t) => t.id);
-    expect(run({ field: `prop:${PROP_T}`, op: "contains", value: "数据" })).toEqual(["1"]);
-    expect(run({ field: `prop:${PROP_T}`, op: "isEmpty" })).toEqual(["3"]);
-    expect(run({ field: `prop:${PROP_N}`, op: "gte", value: 3 })).toEqual(["1", "2"]);
-    expect(run({ field: `prop:${PROP_N}`, op: "lt", value: 5 })).toEqual(["1"]);
-    expect(run({ field: `prop:${PROP_A}`, op: "in", value: [OPT_HIGH] })).toEqual(["1"]);
-    expect(run({ field: `prop:${PROP_A}`, op: "isEmpty" })).toEqual(["3"]);
-    expect(run({ field: `prop:${PROP_C}`, op: "isTrue" })).toEqual(["1"]);
-    expect(run({ field: `prop:${PROP_C}`, op: "isFalse" })).toEqual(["2", "3"]);
-    // 非法子句恒真
-    expect(run({ field: `prop:${PROP_N}`, op: "gt", value: "abc" })).toEqual(["1", "2", "3"]);
-    expect(run({ field: "prop:99999999-9999-9999-9999-999999999999", op: "in", value: ["x"] })).toHaveLength(3);
+    const run = (over: Partial<typeof EMPTY_DB_FILTERS>) =>
+      applyDbFilters(tasks, { ...EMPTY_DB_FILTERS, ...over }, CTX, TODAY).map((t) => t.id);
+    // 单选
+    expect(run({ props: { [PROP_A]: [OPT_HIGH] } })).toEqual(["1"]);
+    expect(run({ props: { [PROP_A]: ["none"] } })).toEqual(["3"]);
+    expect(run({ props: { [PROP_A]: [OPT_LOW, OPT_HIGH] } })).toEqual(["1", "2"]);
+    // 多选：任一命中（无任务含 OPT_LOW → 空结果）；「未设置」= 空数组/无值
+    expect(run({ props: { [PROP_M]: [OPT_LOW] } })).toEqual([]);
+    expect(run({ props: { [PROP_M]: [OPT_HIGH] } })).toEqual(["1"]);
+    expect(run({ props: { [PROP_M]: ["none"] } })).toEqual(["2", "3"]); // 空数组也算未设置
+    // 人员
+    expect(run({ props: { [PROP_P]: [U1] } })).toEqual(["1"]);
+    expect(run({ props: { [PROP_P]: ["none"] } })).toEqual(["2", "3"]);
+    // checkbox
+    expect(run({ props: { [PROP_C]: ["checked"] } })).toEqual(["1"]);
+    expect(run({ props: { [PROP_C]: ["unchecked"] } })).toEqual(["2", "3"]);
   });
 
-  it("multi_select hasAny/hasAll/isEmpty", () => {
+  it("多维度取交集；已删属性维度忽略；text 属性维度不筛", () => {
     const tasks = [
-      task({ id: "1", properties: { [PROP_M]: [OPT_HIGH] } }),
-      task({ id: "2", properties: { [PROP_M]: [OPT_HIGH, OPT_LOW] } }),
-      task({ id: "3", properties: {} }),
-    ];
-    const run = (op: string, value?: unknown) =>
-      applyDbFilters(tasks, [{ field: `prop:${PROP_M}`, op, value }], CTX).map((t) => t.id);
-    expect(run("hasAny", [OPT_LOW])).toEqual(["2"]);
-    expect(run("hasAll", [OPT_HIGH, OPT_LOW])).toEqual(["2"]);
-    expect(run("isEmpty")).toEqual(["3"]);
-  });
-
-  it("date 属性 is/before/after/isEmpty", () => {
-    const tasks = [
-      task({ id: "1", properties: { [PROP_D]: "2026-11-01" } }),
-      task({ id: "2", properties: { [PROP_D]: "2026-12-25" } }),
-      task({ id: "3", properties: {} }),
-    ];
-    const run = (op: string, value?: unknown) =>
-      applyDbFilters(tasks, [{ field: `prop:${PROP_D}`, op, value }], CTX).map((t) => t.id);
-    expect(run("is", "2026-11-01")).toEqual(["1"]);
-    expect(run("before", "2026-12-01")).toEqual(["1"]);
-    expect(run("after", "2026-12-01")).toEqual(["2"]);
-    expect(run("isEmpty")).toEqual(["3"]);
-  });
-
-  it("原生字段：标题包含/状态/负责人/里程碑/标签/截止日", () => {
-    const tasks = [
-      task({ id: "1", title: "部署服务器", status: "done", assigneeId: U1, milestoneId: M1, dueDate: "2026-11-01", labels: [{ id: "L1" }] }),
-      task({ id: "2", status: "todo" }),
-    ];
-    const run = (clause: object) =>
-      applyDbFilters(tasks, [clause as never], CTX).map((t) => t.id);
-    expect(run({ field: "title", op: "contains", value: "服务器" })).toEqual(["1"]);
-    expect(run({ field: "status", op: "in", value: ["done"] })).toEqual(["1"]);
-    expect(run({ field: "assignee", op: "in", value: [U1] })).toEqual(["1"]);
-    expect(run({ field: "assignee", op: "isEmpty" })).toEqual(["2"]);
-    expect(run({ field: "milestone", op: "in", value: [M1] })).toEqual(["1"]);
-    expect(run({ field: "label", op: "hasAny", value: ["L1"] })).toEqual(["1"]);
-    expect(run({ field: "dueDate", op: "before", value: "2026-12-01" })).toEqual(["1"]);
-  });
-
-  it("多子句取交集；空子句列表原样返回", () => {
-    const tasks = [
-      task({ id: "1", status: "todo", properties: { [PROP_N]: 1 } }),
-      task({ id: "2", status: "done", properties: { [PROP_N]: 5 } }),
+      task({ id: "1", status: "todo", properties: { [PROP_A]: OPT_HIGH, [PROP_T]: "x" } }),
+      task({ id: "2", status: "done", properties: { [PROP_A]: OPT_LOW, [PROP_T]: "y" } }),
     ];
     expect(
       applyDbFilters(
         tasks,
-        [
-          { field: "status", op: "in", value: ["todo"] },
-          { field: `prop:${PROP_N}`, op: "lt", value: 3 },
-        ],
+        { ...EMPTY_DB_FILTERS, status: ["todo"], props: { [PROP_A]: [OPT_HIGH] } },
         CTX,
+        TODAY,
       ).map((t) => t.id),
     ).toEqual(["1"]);
-    expect(applyDbFilters(tasks, [], CTX)).toBe(tasks);
+    expect(
+      applyDbFilters(
+        tasks,
+        { ...EMPTY_DB_FILTERS, props: { ["99999999-9999-9999-9999-999999999999"]: [OPT_HIGH] } },
+        CTX,
+        TODAY,
+      ).map((t) => t.id),
+    ).toEqual(["1", "2"]);
+    expect(
+      applyDbFilters(tasks, { ...EMPTY_DB_FILTERS, props: { [PROP_T]: ["x"] } }, CTX, TODAY).map(
+        (t) => t.id,
+      ),
+    ).toEqual(["1", "2"]);
   });
 });
