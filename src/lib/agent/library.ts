@@ -607,16 +607,18 @@ export async function describeTargetFolder(
 
 /**
  * 拟稿时把「没指定文件夹」落成具体的默认文件夹，卡片上才能显示真实路径。
- * 个人库 = 助手生成；团队库 = 手动上传（与同步/上传的缺省口径一致）。
+ * 保存助手文件 = 个人库「助手生成」/ 团队库「手动上传」；
+ * 复制文件 = 两个库都用「手动上传」（它不再算助手生成的产物）。
  */
 export async function resolveSaveFolder(
   library: LibraryRow,
   scope: "personal" | "team",
   folderId: string | null | undefined,
+  fallback?: "agent" | "manual",
 ): Promise<{ folderId: string | null; path: string }> {
   if (folderId !== undefined) return describeTargetFolder(library, folderId);
-  const fallback = scope === "personal" ? "agent" : "manual";
-  const id = await getDefaultFolderId(library, fallback);
+  const key = fallback ?? (scope === "personal" ? "agent" : "manual");
+  const id = await getDefaultFolderId(library, key);
   return describeTargetFolder(library, id);
 }
 

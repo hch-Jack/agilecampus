@@ -1052,7 +1052,7 @@ function buildBasePersonalTools(actorId: string) {
       execute: async ({ itemId, scope, teamId, folderId, filename }) => {
         const source = await describeLibraryItem(actorId, itemId);
         const target = await resolveLibraryScope(actorId, { scope, teamId }, { needEdit: true });
-        const dest = await resolveSaveFolder(target.library, scope, folderId);
+        const dest = await resolveSaveFolder(target.library, scope, folderId, "manual");
         return draftEnvelope(COPY_LIBRARY_FILE_TOOL, {
           itemId,
           scope,
