@@ -43,29 +43,37 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
+/** 选中资源库文件后交给父组件的最小信息 */
+export type LibraryPickItem = {
+  itemId: string;
+  filename: string;
+  mimeType: string | null;
+  size: number;
+};
+
 /**
- * 助手面板的「从资源库选择附件」。
+ * 通用的「从资源库选择附件」弹窗。
  *
- * 只负责选一个文件；选中后调 /api/assistant/files/from-library 把它登记成本次对话的
- * assistant 文件，父组件再按普通附件处理（随消息发给模型、可读、可再转发）。
+ * 只负责浏览 / 搜索 / 选一个文件；选中后由父组件执行实际动作
+ * （登记成助手附件、复制为任务附件、预上传为私信附件等）。
+ * 父组件返回错误文案时弹窗保持打开并在列表上方展示。
  */
-export function AssistantLibraryPicker({
+export function LibraryPicker({
   open,
   onClose,
-  onPick,
-  full,
+  onSelect,
+  full = false,
+  title = "从资源库选择附件",
+  hint,
 }: {
   open: boolean;
   onClose: () => void;
-  /** 拿到可用的 assistant 文件；父组件负责加入待发送附件 */
-  onPick: (file: {
-    id: string;
-    filename: string;
-    mimeType: string | null;
-    size: number;
-  }) => void;
+  /** 选中一个文件；返回错误文案表示失败，返回 null 表示成功并关闭弹窗 */
+  onSelect: (item: LibraryPickItem) => Promise<string | null>;
   /** 附件已满：禁止再选，但仍可浏览 */
-  full: boolean;
+  full?: boolean;
+  title?: string;
+  hint?: string;
 }) {
   const [sources, setSources] = useState<SourceSummary | null>(null);
   const [scope, setScope] = useState<Scope>({ kind: "personal" });
@@ -169,30 +177,11 @@ export function AssistantLibraryPicker({
     setPickingId(item.itemId);
     setError(null);
     try {
-      const res = await fetch("/api/assistant/files/from-library", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ itemId: item.itemId }),
-      });
-      const data = (await res.json().catch(() => null)) as
-        | {
-            id?: string;
-            filename?: string;
-            mimeType?: string | null;
-            size?: number;
-            error?: string;
-          }
-        | null;
-      if (!res.ok || !data?.id) {
-        setError(data?.error ?? "添加失败，请重试");
+      const err = await onSelect(item);
+      if (err) {
+        setError(err);
         return;
       }
-      onPick({
-        id: data.id,
-        filename: data.filename ?? item.filename,
-        mimeType: data.mimeType ?? item.mimeType,
-        size: data.size ?? item.size,
-      });
       onClose();
     } catch {
       setError("网络异常，请重试");
@@ -208,7 +197,7 @@ export function AssistantLibraryPicker({
       className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4"
       role="dialog"
       aria-modal="true"
-      aria-label="从资源库选择附件"
+      aria-label={title}
       onClick={() => (!pickingId ? onClose() : undefined)}
     >
       <div
@@ -216,7 +205,7 @@ export function AssistantLibraryPicker({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-2 flex items-center justify-between gap-2">
-          <p className="text-sm font-medium text-ink">从资源库选择附件</p>
+          <p className="text-sm font-medium text-ink">{title}</p>
           <button
             type="button"
             disabled={!!pickingId}
@@ -364,8 +353,8 @@ export function AssistantLibraryPicker({
 
         <p className="mt-2 text-[11px] text-ink-faint">
           {full
-            ? "本次消息的附件已满，移除一个后再选。"
-            : "选择后会作为本次对话的附件，可让助手读取、转发或存进任务。"}
+            ? "当前操作的附件已满，移除一个后再选。"
+            : (hint ?? "选择后会自动添加到当前操作。")}
         </p>
       </div>
     </div>,

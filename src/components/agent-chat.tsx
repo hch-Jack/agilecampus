@@ -18,8 +18,9 @@ import { MESSAGE_TAG_MAX, normalizeMessageTag } from "@/lib/message-tag";
 import { uploadFileRaw } from "@/lib/upload-client";
 import { Markdown } from "@/components/markdown";
 import { FilePreviewModal } from "@/components/file-preview";
-import { FileTypeIcon, FolderIcon } from "@/components/file-type-icon";
-import { AssistantLibraryPicker } from "@/components/assistant-library-picker";
+import { FileTypeIcon } from "@/components/file-type-icon";
+import { AttachmentSourceButton } from "@/components/attachment-source-button";
+import { LibraryPicker, type LibraryPickItem } from "@/components/library-picker";
 import { AssistantFileCards } from "@/components/assistant-file-cards";
 
 /**
@@ -389,6 +390,32 @@ export function AgentChat({
     setAttachments((list) =>
       list.some((f) => f.id === file.id) ? list : [...list, file],
     );
+  }
+
+  /** 资源库弹窗选中后的落库动作：登记为 assistant 文件，再放入待发送附件 */
+  async function pickFromLibrary(item: LibraryPickItem): Promise<string | null> {
+    const res = await fetch("/api/assistant/files/from-library", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ itemId: item.itemId }),
+    });
+    const data = (await res.json().catch(() => null)) as
+      | {
+          id?: string;
+          filename?: string;
+          mimeType?: string | null;
+          size?: number;
+          error?: string;
+        }
+      | null;
+    if (!res.ok || !data?.id) return data?.error ?? "添加失败，请重试";
+    addLibraryAttachment({
+      id: data.id,
+      filename: data.filename ?? item.filename,
+      mimeType: data.mimeType ?? item.mimeType,
+      size: data.size ?? item.size,
+    });
+    return null;
   }
 
   function toggleTagEditor(messageId: string) {
@@ -887,51 +914,17 @@ export function AgentChat({
               className="hidden"
               onChange={(e) => void uploadFiles(e.target.files)}
             />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
+            <AttachmentSourceButton
+              onLocal={() => fileInputRef.current?.click()}
+              onLibrary={() => setLibraryOpen(true)}
               disabled={
                 pending ||
                 disabled ||
-                uploading ||
                 attachments.length >= ASSISTANT_ATTACHMENTS_MAX
               }
-              aria-label="添加文件"
-              title={`添加文件（≤${MAX_FILE_SIZE_LABEL}，最多 ${ASSISTANT_ATTACHMENTS_MAX} 个）`}
-              className="ac-btn-ghost shrink-0 px-2 py-2 text-sm"
-            >
-              {uploading ? (
-                <span className="text-xs text-ink-faint">…</span>
-              ) : (
-                <svg
-                  viewBox="0 0 24 24"
-                  className="h-4 w-4"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden
-                >
-                  <path d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l9-9a3.4 3.4 0 014.8 4.8l-9 9a1.8 1.8 0 01-2.5-2.5l8.2-8.2" />
-                </svg>
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => setLibraryOpen(true)}
-              disabled={
-                pending ||
-                disabled ||
-                uploading ||
-                attachments.length >= ASSISTANT_ATTACHMENTS_MAX
-              }
-              aria-label="从资源库添加文件"
-              title="从资源库添加文件"
-              className="ac-btn-ghost shrink-0 px-2 py-2 text-sm"
-            >
-              <FolderIcon className="h-4 w-4" />
-            </button>
+              busy={uploading}
+              title={`添加附件（≤${MAX_FILE_SIZE_LABEL}，最多 ${ASSISTANT_ATTACHMENTS_MAX} 个）`}
+            />
           </>
         )}
         <input
@@ -951,11 +944,12 @@ export function AgentChat({
         </button>
       </div>
       {libraryOpen && (
-        <AssistantLibraryPicker
+        <LibraryPicker
           open
           onClose={() => setLibraryOpen(false)}
-          onPick={addLibraryAttachment}
+          onSelect={pickFromLibrary}
           full={attachments.length >= ASSISTANT_ATTACHMENTS_MAX}
+          hint="选择后会作为本次对话的附件，可让助手读取、转发或存进任务。"
         />
       )}
       {/* 挂到 body：面板自身有宽度/层级约束，弹窗不能被它裁掉或压住 */}

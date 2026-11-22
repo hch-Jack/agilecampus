@@ -5,6 +5,8 @@ import { useActionState, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FilePreviewModal } from "@/components/file-preview";
 import { FileTypeIcon } from "@/components/file-type-icon";
+import { AttachmentSourceButton } from "@/components/attachment-source-button";
+import { LibraryPicker } from "@/components/library-picker";
 import { EditDocumentButton } from "@/components/documents/edit-document-button";
 import { detectEditableFormat } from "@/lib/documents/format";
 import { formatShortDateTime } from "@/lib/time";
@@ -368,6 +370,8 @@ function UploadCard({
   const inputRef = useRef<HTMLInputElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const taskId = selectedTaskId || tasks[0]?.id;
 
   // 深度缩进用全角空格：下拉里能看出层级
   const depthOf = new Map<string, number>();
@@ -376,16 +380,9 @@ function UploadCard({
     depthOf.set(t.id, parentDepth + 1);
   }
 
-  async function submit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const taskId = selectedTaskId || tasks[0]?.id;
-    const file = inputRef.current?.files?.[0];
+  async function uploadLocal(file: File) {
     if (!taskId) {
       setError("请选择要上传到的任务");
-      return;
-    }
-    if (!file) {
-      setError("请选择要上传的文件");
       return;
     }
     if (file.size === 0) {
@@ -405,17 +402,33 @@ function UploadCard({
       projectId,
     });
     setPending(false);
+    if (inputRef.current) inputRef.current.value = "";
     if (!res.ok) {
       setError(res.error);
       return;
     }
-    if (inputRef.current) inputRef.current.value = "";
     router.refresh();
   }
 
+  async function pickFromLibrary(item: { itemId: string }): Promise<string | null> {
+    if (!taskId) return "请选择要上传到的任务";
+    setPending(true);
+    setError("");
+    const res = await fetch("/api/attachments/from-library", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ itemId: item.itemId, taskId }),
+    });
+    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+    setPending(false);
+    if (!res.ok) return data?.error ?? "添加失败，请重试";
+    router.refresh();
+    return null;
+  }
+
   return (
-    <form onSubmit={submit} className="ac-card space-y-2 p-5">
-      <p className="text-sm font-medium text-ink">上传文件</p>
+    <div className="ac-card space-y-2 p-5">
+      <p className="text-sm font-medium text-ink">添加文件到任务</p>
       <div className="flex flex-wrap items-center gap-2">
         <select
           value={selectedTaskId}
@@ -433,18 +446,37 @@ function UploadCard({
         <input
           ref={inputRef}
           type="file"
-          required
-          className="ac-field min-w-0 flex-1 text-sm file:mr-2 file:rounded-field file:border-0 file:bg-sunken file:px-2 file:py-1 file:text-xs file:text-ink"
+          className="hidden"
+          aria-label="选择本地文件"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void uploadLocal(file);
+          }}
         />
-        <button disabled={pending} className="ac-btn">
-          {pending ? "上传中…" : "上传到所选任务"}
-        </button>
+        <AttachmentSourceButton
+          onLocal={() => inputRef.current?.click()}
+          onLibrary={() => setLibraryOpen(true)}
+          disabled={pending || !taskId}
+          busy={pending}
+          text="添加附件"
+          title={`添加附件（≤${MAX_FILE_SIZE_LABEL}）`}
+          className="ac-btn-ghost inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs"
+        />
       </div>
       <p className="text-xs text-ink-faint">
-        文件会挂到所选任务上，任务分配者上传的会归入「任务分配者提供的文件」。单文件不超过{" "}
-        {MAX_FILE_SIZE_LABEL}。
+        本地上传或从资源库选取；文件会挂到所选任务上，任务分配者上传的会归入「任务分配者提供的文件」。
+        单文件不超过 {MAX_FILE_SIZE_LABEL}。
       </p>
       {error && <p className="text-sm text-high">{error}</p>}
-    </form>
+      {libraryOpen && (
+        <LibraryPicker
+          open
+          onClose={() => setLibraryOpen(false)}
+          onSelect={pickFromLibrary}
+          title="从资源库添加任务附件"
+          hint="选中后会复制一份到所选任务，之后删除资源库文件不影响它。"
+        />
+      )}
+    </div>
   );
 }

@@ -15,6 +15,8 @@ import Link from "next/link";
 import { IdentityBadge } from "@/components/badges";
 import { FilePreviewModal } from "@/components/file-preview";
 import { FileTypeIcon } from "@/components/file-type-icon";
+import { AttachmentSourceButton } from "@/components/attachment-source-button";
+import { LibraryPicker, type LibraryPickItem } from "@/components/library-picker";
 import { RejectReasonDialog } from "@/components/reject-reason-dialog";
 import { useMessagesPanel } from "@/components/messages-panel-context";
 import { detectPreviewKind } from "@/lib/file-preview";
@@ -510,6 +512,14 @@ export function MessagesClient({
 
   const [draft, setDraft] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  /** 从资源库选取后预上传的附件（已有 dm_attachments 行，发送时直接认领） */
+  const [staged, setStaged] = useState<{
+    id: string;
+    filename: string;
+    mimeType: string | null;
+    size: number;
+  } | null>(null);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [sendError, setSendError] = useState("");
   const [sending, setSending] = useState(false);
 
@@ -1194,15 +1204,15 @@ export function MessagesClient({
     // 系统消息会话没有输入框；这里兜底，也帮 TS 收窄出带 id 的会话
     if (sending || !a || a.kind === "system") return;
     const content = draft.trim();
-    if (!content && !file) return;
+    if (!content && !file && !staged) return;
     if (file && file.size > MAX_FILE_SIZE) {
       setSendError(`文件不能超过 ${MAX_FILE_SIZE_LABEL}`);
       return;
     }
     setSending(true);
     setSendError("");
-    let attachmentId: string | null = null;
-    if (file) {
+    let attachmentId: string | null = staged?.id ?? null;
+    if (!attachmentId && file) {
       // 先把文件流式传到服务端（不经过 server action 的 body 上限），再只带 id 发消息
       const up = await uploadFileRaw<{ id: string }>("/api/dm/attachments/upload", file);
       if (!up.ok) {
@@ -1226,6 +1236,7 @@ export function MessagesClient({
     }
     setDraft("");
     setFile(null);
+    setStaged(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
     // 自己刚发的消息必须可见：即便刚才在翻历史，也跳回底部
     pendingJumpRef.current = null;
@@ -1244,6 +1255,36 @@ export function MessagesClient({
     const f = e.target.files?.[0] ?? null;
     setSendError(f && f.size > MAX_FILE_SIZE ? `文件不能超过 ${MAX_FILE_SIZE_LABEL}` : "");
     setFile(f);
+    if (f) setStaged(null);
+  }
+
+  /** 资源库文件 → 预上传的私信附件：发送时再挂到消息上 */
+  async function pickFromLibrary(item: LibraryPickItem): Promise<string | null> {
+    const res = await fetch("/api/dm/attachments/from-library", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ itemId: item.itemId }),
+    });
+    const data = (await res.json().catch(() => null)) as
+      | {
+          id?: string;
+          filename?: string;
+          mimeType?: string | null;
+          size?: number;
+          error?: string;
+        }
+      | null;
+    if (!res.ok || !data?.id) return data?.error ?? "添加失败，请重试";
+    setFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    setStaged({
+      id: data.id,
+      filename: data.filename ?? item.filename,
+      mimeType: data.mimeType ?? item.mimeType,
+      size: data.size ?? item.size,
+    });
+    setSendError("");
+    return null;
   }
 
   // —— 渲染 ——
@@ -1329,18 +1370,21 @@ export function MessagesClient({
 
   const sendForm = (
     <form onSubmit={handleSend} className="shrink-0 border-t border-line p-3">
-      {file && (
+      {(file || staged) && (
         <p className="mb-2 flex items-center gap-2 rounded-field bg-sunken px-2.5 py-1.5 text-xs text-ink-soft">
           <FileTypeIcon
-            filename={file.name}
-            mimeType={file.type}
+            filename={staged?.filename ?? file!.name}
+            mimeType={staged?.mimeType ?? file!.type}
             className="h-4 w-4 shrink-0"
           />
-          <span className="min-w-0 flex-1 truncate">{file.name}</span>
+          <span className="min-w-0 flex-1 truncate">
+            {staged?.filename ?? file!.name}
+          </span>
           <button
             type="button"
             onClick={() => {
               setFile(null);
+              setStaged(null);
               if (fileInputRef.current) fileInputRef.current.value = "";
             }}
             className="text-ink-faint hover:text-high"
@@ -1359,14 +1403,13 @@ export function MessagesClient({
           onChange={pickFile}
           aria-label="选择文件"
         />
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
+        <AttachmentSourceButton
+          onLocal={() => fileInputRef.current?.click()}
+          onLibrary={() => setLibraryOpen(true)}
+          disabled={sending}
+          title={`添加附件（≤${MAX_FILE_SIZE_LABEL}）`}
           className="ac-btn-ghost px-2.5 py-2 text-sm"
-          title="传文件（≤1GB）"
-        >
-          📎
-        </button>
+        />
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -1382,10 +1425,23 @@ export function MessagesClient({
           className="max-h-32 min-h-9 flex-1 resize-none rounded-field border border-line-strong bg-surface px-3 py-2 text-sm outline-none focus:border-primary"
           aria-label="消息内容"
         />
-        <button type="submit" disabled={sending || (!draft.trim() && !file)} className="ac-btn px-4 py-2 text-sm">
+        <button
+          type="submit"
+          disabled={sending || (!draft.trim() && !file && !staged)}
+          className="ac-btn px-4 py-2 text-sm"
+        >
           {sending ? "发送中…" : "发送"}
         </button>
       </div>
+      {libraryOpen && (
+        <LibraryPicker
+          open
+          onClose={() => setLibraryOpen(false)}
+          onSelect={pickFromLibrary}
+          title="从资源库添加附件"
+          hint="选中后会预上传为这条私信/群消息的附件，点发送才真正发出去。"
+        />
+      )}
     </form>
   );
 
