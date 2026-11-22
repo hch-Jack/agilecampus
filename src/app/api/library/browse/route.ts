@@ -55,6 +55,7 @@ export async function GET(req: Request) {
       items: view.items.map((i) => ({
         itemId: i.itemId,
         filename: i.filename,
+        folderPath: i.folderPath,
         mimeType: i.mimeType,
         size: i.size,
         typeLabel: i.typeLabel,

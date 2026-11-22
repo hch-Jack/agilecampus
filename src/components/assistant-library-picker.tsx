@@ -19,6 +19,7 @@ type FolderRow = {
 type ItemRow = {
   itemId: string;
   filename: string;
+  folderPath?: string;
   mimeType: string | null;
   size: number;
   typeLabel: string;
@@ -346,8 +347,9 @@ export function AssistantLibraryPicker({
                     />
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-ink">{item.filename}</span>
-                      <span className="block text-[11px] text-ink-faint">
+                      <span className="block truncate text-[11px] text-ink-faint">
                         {item.typeLabel}｜{formatSize(item.size)}
+                        {appliedQuery && item.folderPath ? `｜${item.folderPath}` : ""}
                       </span>
                     </span>
                     <span className="shrink-0 text-primary">
