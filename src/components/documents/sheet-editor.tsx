@@ -9,6 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import * as XLSX from "xlsx";
+import type ExcelJS from "exceljs";
 import {
   cellDisplay,
   cellRaw,
@@ -21,15 +22,45 @@ import {
   type SheetBook,
 } from "@/lib/documents/sheet.client";
 import {
+  ensureExcelSheetLimits,
+  excelColWidth,
+  excelDisplay,
+  excelRange,
+  excelRaw,
+  excelRowHeight,
+  excelSetCell,
+  excelSetColWidth,
+  excelSetRowHeight,
+  excelSheet,
+  excelSheetNames,
+  loadExcelBook,
+  writeExcelBook,
+} from "@/lib/documents/sheet-exceljs.client";
+import {
   SHEET_MAX_COLS,
   SHEET_MAX_ROWS,
   type SheetBookType,
 } from "@/lib/documents/format";
 
 export type SheetEditorApi = {
-  /** 序列化为保存用的字节；解析失败或关闭时返回 null */
-  getBytes: () => Uint8Array | null;
+  /** 序列化为保存用的字节；解析失败或编辑器尚未就绪时返回 null */
+  getBytes: () => Promise<Uint8Array | null>;
   isDirty: () => boolean;
+};
+
+type SheetRef = XLSX.WorkSheet | ExcelJS.Worksheet;
+
+type Engine = {
+  names: string[];
+  sheet: (index: number) => SheetRef | null;
+  range: (sheet: SheetRef) => { rows: number; cols: number };
+  display: (sheet: SheetRef, row: number, col: number) => string;
+  raw: (sheet: SheetRef, row: number, col: number) => string;
+  setCell: (sheet: SheetRef, row: number, col: number, value: string) => void;
+  colWidth: (sheet: SheetRef, col: number) => number;
+  setColWidth: (sheet: SheetRef, col: number, px: number) => void;
+  rowHeight: (sheet: SheetRef, row: number) => number;
+  setRowHeight: (sheet: SheetRef, row: number, px: number) => void;
 };
 
 type Props = {
@@ -48,8 +79,8 @@ const DEFAULT_ROW_HEIGHT = 28;
 const MIN_COL_WIDTH = 32;
 const MIN_ROW_HEIGHT = 18;
 
-/** 读取 worksheet 的列宽（像素）；SheetJS 写入时 `!cols[].wpx` 会被保留 */
-function colWidth(ws: XLSX.WorkSheet, c: number): number {
+/** 旧式 .xls / .csv（SheetJS）列宽读取；写入时 `!cols[].wpx` 会被保留 */
+function sheetColWidth(ws: XLSX.WorkSheet, c: number): number {
   const col = ws["!cols"]?.[c];
   if (!col) return DEFAULT_COL_WIDTH;
   if (typeof col.wpx === "number") return col.wpx;
@@ -58,16 +89,60 @@ function colWidth(ws: XLSX.WorkSheet, c: number): number {
   return DEFAULT_COL_WIDTH;
 }
 
-function rowHeight(ws: XLSX.WorkSheet, r: number): number {
+function sheetRowHeight(ws: XLSX.WorkSheet, r: number): number {
   const row = ws["!rows"]?.[r];
   if (row && typeof row.hpx === "number") return row.hpx;
-  if (row && typeof row.hpt === "number") return Math.round(row.hpt * 4 / 3);
+  if (row && typeof row.hpt === "number") return Math.round((row.hpt * 4) / 3);
   return DEFAULT_ROW_HEIGHT;
 }
 
+function sheetjsEngine(wb: SheetBook, bookType: SheetBookType): Engine {
+  return {
+    names: wb.SheetNames,
+    sheet: (index) => wb.Sheets[wb.SheetNames[index]] ?? null,
+    range: (sheet) => sheetRange(sheet as XLSX.WorkSheet),
+    display: (sheet, r, c) => cellDisplay(sheet as XLSX.WorkSheet, r, c),
+    raw: (sheet, r, c) => cellRaw(sheet as XLSX.WorkSheet, r, c),
+    setCell: (sheet, r, c, value) =>
+      setCellValue(sheet as XLSX.WorkSheet, r, c, value, bookType),
+    colWidth: (sheet, c) => sheetColWidth(sheet as XLSX.WorkSheet, c),
+    setColWidth: (sheet, c, px) => {
+      const ws = sheet as XLSX.WorkSheet;
+      const cols = ws["!cols"] ?? [];
+      cols[c] = { ...(cols[c] ?? {}), wpx: px };
+      ws["!cols"] = cols;
+    },
+    rowHeight: (sheet, r) => sheetRowHeight(sheet as XLSX.WorkSheet, r),
+    setRowHeight: (sheet, r, px) => {
+      const ws = sheet as XLSX.WorkSheet;
+      const rows = ws["!rows"] ?? [];
+      rows[r] = { ...(rows[r] ?? {}), hpx: px };
+      ws["!rows"] = rows;
+    },
+  };
+}
+
+function exceljsEngine(wb: ExcelJS.Workbook): Engine {
+  return {
+    names: excelSheetNames(wb),
+    sheet: (index) => excelSheet(wb, index),
+    range: (sheet) => excelRange(sheet as ExcelJS.Worksheet),
+    display: (sheet, r, c) => excelDisplay(sheet as ExcelJS.Worksheet, r, c),
+    raw: (sheet, r, c) => excelRaw(sheet as ExcelJS.Worksheet, r, c),
+    setCell: (sheet, r, c, value) => excelSetCell(sheet as ExcelJS.Worksheet, r, c, value),
+    colWidth: (sheet, c) => excelColWidth(sheet as ExcelJS.Worksheet, c),
+    setColWidth: (sheet, c, px) => excelSetColWidth(sheet as ExcelJS.Worksheet, c, px),
+    rowHeight: (sheet, r) => excelRowHeight(sheet as ExcelJS.Worksheet, r),
+    setRowHeight: (sheet, r, px) => excelSetRowHeight(sheet as ExcelJS.Worksheet, r, px),
+  };
+}
+
 /**
- * 表格编辑器：SheetJS 直接改 worksheet 单元格，保留未编辑单元格的
- * 类型/公式/数字格式；只做单元格内容编辑，不做样式/行列增删。
+ * 表格编辑器。
+ *
+ * .xlsx 走 ExcelJS（MIT）：样式、列宽、行高、合并单元格与数字格式随文件
+ * 原样加载并写回；旧式 .xls / .csv 仍走 SheetJS（这些格式本身不承载现代
+ * 样式，或 ExcelJS 不支持二进制 .xls）。
  */
 export function SheetEditor({
   bytes,
@@ -79,6 +154,8 @@ export function SheetEditor({
   onSave,
 }: Props) {
   const [wb, setWb] = useState<SheetBook | null>(null);
+  const [ewb, setEwb] = useState<ExcelJS.Workbook | null>(null);
+  const [editTick, setEditTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [activeSheet, setActiveSheet] = useState(0);
   const [selected, setSelected] = useState<{ r: number; c: number }>({ r: 0, c: 0 });
@@ -92,22 +169,36 @@ export function SheetEditor({
     let cancelled = false;
     // 解析放到下一拍：避免 effect 内同步 setState 触发级联渲染
     const timer = window.setTimeout(() => {
-      if (cancelled) return;
-      try {
-        const parsed = parseSheet(bytes, bookType);
-        const first = parsed.Sheets[parsed.SheetNames[0]];
-        setWb(parsed);
-        setError(null);
-        setActiveSheet(0);
-        setSelected({ r: 0, c: 0 });
-        setEditing(null);
-        setStartRow(0);
-        setDirty(false);
-        setFormula(first ? cellRaw(first, 0, 0) : "");
-      } catch (e) {
-        setWb(null);
-        setError(e instanceof Error ? e.message : "表格解析失败");
-      }
+      void (async () => {
+        try {
+          if (bookType === "xlsx") {
+            const parsed = await loadExcelBook(bytes);
+            if (cancelled) return;
+            const first = excelSheet(parsed, 0);
+            setEwb(parsed);
+            setWb(null);
+            setFormula(first ? excelRaw(first, 0, 0) : "");
+          } else {
+            const parsed = parseSheet(bytes, bookType);
+            if (cancelled) return;
+            const first = parsed.Sheets[parsed.SheetNames[0]];
+            setWb(parsed);
+            setEwb(null);
+            setFormula(first ? cellRaw(first, 0, 0) : "");
+          }
+          setError(null);
+          setActiveSheet(0);
+          setSelected({ r: 0, c: 0 });
+          setEditing(null);
+          setStartRow(0);
+          setDirty(false);
+        } catch (e) {
+          if (cancelled) return;
+          setWb(null);
+          setEwb(null);
+          setError(e instanceof Error ? e.message : "表格解析失败");
+        }
+      })();
     }, 0);
     return () => {
       cancelled = true;
@@ -115,30 +206,42 @@ export function SheetEditor({
     };
   }, [bytes, bookType, reloadToken]);
 
-  const sheetName = wb?.SheetNames[activeSheet] ?? null;
-  const ws = sheetName && wb ? wb.Sheets[sheetName] : null;
+  const engine = useMemo<Engine | null>(() => {
+    if (bookType === "xlsx") return ewb ? exceljsEngine(ewb) : null;
+    return wb ? sheetjsEngine(wb, bookType) : null;
+  }, [bookType, wb, ewb]);
+
+  const sheet = useMemo(() => engine?.sheet(activeSheet) ?? null, [engine, activeSheet]);
+  // editTick 只用于强制重渲染：ExcelJS 改的是可变工作簿，对象引用不会变
+  void editTick;
 
   const range = useMemo(() => {
-    const r = ws ? sheetRange(ws) : { rows: 0, cols: 0 };
+    const r = engine && sheet ? engine.range(sheet) : { rows: 0, cols: 0 };
     return {
       rows: Math.max(r.rows, 30),
       cols: Math.min(Math.max(r.cols, 8), SHEET_MAX_COLS),
     };
-  }, [ws]);
+  }, [engine, sheet]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      setFormula(ws ? cellRaw(ws, selected.r, selected.c) : "");
+      setFormula(engine && sheet ? engine.raw(sheet, selected.r, selected.c) : "");
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [ws, selected]);
+  }, [engine, sheet, selected]);
 
   const markDirty = useCallback(() => {
     setDirty(true);
     onDirty();
   }, [onDirty]);
 
-  // 拖动列宽 / 行高：写回 worksheet 的 !cols / !rows，保存时随文件一起写出。
+  /** 编辑后触发重渲染：ExcelJS 直接改可变对象，SheetJS 换一个 workBook 引用 */
+  const touch = useCallback(() => {
+    if (bookType === "xlsx") setEditTick((t) => t + 1);
+    else setWb((prev) => (prev ? { ...prev } : prev));
+  }, [bookType]);
+
+  // 拖动列宽 / 行高：写回工作表自身的列宽/行高，保存时随文件一起写出。
   const resizeCleanupRef = useRef<(() => void) | null>(null);
   useEffect(() => () => resizeCleanupRef.current?.(), []);
 
@@ -147,13 +250,13 @@ export function SheetEditor({
     index: number,
     e: ReactPointerEvent<HTMLElement>,
   ) {
-    if (readOnly || !ws) return;
+    if (readOnly || !engine || !sheet) return;
     e.preventDefault();
     e.stopPropagation();
     resizeCleanupRef.current?.();
 
     const startPos = kind === "col" ? e.clientX : e.clientY;
-    const base = kind === "col" ? colWidth(ws, index) : rowHeight(ws, index);
+    const base = kind === "col" ? engine.colWidth(sheet, index) : engine.rowHeight(sheet, index);
     const min = kind === "col" ? MIN_COL_WIDTH : MIN_ROW_HEIGHT;
     const max = kind === "col" ? 600 : 300;
     let latest = base;
@@ -161,16 +264,9 @@ export function SheetEditor({
 
     const apply = () => {
       raf = 0;
-      if (kind === "col") {
-        const cols = ws["!cols"] ?? [];
-        cols[index] = { ...(cols[index] ?? {}), wpx: latest };
-        ws["!cols"] = cols;
-      } else {
-        const rows = ws["!rows"] ?? [];
-        rows[index] = { ...(rows[index] ?? {}), hpx: latest };
-        ws["!rows"] = rows;
-      }
-      setWb((prev) => (prev ? { ...prev } : prev));
+      if (kind === "col") engine.setColWidth(sheet, index, latest);
+      else engine.setRowHeight(sheet, index, latest);
+      touch();
       markDirty();
     };
 
@@ -197,23 +293,28 @@ export function SheetEditor({
 
   const commitCell = useCallback(
     (r: number, c: number, value: string) => {
-      if (!ws || readOnly) return;
+      if (!engine || !sheet || readOnly) return;
       if (r >= SHEET_MAX_ROWS || c >= SHEET_MAX_COLS) {
         window.alert(`表格最多 ${SHEET_MAX_ROWS} 行 × ${SHEET_MAX_COLS} 列`);
         return;
       }
-      setCellValue(ws, r, c, value, bookType);
-      setWb({ ...wb! });
+      engine.setCell(sheet, r, c, value);
+      touch();
       markDirty();
-      setFormula(cellRaw(ws, r, c));
+      setFormula(engine.raw(sheet, r, c));
     },
-    [ws, wb, readOnly, bookType, markDirty],
+    [engine, sheet, readOnly, touch, markDirty],
   );
 
   // 暴露命令式 API 给父组件的保存流程
   useEffect(() => {
     apiRef.current = {
-      getBytes: () => {
+      getBytes: async () => {
+        if (bookType === "xlsx") {
+          if (!ewb) return null;
+          ensureExcelSheetLimits(ewb);
+          return writeExcelBook(ewb);
+        }
         if (!wb) return null;
         ensureSheetLimits(wb);
         markFullCalc(wb);
@@ -221,7 +322,7 @@ export function SheetEditor({
       },
       isDirty: () => dirty,
     };
-  }, [apiRef, wb, bookType, dirty]);
+  }, [apiRef, wb, ewb, bookType, dirty]);
 
   useEffect(() => {
     if (!editing) return;
@@ -229,19 +330,19 @@ export function SheetEditor({
       if (e.key === "Escape") {
         e.preventDefault();
         setEditing(null);
-        setFormula(ws ? cellRaw(ws, editing.r, editing.c) : "");
+        setFormula(engine && sheet ? engine.raw(sheet, editing.r, editing.c) : "");
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [editing, ws]);
+  }, [editing, engine, sheet]);
 
   if (error) {
     return (
       <div className="flex flex-1 items-center justify-center p-8 text-sm text-danger">{error}</div>
     );
   }
-  if (!wb || !ws) {
+  if (!engine || !sheet) {
     return <div className="flex flex-1 items-center justify-center p-8 text-sm text-ink-faint">表格加载中…</div>;
   }
 
@@ -275,7 +376,7 @@ export function SheetEditor({
             }
           }}
           onBlur={() => {
-            if (!readOnly && formula !== cellRaw(ws, selected.r, selected.c)) {
+            if (!readOnly && formula !== engine.raw(sheet, selected.r, selected.c)) {
               commitCell(selected.r, selected.c, formula);
             }
           }}
@@ -288,7 +389,7 @@ export function SheetEditor({
           <colgroup>
             <col style={{ width: 40 }} />
             {cols.map((c) => (
-              <col key={c} style={{ width: colWidth(ws, c) }} />
+              <col key={c} style={{ width: engine.colWidth(sheet, c) }} />
             ))}
           </colgroup>
           <thead>
@@ -317,7 +418,7 @@ export function SheetEditor({
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r} style={{ height: rowHeight(ws, r) }}>
+              <tr key={r} style={{ height: engine.rowHeight(sheet, r) }}>
                 <th
                   className={`sticky left-0 z-10 w-10 border border-line bg-surface-2 px-1 py-1 text-xs font-normal ${
                     selected.r === r ? "text-ink" : "text-ink-faint"
@@ -350,7 +451,7 @@ export function SheetEditor({
                       onDoubleClick={() => {
                         if (readOnly) return;
                         setSelected({ r, c });
-                        setEditing({ r, c, value: cellRaw(ws, r, c) });
+                        setEditing({ r, c, value: engine.raw(sheet, r, c) });
                       }}
                     >
                       {isEditing ? (
@@ -378,14 +479,14 @@ export function SheetEditor({
                             }
                           }}
                           onBlur={() => {
-                            if (editing.value !== cellRaw(ws, r, c)) {
+                            if (editing.value !== engine.raw(sheet, r, c)) {
                               commitCell(r, c, editing.value);
                             }
                             setEditing(null);
                           }}
                         />
                       ) : (
-                        cellDisplay(ws, r, c)
+                        engine.display(sheet, r, c)
                       )}
                     </td>
                   );
@@ -399,7 +500,7 @@ export function SheetEditor({
       {/* 工作表页签 + 翻页 */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-3 py-1.5">
         <div className="flex flex-wrap items-center gap-1">
-          {wb.SheetNames.map((name, i) => (
+          {engine.names.map((name, i) => (
             <button
               key={name}
               type="button"
@@ -442,7 +543,9 @@ export function SheetEditor({
       </div>
       <div className="border-t border-line px-3 py-1 text-[11px] text-ink-faint">
         双击单元格编辑；公式以 = 开头 · 拖动列标右缘调列宽、行号下缘调行高 ·
-        字体/颜色/图表/条件格式不随社区版 SheetJS 保存
+        {bookType === "xlsx"
+          ? " .xlsx 由 ExcelJS 写回，字体/颜色/边框/列宽等样式保留"
+          : " 旧式 .xls / .csv 不保留字体颜色等样式"}
       </div>
     </div>
   );

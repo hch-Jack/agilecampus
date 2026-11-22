@@ -276,7 +276,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
       const bytes = await docxApiRef.current?.getBytes();
       return bytes ? { kind: "docx", bytes } : null;
     }
-    const bytes = sheetApiRef.current?.getBytes() ?? null;
+    const bytes = (await sheetApiRef.current?.getBytes()) ?? null;
     return bytes ? { kind: "sheet", bytes } : null;
   }
 
