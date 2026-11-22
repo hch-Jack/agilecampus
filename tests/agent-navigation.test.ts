@@ -52,6 +52,10 @@ describe("resolveNavigation：固定页面", () => {
       label: "我的团队",
       href: "/teams",
     });
+    await expect(resolveNavigation(student.id, { target: "library" })).resolves.toEqual({
+      label: "个人资源库",
+      href: "/library",
+    });
   });
 });
 
@@ -106,7 +110,7 @@ describe("resolveNavigation：项目与任务", () => {
 describe("resolveNavigation：团队页面", () => {
   beforeEach(resetDb);
 
-  it("成员可打开团队四个子页，路径与标签随团队名", async () => {
+  it("成员可打开团队各子页（含资源库），路径与标签随团队名", async () => {
     const { student, team } = await scene();
     await expect(
       resolveNavigation(student.id, { target: "team_resources", teamId: team.id }),
@@ -123,6 +127,9 @@ describe("resolveNavigation：团队页面", () => {
     await expect(
       resolveNavigation(student.id, { target: "team_projects", teamId: team.id }),
     ).resolves.toEqual({ label: "东吴实验室 · 项目", href: `/teams/${team.id}/projects` });
+    await expect(
+      resolveNavigation(student.id, { target: "team_library", teamId: team.id }),
+    ).resolves.toEqual({ label: "东吴实验室 · 资源库", href: `/teams/${team.id}/library` });
   });
 
   it("非成员被拒", async () => {
