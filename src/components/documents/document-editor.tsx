@@ -17,6 +17,7 @@ import { PptxEditorHost, type PptxEditorApi } from "./pptx-editor";
 import { SheetEditor, type SheetEditorApi } from "./sheet-editor";
 import { SuperDocEditor, type SuperDocEditorApi } from "./superdoc-editor";
 import { TextEditor } from "./text-editor";
+import { XlsxEditorHost, type XlsxEditorApi } from "./xlsx-editor";
 import { useDocumentEvents } from "./use-document-events";
 import type { DocumentEditorInitial, DocumentVersionDto, LockView, PresenceUser } from "./editor-types";
 
@@ -126,14 +127,15 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
   const [sidebar, setSidebar] = useState<null | "versions" | "permissions">(null);
   const [saveAsOpen, setSaveAsOpen] = useState(false);
   const [savedHint, setSavedHint] = useState("");
+  const [exitTarget, setExitTarget] = useState<{ href: string | null } | null>(null);
 
   const sheetApiRef = useRef<SheetEditorApi | null>(null);
+  const xlsxApiRef = useRef<XlsxEditorApi | null>(null);
   const docxApiRef = useRef<SuperDocEditorApi | null>(null);
   const pptxApiRef = useRef<PptxEditorApi | null>(null);
   const savingRef = useRef(false);
   const pendingRef = useRef(false);
   const reloadingRef = useRef(false);
-  const lastSaveAtRef = useRef(0);
   const lastKickRef = useRef(0);
   const dirtyRef = useRef(dirty);
   const versionRef = useRef(version);
@@ -288,7 +290,10 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
       const bytes = await pptxApiRef.current?.getBytes();
       return bytes ? { kind: "pptx", bytes } : null;
     }
-    const bytes = (await sheetApiRef.current?.getBytes()) ?? null;
+    const bytes =
+      (bookType === "xlsx"
+        ? await xlsxApiRef.current?.getBytes()
+        : await sheetApiRef.current?.getBytes()) ?? null;
     return bytes ? { kind: "sheet", bytes } : null;
   }
 
@@ -363,7 +368,6 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
 
       if (res.ok) {
         const now = nowMs();
-        lastSaveAtRef.current = now;
         setDirty(false);
         dirtyRef.current = false;
         setSavePhase({ kind: "saved", at: now });
@@ -514,30 +518,8 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
     };
   }, [lockUrl, sessionId]);
 
-  // 自动保存：按格式防抖 + 最小间隔；有冲突/远程新版本时暂停
-  useEffect(() => {
-    if (!dirty || !editingAllowed || conflict || remote) return;
-    const heavy = format === "docx" || format === "pptx";
-    const debounce = format === "text" ? 1500 : heavy ? 3000 : 2000;
-    const minGap = format === "text" ? 8000 : heavy ? 20000 : 15000;
-    const wait = Math.max(debounce, minGap - (Date.now() - lastSaveAtRef.current));
-    const timer = window.setTimeout(() => {
-      void saveRef.current({ mode: "autosave" });
-    }, wait);
-    return () => window.clearTimeout(timer);
-  }, [dirty, editingAllowed, conflict, remote, format, text]);
-
-  // 切走标签页时尽量落一次盘
-  useEffect(() => {
-    const onVisibility = () => {
-      if (document.visibilityState !== "hidden") return;
-      if (!dirtyRef.current || !canEditRef.current || conflictRef.current || revokedRef.current)
-        return;
-      void saveRef.current({ mode: "autosave" });
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, []);
+  // 不做自动保存：未保存的修改只在用户点「保存」或退出确认时落库，
+  // 避免每次自动保存都生成一个新版本。离开页面前仍由浏览器兜底提示。
 
   // 未保存离开提示
   useEffect(() => {
@@ -548,6 +530,27 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
     };
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, []);
+
+  // 应用内导航（顶栏、面包屑等）在未保存时先拦下来询问
+  useEffect(() => {
+    const onClick = (event: MouseEvent) => {
+      if (!dirtyRef.current || event.defaultPrevented) return;
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+        return;
+      const anchor = (event.target as Element | null)?.closest?.("a[href]");
+      if (!(anchor instanceof HTMLAnchorElement)) return;
+      if (anchor.target === "_blank" || anchor.hasAttribute("download")) return;
+      // 编辑器内容里的链接（文档内跳转/外链）不拦
+      if (anchor.closest("[data-doc-editor]")) return;
+      const href = anchor.getAttribute("href");
+      if (!href || href.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(href)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setExitTarget({ href });
+    };
+    window.addEventListener("click", onClick, true);
+    return () => window.removeEventListener("click", onClick, true);
   }, []);
 
   // 全局 Ctrl/Cmd+S（各编辑器内部的快捷键靠 kick 去重）
@@ -700,6 +703,38 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
     setSaveAsOpen(true);
   }
 
+  /** 返回/离开页面：有未保存修改时先让用户选保存还是放弃 */
+  function requestExit(href: string | null) {
+    if (!dirtyRef.current || !editingAllowed) {
+      if (href) router.push(href);
+      else router.back();
+      return;
+    }
+    setExitTarget({ href });
+  }
+
+  function applyExit(target: { href: string | null }) {
+    setExitTarget(null);
+    if (target.href) router.push(target.href);
+    else router.back();
+  }
+
+  async function saveAndExit() {
+    const target = exitTarget;
+    if (!target) return;
+    const ok = await saveRef.current({ mode: "manual" });
+    if (!ok) return; // 保存失败/冲突：留在页面处理
+    applyExit(target);
+  }
+
+  function discardAndExit() {
+    const target = exitTarget;
+    if (!target) return;
+    setDirty(false);
+    dirtyRef.current = false;
+    applyExit(target);
+  }
+
   async function saveToLibrary(input: LibrarySaveInput): Promise<{
     ok: boolean;
     error?: string;
@@ -714,7 +749,8 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
           scope: input.scope,
         });
         if (input.teamId) query.set("teamId", input.teamId);
-        if (input.folderId) query.set("folderId", input.folderId);
+        if (input.folderId === null) query.set("folderId", "root");
+        else if (input.folderId) query.set("folderId", input.folderId);
         const endpoint =
           payload.kind === "sheet"
             ? "save-as-library-sheet"
@@ -734,7 +770,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
             filename: input.filename,
             scope: input.scope,
             teamId: input.teamId,
-            folderId: input.folderId,
+            folderId: input.folderId === null ? "root" : input.folderId,
             content: { kind: "text" as const, text: payload.text },
           }),
         });
@@ -830,14 +866,29 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
     : "";
 
   return (
-    <div className="-mx-4 -my-4 flex h-[calc(100dvh-3rem)] flex-col overflow-hidden border-line bg-surface sm:-mx-6 sm:-my-6 sm:h-[calc(100dvh-4rem)] sm:border">
+    <div
+      data-doc-editor-root
+      className="-mx-4 -my-4 flex h-[calc(100dvh-3rem)] w-full flex-col overflow-hidden border-line bg-surface sm:-mx-6 sm:-my-6 sm:h-[calc(100dvh-4rem)] sm:border"
+    >
       <header className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2">
         {backHref ? (
-          <a href={backHref} className="ac-btn-ghost px-2 py-1 text-xs">
+          <a
+            href={backHref}
+            className="ac-btn-ghost px-2 py-1 text-xs"
+            onClick={(e) => {
+              if (!dirtyRef.current) return;
+              e.preventDefault();
+              requestExit(backHref);
+            }}
+          >
             ← 返回
           </a>
         ) : (
-          <button type="button" className="ac-btn-ghost px-2 py-1 text-xs" onClick={() => router.back()}>
+          <button
+            type="button"
+            className="ac-btn-ghost px-2 py-1 text-xs"
+            onClick={() => requestExit(null)}
+          >
             ← 返回
           </button>
         )}
@@ -963,7 +1014,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1" data-doc-editor>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {phase === "loading" ? (
             <div className="flex flex-1 items-center justify-center text-sm text-ink-faint">
@@ -1011,6 +1062,16 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
               readOnly={readOnly}
               filename={docInfo.filename}
               apiRef={pptxApiRef}
+              onDirty={markDirty}
+              onSave={kickManualSave}
+            />
+          ) : bookType === "xlsx" ? (
+            <XlsxEditorHost
+              bytes={sheetBytes}
+              reloadToken={reloadToken}
+              readOnly={readOnly}
+              filename={docInfo.filename}
+              apiRef={xlsxApiRef}
               onDirty={markDirty}
               onSave={kickManualSave}
             />
@@ -1124,6 +1185,51 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
                 取消，稍后处理
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {exitTarget && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="未保存的修改"
+        >
+          <div className="w-full max-w-sm space-y-3 rounded-lg border border-line bg-surface p-5 shadow-xl">
+            <h2 className="font-display text-lg font-semibold text-ink">有未保存的修改</h2>
+            <p className="text-sm text-ink-soft">
+              离开前要保存这次编辑吗？保存会生成一个新版本。
+            </p>
+            <div className="space-y-2">
+              <button
+                type="button"
+                className="ac-btn w-full px-3 py-2 text-sm"
+                disabled={savePhase.kind === "saving"}
+                onClick={() => void saveAndExit()}
+              >
+                {savePhase.kind === "saving" ? "保存中…" : "保存并退出"}
+              </button>
+              <button
+                type="button"
+                className="ac-btn-ghost w-full px-3 py-2 text-sm text-high"
+                disabled={savePhase.kind === "saving"}
+                onClick={discardAndExit}
+              >
+                放弃更改并退出
+              </button>
+              <button
+                type="button"
+                className="w-full px-3 py-2 text-xs text-ink-faint hover:text-ink"
+                disabled={savePhase.kind === "saving"}
+                onClick={() => setExitTarget(null)}
+              >
+                取消
+              </button>
+            </div>
+            {savePhase.kind === "error" && (
+              <p className="text-xs text-danger">{savePhase.message}</p>
+            )}
           </div>
         </div>
       )}

@@ -47,7 +47,13 @@ export async function POST(req: Request, ctx: Ctx) {
   const filename = (url.searchParams.get("filename") ?? "").trim();
   const scope = url.searchParams.get("scope");
   const teamId = url.searchParams.get("teamId") || undefined;
-  const folderId = url.searchParams.get("folderId") || null;
+  // 缺省 = 默认「手动上传」；root = 资源库根目录
+  const folderParam = url.searchParams.get("folderId");
+  const folderId: string | null | undefined =
+    folderParam === null ? undefined : folderParam === "root" ? null : folderParam;
+  if (folderId && !z.uuid().safeParse(folderId).success) {
+    return NextResponse.json({ error: "目标文件夹不正确" }, { status: 400 });
+  }
 
   if (!filename) return NextResponse.json({ error: "缺少文件名" }, { status: 400 });
   if (scope !== "personal" && scope !== "team") {

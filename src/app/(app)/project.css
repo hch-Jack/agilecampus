@@ -448,6 +448,10 @@ body.proj-cosmic .mobile-nav-sheet {
 .app-content:has(.page-wide) {
   max-width: none;
 }
+/* 在线文档编辑器：占满整个正文区，左右不再被 64rem 限宽 */
+.app-content:has([data-doc-editor-root]) {
+  max-width: none;
+}
 .page-wide {
   width: 100%;
   max-width: 90rem;

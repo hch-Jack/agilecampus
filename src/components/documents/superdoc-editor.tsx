@@ -136,6 +136,14 @@ export function SuperDocEditor({
         ui: {
           toolbar: {
             container: toolbarRef.current ?? undefined,
+            // 常用中文字体：写入 DOCX 的 w:rFonts，本机安装了对应字体即可正确显示
+            fonts: [
+              { label: "宋体", key: "SimSun", props: { style: { fontFamily: "SimSun, 宋体, serif" } } },
+              { label: "黑体", key: "SimHei", props: { style: { fontFamily: "SimHei, 黑体, sans-serif" } } },
+              { label: "楷体", key: "KaiTi", props: { style: { fontFamily: "KaiTi, 楷体, serif" } } },
+              { label: "仿宋", key: "FangSong", props: { style: { fontFamily: "FangSong, 仿宋, serif" } } },
+              { label: "微软雅黑", key: "Microsoft YaHei", props: { style: { fontFamily: "'Microsoft YaHei', 微软雅黑, sans-serif" } } },
+            ],
           },
         },
         onContentError: ({ error }: { error: unknown }) => {
