@@ -258,9 +258,9 @@ describe("工作台助手：资源库写能力（草案 → 确认落库）", ()
     const thread = await listDmMessagesReadOnly(s.owner.id, s.student.id, 10);
     expect(thread.messages.some((m) => m.attachment?.filename === "周报存档.txt")).toBe(true);
 
-    // 追加 v2 后恢复到 v1：新版本号是 v3，内容回到第一版
+    // 追加 v2（同一文件夹）后恢复到 v1：新版本号是 v3，内容回到第一版
     await uploadToLibrary(s.student.id, personalRef(s.student.id), {
-      folderId: null,
+      folderId: item.folderId,
       filename: "周报存档.txt",
       mimeType: "text/plain",
       stream: streamOf("第二版周报"),
