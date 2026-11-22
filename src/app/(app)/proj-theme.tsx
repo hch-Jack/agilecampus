@@ -47,9 +47,21 @@ export function ProjTheme({ children }: { children: ReactNode }) {
     const particles: {
       x: number; y: number; vx: number; vy: number; life: number; r: number;
     }[] = [];
+    // 没有粒子时主动停掉 rAF：空闲页面不该每秒醒来 60 次。
+    // 下一次 mousemove 再拉起（鼠标静止时本来也没有新粒子要画）。
+    let running = false;
+    const start = () => {
+      if (running) return;
+      running = true;
+      // 空闲后恢复：把上一帧位置对齐到当前鼠标，别把一段静止误算成一次高速拖动
+      pdx = mx;
+      pdy = my;
+      raf = requestAnimationFrame(loop);
+    };
     const onMove = (e: MouseEvent) => {
       mx = e.clientX;
       my = e.clientY;
+      start();
     };
 
     const loop = () => {
@@ -96,10 +108,14 @@ export function ProjTheme({ children }: { children: ReactNode }) {
         }
         ctx.shadowBlur = 0;
       }
+      if (particles.length === 0) {
+        running = false;
+        raf = 0;
+        return;
+      }
       raf = requestAnimationFrame(loop);
     };
     window.addEventListener("mousemove", onMove);
-    raf = requestAnimationFrame(loop);
 
     return () => {
       cancelAnimationFrame(raf);

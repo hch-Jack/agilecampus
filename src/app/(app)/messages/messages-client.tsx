@@ -98,6 +98,11 @@ function sameMessages(a: ChatMessage[], b: ChatMessage[]): boolean {
   return true;
 }
 
+/** 邀请 / 系统消息这类小列表：字段不多，直接按序列化结果复用旧数组 */
+function sameSmallList(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 /** 会话行签名：轮询内容没变时复用它，避免整列会话跟着重渲染 */
 function conversationSignature(c: UnifiedConversation): string {
   if (c.kind === "dm") {
@@ -623,7 +628,7 @@ export function MessagesClient({
   const refreshInvites = useCallback(async () => {
     try {
       const r = await listMyGroupInvitesAction();
-      if (r.ok) setInvites(r.data);
+      if (r.ok) setInvites((prev) => (sameSmallList(prev, r.data) ? prev : r.data));
     } catch {
       // 同上
     }
@@ -636,11 +641,15 @@ export function MessagesClient({
       // 正停在系统消息会话里：新到的一条也算已读（与私信打开即置读一致）
       if (activeRef.current?.kind === "system" && r.data.some((m) => !m.readAt)) {
         const now = new Date();
-        setSystemMsgs(r.data.map((m) => (m.readAt ? m : { ...m, readAt: now })));
+        setSystemMsgs((prev) =>
+          sameSmallList(prev, r.data)
+            ? prev
+            : r.data.map((m) => (m.readAt ? m : { ...m, readAt: now })),
+        );
         void markSystemMessagesReadAction();
         return;
       }
-      setSystemMsgs(r.data);
+      setSystemMsgs((prev) => (sameSmallList(prev, r.data) ? prev : r.data));
     } catch {
       // 轮询失败静默，下一轮再试
     }
@@ -687,16 +696,26 @@ export function MessagesClient({
     [refreshConvs, applyMessages],
   );
 
-  // 轮询：统一列表、邀请、当前会话每 4s 刷新，双方/群内消息互通无需手动刷新页面
+  // 轮询：统一列表、邀请、当前会话每 4s 刷新，双方/群内消息互通无需手动刷新页面。
+  // 一次 tick 要串行跑 4 个 action：网络慢时若上一轮没跑完，下一轮照常触发就会叠起来，
+  // 越积越多、每次回来都重渲染一遍列表（表现为偶发卡顿）。用 inFlight 做单飞，
+  // 后台标签页也直接跳过——浏览器本来就会把定时器节流，这里省掉无意义的请求。
   useEffect(() => {
     if (!active) return;
+    let inFlight = false;
     const tick = async () => {
-      await refreshConvs();
-      await refreshInvites();
-      await refreshSystemMsgs();
-      const a = activeRef.current;
-      if (a?.kind === "dm") await refreshDmMsgs(a.id);
-      else if (a?.kind === "group") await refreshGroupMsgs(a.id);
+      if (inFlight || document.hidden) return;
+      inFlight = true;
+      try {
+        await refreshConvs();
+        await refreshInvites();
+        await refreshSystemMsgs();
+        const a = activeRef.current;
+        if (a?.kind === "dm") await refreshDmMsgs(a.id);
+        else if (a?.kind === "group") await refreshGroupMsgs(a.id);
+      } finally {
+        inFlight = false;
+      }
     };
     tick();
     const timer = setInterval(tick, POLL_MS);

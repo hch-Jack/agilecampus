@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   blobPath,
   copyBlob,
+  defaultUploadRoot,
   deleteBlob,
   isBlobKey,
   persistBlob,
@@ -93,5 +94,26 @@ describe("blob-store：磁盘上的附件正文", () => {
     await expect(copyBlob("00000000-0000-0000-0000-000000000000")).rejects.toThrow(
       "文件不存在",
     );
+  });
+});
+
+// 回归：standalone 的 cwd 在 .next 里，重建会把 .next 整个清空，
+// 默认落盘目录必须上移到项目外，否则每次部署都丢附件。
+describe("blob-store：默认落盘目录", () => {
+  it("开发 / next start：cwd/data/uploads", () => {
+    const cwd = path.resolve(path.sep, "srv", "agilecampus");
+    expect(defaultUploadRoot(cwd)).toBe(path.join(cwd, "data", "uploads"));
+  });
+
+  it("standalone：落到项目外的持久目录", () => {
+    const cwd = path.resolve(path.sep, "runtime", "src", ".next", "standalone");
+    expect(defaultUploadRoot(cwd)).toBe(
+      path.resolve(path.sep, "runtime", "data", "uploads"),
+    );
+  });
+
+  it("名字像但不属于 .next 的目录不误判", () => {
+    const cwd = path.resolve(path.sep, "srv", "standalone");
+    expect(defaultUploadRoot(cwd)).toBe(path.join(cwd, "data", "uploads"));
   });
 });

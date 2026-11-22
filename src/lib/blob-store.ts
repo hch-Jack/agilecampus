@@ -12,13 +12,35 @@ import { MAX_FILE_SIZE, MAX_FILE_SIZE_LABEL } from "./file-limits";
  * 还要再复制几份），所以大文件的正文写在磁盘上，库里只留元数据 + `storageKey`。
  * 旧的 `data` 列保留：历史附件仍是库里的小 blob，读写两条路都走同一组入口。
  *
- * 目录：`UPLOAD_DIR`（默认 `<cwd>/data/uploads`）。生产 compose 挂了卷；本机 dev
- * 就落在仓库的 `data/` 下（已 gitignore）。
+ * 目录：`UPLOAD_DIR`（默认见 `defaultUploadRoot`：开发是 `<cwd>/data/uploads`；
+ * standalone 部署会避开会被 `next build` 清空的 `.next`，落到项目外的持久目录）。
+ * 生产 compose 挂了卷；本机 dev 就落在仓库的 `data/` 下（已 gitignore）。
  */
+
+/**
+ * 去掉 UPLOAD_DIR 时的默认落盘目录。
+ *
+ * Next 的 standalone 产物把入口放在 `<项目>/.next/standalone`，而 `next build` 会先
+ * 清空 `.next` —— 在那里按 cwd 算出的 `data/uploads` 每次重建都会连同附件一起被删掉
+ * （症状：库里还有文件，预览/下载却在流式返回途中断掉，浏览器只报网络错误）。
+ * 因此 standalone 模式下上移到项目目录之外的 `data/uploads`（本机启动器的布局正好是
+ * `<运行目录>/src` → `<运行目录>/data/uploads`，构建与源码镜像都不会碰它）。
+ * 容器部署照旧走 `UPLOAD_DIR`（compose 已挂卷），开发服务器 cwd 是仓库根，行为不变。
+ */
+export function defaultUploadRoot(cwd = process.cwd()): string {
+  // standalone 入口无论摊平还是嵌套，cwd 都在某个 `.next` 目录里面；
+  // 取 `.next` 之前那段作为项目根（例如 <运行目录>/src/.next/standalone）。
+  const marker = `${path.sep}.next${path.sep}`;
+  const at = cwd.lastIndexOf(marker);
+  if (at !== -1) {
+    return path.resolve(cwd.slice(0, at), "..", "data", "uploads");
+  }
+  return path.join(cwd, "data", "uploads");
+}
 
 export function uploadRoot(): string {
   const fromEnv = process.env.UPLOAD_DIR?.trim();
-  return fromEnv || path.join(process.cwd(), "data", "uploads");
+  return fromEnv || defaultUploadRoot();
 }
 
 // 键形如 `ab/ab12…`（前两位是 uuid 的前两位，避免单目录塞进几十万文件）
