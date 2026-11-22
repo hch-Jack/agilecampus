@@ -39,6 +39,26 @@ export type SuperDocEditorApi = {
   getBytes: () => Promise<Uint8Array | null>;
   markClean: () => void;
   isDirty: () => boolean;
+  /** 当前正文纯文本（AI 上下文） */
+  getText: () => Promise<string>;
+  /** 把 AI 修改以「修订」形式暂存，由用户在工具条接受/拒绝 */
+  applyAiEdits: (
+    edits: { find: string; replace: string }[],
+  ) => Promise<{ applied: number; failed: string[] }>;
+};
+
+type SuperDocDocLike = {
+  getText?: (input: Record<string, unknown>) => string;
+  query?: {
+    match: (req: unknown) => Promise<{
+      items?: { matchKind?: string; target: unknown }[];
+      evaluatedRevision?: unknown;
+    }>;
+  };
+  replace?: (
+    req: unknown,
+    opts: unknown,
+  ) => Promise<{ success?: boolean; failure?: { message?: string } }>;
 };
 
 export function SuperDocEditor({
@@ -185,7 +205,12 @@ export function SuperDocEditor({
     };
   }, [bytes, mountToken]);
 
-  // 父组件的保存流程从这里取当前 DOCX 字节
+  function editorDoc(): SuperDocDocLike | null {
+    const editor = instanceRef.current?.activeEditor as { doc?: SuperDocDocLike } | null;
+    return editor?.doc ?? null;
+  }
+
+  // 父组件的保存 / AI 流程从这里取文档与暂存修改
   useEffect(() => {
     apiRef.current = {
       getBytes: async () => {
@@ -198,6 +223,42 @@ export function SuperDocEditor({
         dirtyRef.current = false;
       },
       isDirty: () => dirtyRef.current,
+      getText: async () => {
+        try {
+          const value = await editorDoc()?.getText?.({});
+          return typeof value === "string" ? value : "";
+        } catch {
+          return "";
+        }
+      },
+      applyAiEdits: async (edits) => {
+        const doc = editorDoc();
+        if (!doc?.query || !doc.replace) throw new Error("Word 编辑器尚未就绪");
+        let applied = 0;
+        const failed: string[] = [];
+        for (const edit of edits) {
+          try {
+            const match = await doc.query.match({
+              select: { type: "text", pattern: edit.find },
+              require: "exactlyOne",
+            });
+            const item = match.items?.[0];
+            if (!item || item.matchKind !== "text") {
+              failed.push(edit.find);
+              continue;
+            }
+            const receipt = await doc.replace(
+              { target: item.target, text: edit.replace },
+              { changeMode: "tracked", expectedRevision: match.evaluatedRevision },
+            );
+            if (receipt.success === false) failed.push(edit.find);
+            else applied += 1;
+          } catch {
+            failed.push(edit.find);
+          }
+        }
+        return { applied, failed };
+      },
     };
     return () => {
       apiRef.current = null;

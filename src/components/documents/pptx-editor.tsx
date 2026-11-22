@@ -30,6 +30,13 @@ export type PptxEditorApi = {
   getBytes: () => Promise<Uint8Array | null>;
   markClean: () => void;
   isDirty: () => boolean;
+  /** Markdown 形式的演示文稿内容（AI 上下文） */
+  getMarkdown: () => Promise<string>;
+  /** 把 AI 文本修改暂存为待审阅提案 */
+  stageAiEdits: (input: {
+    summary: string;
+    edits: { find: string; replace: string }[];
+  }) => Promise<{ staged: number; failed: string[] }>;
 };
 
 // 字体只加载一次：中文字体较大，避免每次进编辑器都重新拉取
@@ -138,6 +145,49 @@ export function PptxEditorHost({
         dirtyRef.current = false;
       },
       isDirty: () => dirtyRef.current,
+      getMarkdown: async () => {
+        const api = instanceRef.current;
+        if (!api) return "";
+        const res = await api.exportMarkdown();
+        return res.ok ? res.content.markdown : "";
+      },
+      stageAiEdits: async ({ summary, edits }) => {
+        const api = instanceRef.current;
+        if (!api) throw new Error("演示文稿编辑器尚未就绪");
+        const access = await api.handleAsync();
+        const staged: {
+          type: "replaceText";
+          storyId: string;
+          start: number;
+          end: number;
+          text: string;
+        }[] = [];
+        const failed: string[] = [];
+        for (const edit of edits) {
+          try {
+            const found = await api.findText({ text: edit.find, limit: 1 });
+            const range = found.ok ? found.matches[0]?.range : null;
+            if (!range) {
+              failed.push(edit.find);
+              continue;
+            }
+            staged.push({
+              type: "replaceText",
+              storyId: range.storyId,
+              start: range.start,
+              end: range.end,
+              text: edit.replace,
+            });
+          } catch {
+            failed.push(edit.find);
+          }
+        }
+        if (staged.length > 0) {
+          await access.propose("ai-assistant", summary, staged);
+          await api.refreshProposals();
+        }
+        return { staged: staged.length, failed };
+      },
     };
     return () => {
       apiRef.current = null;

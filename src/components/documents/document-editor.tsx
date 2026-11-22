@@ -16,8 +16,9 @@ import { EditorSidebar } from "./editor-sidebar";
 import { PptxEditorHost, type PptxEditorApi } from "./pptx-editor";
 import { SheetEditor, type SheetEditorApi } from "./sheet-editor";
 import { SuperDocEditor, type SuperDocEditorApi } from "./superdoc-editor";
-import { TextEditor } from "./text-editor";
+import { TextEditor, type TextEditorApi } from "./text-editor";
 import { XlsxEditorHost, type XlsxEditorApi } from "./xlsx-editor";
+import type { AiEditResponse, AiReplacement } from "@/lib/documents/ai-edits";
 import { useDocumentEvents } from "./use-document-events";
 import type { DocumentEditorInitial, DocumentVersionDto, LockView, PresenceUser } from "./editor-types";
 
@@ -128,6 +129,16 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
   const [saveAsOpen, setSaveAsOpen] = useState(false);
   const [savedHint, setSavedHint] = useState("");
   const [exitTarget, setExitTarget] = useState<{ href: string | null } | null>(null);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiInstruction, setAiInstruction] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState("");
+  const [aiHint, setAiHint] = useState("");
+  const [aiPreview, setAiPreview] = useState<{
+    summary: string;
+    edits: AiReplacement[];
+  } | null>(null);
+  const textApiRef = useRef<TextEditorApi | null>(null);
 
   const sheetApiRef = useRef<SheetEditorApi | null>(null);
   const xlsxApiRef = useRef<XlsxEditorApi | null>(null);
@@ -703,6 +714,164 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
     setSaveAsOpen(true);
   }
 
+  // ---------------------------------------------------------------- AI 编辑
+
+  const aiSupported =
+    format === "text" ||
+    format === "docx" ||
+    format === "pptx" ||
+    (format === "sheet" && bookType === "xlsx");
+
+  async function readAiContent(): Promise<{ content: string; selection?: string }> {
+    if (format === "text") {
+      return {
+        content: text,
+        selection: textApiRef.current?.getSelection() || undefined,
+      };
+    }
+    if (format === "docx") {
+      return { content: (await docxApiRef.current?.getText()) ?? "" };
+    }
+    if (format === "pptx") {
+      return { content: (await pptxApiRef.current?.getMarkdown()) ?? "" };
+    }
+    if (format === "sheet" && bookType === "xlsx") {
+      return { content: (await xlsxApiRef.current?.getMarkdown()) ?? "" };
+    }
+    return { content: "" };
+  }
+
+  function openAiDialog() {
+    if (!aiSupported) return;
+    setAiInstruction("");
+    setAiError("");
+    setAiPreview(null);
+    setAiOpen(true);
+  }
+
+  async function runAiEdits() {
+    const instruction = aiInstruction.trim();
+    if (!instruction || aiBusy) return;
+    setAiBusy(true);
+    setAiError("");
+    setAiPreview(null);
+    try {
+      const { content: raw, selection } = await readAiContent();
+      if (!raw.trim()) {
+        setAiError("当前文档内容为空，无法生成修改建议");
+        return;
+      }
+      const content =
+        raw.length > 110_000 ? `${raw.slice(0, 110_000)}\n…（内容过长，已截断）` : raw;
+      const res = await fetch(`/api/documents/${documentId}/ai-edits`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ instruction, content, selection }),
+      });
+      const data = (await res.json().catch(() => null)) as
+        | (AiEditResponse & { error?: string })
+        | { error?: string }
+        | null;
+      if (!res.ok || !data || "error" in data) {
+        setAiError((data as { error?: string } | null)?.error ?? "AI 生成失败，请稍后重试");
+        return;
+      }
+      if (!("kind" in data)) {
+        setAiError("AI 返回格式不正确，请重试");
+        return;
+      }
+      const result = data as AiEditResponse;
+      if (result.kind === "cells") {
+        if (format !== "sheet" || bookType !== "xlsx" || !xlsxApiRef.current) {
+          setAiError("当前格式不支持单元格修改");
+          return;
+        }
+        if (result.edits.length === 0) {
+          setAiError(result.summary || "AI 没有给出可应用的修改");
+          return;
+        }
+        const stagedResult = await xlsxApiRef.current.stageAiEdits({
+          summary: result.summary,
+          cells: result.edits,
+        });
+        setAiOpen(false);
+        setAiHint(
+          `已生成 ${stagedResult.staged} 处待确认修改${stagedResult.failed.length ? `（${stagedResult.failed.length} 处未找到目标）` : ""}，请在表格的提案审阅区确认。`,
+        );
+        return;
+      }
+
+      if (result.edits.length === 0) {
+        setAiError(result.summary || "AI 没有给出可应用的修改");
+        return;
+      }
+      if (format === "text") {
+        setAiPreview({ summary: result.summary, edits: result.edits });
+        return;
+      }
+      if (format === "docx") {
+        if (!docxApiRef.current) {
+          setAiError("Word 编辑器尚未就绪");
+          return;
+        }
+        const applied = await docxApiRef.current.applyAiEdits(result.edits);
+        setAiOpen(false);
+        setAiHint(
+          `已生成 ${applied.applied} 处修订${applied.failed.length ? `（${applied.failed.length} 处未匹配到原文）` : ""}，请在工具条接受/拒绝修订。`,
+        );
+        return;
+      }
+      if (format === "pptx") {
+        if (!pptxApiRef.current) {
+          setAiError("演示文稿编辑器尚未就绪");
+          return;
+        }
+        const stagedResult = await pptxApiRef.current.stageAiEdits({
+          summary: result.summary,
+          edits: result.edits,
+        });
+        setAiOpen(false);
+        setAiHint(
+          `已生成 ${stagedResult.staged} 处待确认修改${stagedResult.failed.length ? `（${stagedResult.failed.length} 处未匹配到原文）` : ""}，请在演示文稿的提案审阅区确认。`,
+        );
+        return;
+      }
+      setAiError("当前格式暂不支持 AI 编辑");
+    } catch (e) {
+      setAiError(e instanceof Error ? e.message : "AI 生成失败，请稍后重试");
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
+  function applyTextAiEdits() {
+    if (!aiPreview) return;
+    let next = text;
+    let applied = 0;
+    const failed: string[] = [];
+    for (const edit of aiPreview.edits) {
+      const at = next.indexOf(edit.find);
+      if (at < 0) {
+        failed.push(edit.find);
+        continue;
+      }
+      next = `${next.slice(0, at)}${edit.replace}${next.slice(at + edit.find.length)}`;
+      applied += 1;
+    }
+    if (applied > 0) {
+      setText(next);
+      markDirty();
+      setAiHint(
+        `已应用 ${applied} 处修改${failed.length ? `（${failed.length} 处未匹配到原文）` : ""}，记得保存。`,
+      );
+    } else {
+      setAiError("所有修改都未能在原文中匹配，请调整指令或手动编辑");
+      return;
+    }
+    setAiOpen(false);
+    setAiPreview(null);
+  }
+
   /** 返回/离开页面：有未保存修改时先让用户选保存还是放弃 */
   function requestExit(href: string | null) {
     if (!dirtyRef.current || !editingAllowed) {
@@ -945,6 +1114,19 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
           <button
             type="button"
             className="ac-btn-ghost px-2 py-1 text-xs"
+            disabled={!canEdit || readOnly || !aiSupported}
+            onClick={openAiDialog}
+            title={
+              aiSupported
+                ? "让 AI 助手为当前文档生成待确认修改"
+                : "AI 编辑暂支持文本、.docx、.xlsx、.pptx"
+            }
+          >
+            ✨ AI 编辑
+          </button>
+          <button
+            type="button"
+            className="ac-btn-ghost px-2 py-1 text-xs"
             onClick={() => setSidebar(sidebar === "versions" ? null : "versions")}
           >
             历史版本
@@ -967,6 +1149,19 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
       {savedHint && (
         <div className="border-b border-line bg-surface-2 px-3 py-1 text-xs text-done">
           {savedHint}
+        </div>
+      )}
+
+      {aiHint && (
+        <div className="flex items-center gap-2 border-b border-line bg-primary-soft px-3 py-1.5 text-xs text-primary">
+          <span className="min-w-0 flex-1">{aiHint}</span>
+          <button
+            type="button"
+            className="text-ink-faint hover:text-ink"
+            onClick={() => setAiHint("")}
+          >
+            ×
+          </button>
         </div>
       )}
 
@@ -1044,6 +1239,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
               readOnly={readOnly}
               markdown={markdown}
               onSave={kickManualSave}
+              apiRef={textApiRef}
             />
           ) : format === "docx" ? (
             <SuperDocEditor
@@ -1185,6 +1381,100 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
                 取消，稍后处理
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {aiOpen && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="AI 编辑"
+        >
+          <div className="w-full max-w-lg space-y-3 rounded-lg border border-line bg-surface p-5 shadow-xl">
+            <div className="flex items-center justify-between">
+              <h2 className="font-display text-lg font-semibold text-ink">✨ AI 编辑</h2>
+              <button
+                type="button"
+                className="grid h-7 w-7 place-items-center rounded text-ink-faint hover:bg-sunken hover:text-ink"
+                aria-label="关闭"
+                onClick={() => !aiBusy && setAiOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+
+            {aiPreview ? (
+              <>
+                <p className="text-sm text-ink-soft">{aiPreview.summary}</p>
+                <ul className="max-h-64 space-y-2 overflow-y-auto rounded-field border border-line p-2 text-xs">
+                  {aiPreview.edits.map((edit, i) => (
+                    <li key={`${i}-${edit.find}`} className="space-y-0.5">
+                      <p className="whitespace-pre-wrap text-high line-through">{edit.find}</p>
+                      <p className="whitespace-pre-wrap text-done">{edit.replace}</p>
+                      {edit.note && <p className="text-ink-faint">{edit.note}</p>}
+                    </li>
+                  ))}
+                </ul>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    className="ac-btn-ghost px-3 py-1.5 text-xs"
+                    onClick={() => {
+                      setAiOpen(false);
+                      setAiPreview(null);
+                    }}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    className="ac-btn px-3 py-1.5 text-xs"
+                    onClick={applyTextAiEdits}
+                  >
+                    应用修改
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-ink-faint">
+                  {format === "text"
+                    ? "如已选中文本，AI 会优先针对选中片段；否则针对整份文件。"
+                    : format === "sheet"
+                      ? "AI 会以单元格写入的形式给出修改，应用后会进入待审阅提案。"
+                      : "AI 会以修订/提案的形式给出修改，应用后需要你确认接受。"}
+                </p>
+                <textarea
+                  value={aiInstruction}
+                  onChange={(e) => setAiInstruction(e.target.value)}
+                  rows={4}
+                  autoFocus
+                  placeholder="例如：把标题改得更正式；检查错别字；把第 3 行数据改成……"
+                  className="ac-field w-full text-sm"
+                />
+                {aiError && <p className="text-xs text-high">{aiError}</p>}
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    className="ac-btn-ghost px-3 py-1.5 text-xs"
+                    disabled={aiBusy}
+                    onClick={() => setAiOpen(false)}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    className="ac-btn px-3 py-1.5 text-xs"
+                    disabled={aiBusy || !aiInstruction.trim()}
+                    onClick={() => void runAiEdits()}
+                  >
+                    {aiBusy ? "生成中…" : "生成修改建议"}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
