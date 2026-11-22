@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+// 局域网 http://<IP> 属于非安全上下文：先补齐 SuperDoc/BetterOffice 需要的 crypto API
+import "@/lib/insecure-crypto-polyfill";
 import { decodeTextWithFallback, extOf } from "@/lib/file-preview";
 import { formatLabel, isSameEditableFormat, sheetBookTypeOf } from "@/lib/documents/format";
 import { grantEditorAction, revokeEditorAction, setCollaborationAction } from "@/app/(app)/documents/[documentId]/actions";
