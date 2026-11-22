@@ -44,6 +44,8 @@ const OPERATION_LABEL: Record<string, string> = {
   item_uploaded: "上传了文件",
   item_imported: "汇总了文件",
   item_synced: "同步了文件",
+  item_saved_from_agent: "从助手保存了文件",
+  item_copied: "复制了文件",
   item_renamed: "重命名了文件",
   item_moved: "移动了文件",
   item_deleted: "删除了文件",
