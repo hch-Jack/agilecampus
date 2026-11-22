@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { SuperDoc } from "superdoc";
+import { clearChunkReloadFlag, reloadOnceForChunkError } from "@/lib/chunk-reload";
 import "superdoc/style.css";
 
 /**
@@ -108,8 +109,11 @@ export function SuperDocEditor({
         onDirtyRef.current();
       });
       instanceRef.current = instance;
+      clearChunkReloadFlag();
     })().catch((e: unknown) => {
       if (cancelled) return;
+      // 部署后旧 chunk 失效：整页刷新一次即可拿到新构建
+      if (reloadOnceForChunkError(e)) return;
       setError(e instanceof Error ? e.message : "Word 编辑器加载失败");
     });
 

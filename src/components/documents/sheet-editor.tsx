@@ -41,6 +41,7 @@ import {
   SHEET_MAX_ROWS,
   type SheetBookType,
 } from "@/lib/documents/format";
+import { clearChunkReloadFlag, reloadOnceForChunkError } from "@/lib/chunk-reload";
 
 export type SheetEditorApi = {
   /** 序列化为保存用的字节；解析失败或编辑器尚未就绪时返回 null */
@@ -192,8 +193,11 @@ export function SheetEditor({
           setEditing(null);
           setStartRow(0);
           setDirty(false);
+          clearChunkReloadFlag();
         } catch (e) {
           if (cancelled) return;
+          // ExcelJS 是动态加载的：部署后旧 chunk 失效时整页刷新一次
+          if (reloadOnceForChunkError(e)) return;
           setWb(null);
           setEwb(null);
           setError(e instanceof Error ? e.message : "表格解析失败");
@@ -339,7 +343,16 @@ export function SheetEditor({
 
   if (error) {
     return (
-      <div className="flex flex-1 items-center justify-center p-8 text-sm text-danger">{error}</div>
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+        <p className="text-sm text-danger">{error}</p>
+        <button
+          type="button"
+          className="ac-btn px-3 py-1.5 text-xs"
+          onClick={() => window.location.reload()}
+        >
+          重新加载页面
+        </button>
+      </div>
     );
   }
   if (!engine || !sheet) {

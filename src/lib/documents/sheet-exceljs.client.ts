@@ -1,6 +1,6 @@
 "use client";
 
-import ExcelJS from "exceljs";
+import type ExcelJS from "exceljs";
 import { AppError } from "@/lib/errors";
 import {
   SHEET_MAX_COLS,
@@ -19,8 +19,10 @@ import {
 export type ExcelBook = ExcelJS.Workbook;
 
 export async function loadExcelBook(bytes: ArrayBuffer): Promise<ExcelBook> {
+  // 动态加载：ExcelJS 只在真正打开表格时下载，不再拖慢整个编辑页的首屏 chunk
+  const { default: ExcelJS } = await import("exceljs");
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(bytes);
+  await wb.xlsx.load(bytes as unknown as Parameters<typeof wb.xlsx.load>[0]);
   return wb;
 }
 

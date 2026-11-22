@@ -26,21 +26,30 @@ export function EditDocumentButton({
   async function open() {
     setBusy(true);
     try {
-      const res = await fetch("/api/documents/open", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sourceType, sourceId }),
-      });
-      const data = (await res.json().catch(() => null)) as
-        | { documentId?: string; error?: string }
-        | null;
-      if (!res.ok || !data?.documentId) {
-        window.alert(data?.error ?? "无法打开在线编辑器");
-        return;
+      // 部署/重启的一两秒内请求会直接失败：自动重试一次，避免三种格式都报「无法加载」
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const res = await fetch("/api/documents/open", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ sourceType, sourceId }),
+          });
+          const data = (await res.json().catch(() => null)) as
+            | { documentId?: string; error?: string }
+            | null;
+          if (!res.ok || !data?.documentId) {
+            window.alert(data?.error ?? "无法打开在线编辑器");
+            return;
+          }
+          router.push(`/documents/${data.documentId}`);
+          return;
+        } catch (e) {
+          if (attempt === 1) throw e;
+          await new Promise((r) => window.setTimeout(r, 1200));
+        }
       }
-      router.push(`/documents/${data.documentId}`);
     } catch {
-      window.alert("无法打开在线编辑器，请检查网络后重试");
+      window.alert("无法打开在线编辑器：应用可能刚重启或网络中断，请刷新页面后重试");
     } finally {
       setBusy(false);
     }

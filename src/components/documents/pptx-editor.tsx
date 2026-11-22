@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import type { PptxFontFace } from "@betteroffice/pptx";
 import type { PptxAsyncEditorApi } from "@betteroffice/pptx-react";
+import { clearChunkReloadFlag, reloadOnceForChunkError } from "@/lib/chunk-reload";
 
 /**
  * PowerPoint 在线编辑：BetterOffice PPTX 引擎（Apache-2.0）。
@@ -96,15 +97,35 @@ export function PptxEditorHost({
     let cancelled = false;
     void loadEditorFonts()
       .then((loaded) => {
-        if (!cancelled) setFonts(loaded);
+        if (cancelled) return;
+        setFonts(loaded);
+        clearChunkReloadFlag();
       })
       .catch((e: unknown) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : "字体加载失败");
+        if (cancelled) return;
+        if (reloadOnceForChunkError(e)) return;
+        setError(e instanceof Error ? e.message : "字体加载失败");
       });
     return () => {
       cancelled = true;
     };
   }, [retry]);
+
+  // next/dynamic 的 chunk 加载失败会以全局错误的形式冒出来
+  useEffect(() => {
+    const onError = (e: ErrorEvent) => {
+      if (reloadOnceForChunkError(e.error ?? e.message)) e.preventDefault();
+    };
+    const onRejection = (e: PromiseRejectionEvent) => {
+      if (reloadOnceForChunkError(e.reason)) e.preventDefault();
+    };
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onRejection);
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onRejection);
+    };
+  }, []);
 
   useEffect(() => {
     apiRef.current = {
