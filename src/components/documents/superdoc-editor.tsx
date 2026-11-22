@@ -69,6 +69,8 @@ export function SuperDocEditor({
   const interactedRef = useRef(false);
   const onDirtyRef = useRef(onDirty);
   const onSaveRef = useRef(onSave);
+  const readOnlyRef = useRef(readOnly);
+  const userNameRef = useRef(userName);
   const [error, setError] = useState("");
   const [mountToken, setMountToken] = useState(0);
 
@@ -76,6 +78,24 @@ export function SuperDocEditor({
     onDirtyRef.current = onDirty;
     onSaveRef.current = onSave;
   }, [onDirty, onSave]);
+
+  useEffect(() => {
+    readOnlyRef.current = readOnly;
+    userNameRef.current = userName;
+  }, [readOnly, userName]);
+
+  // 编辑锁是异步拿到的：readOnly 从 true→false 时不能重建编辑器
+  // （SuperDoc 可能已经把 ArrayBuffer 交给 worker，旧 buffer 不能复用），
+  // 只切换 documentMode 即可。
+  useEffect(() => {
+    const instance = instanceRef.current;
+    if (!instance) return;
+    try {
+      instance.setDocumentMode(readOnly ? "viewing" : "editing");
+    } catch {
+      // 编辑器还没 ready：onReady 里会按最新状态再设一次
+    }
+  }, [readOnly]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -108,20 +128,31 @@ export function SuperDocEditor({
       if (cancelled) return;
       instance = new SuperDocCtor({
         selector: host,
-        document: bytes,
-        documentMode: readOnly ? "viewing" : "editing",
-        role: readOnly ? "viewer" : "editor",
-        user: { name: userName },
-        // 只读时不渲染工具条；可编辑时把工具条放到页面自己的头部下方
-        ui: readOnly
-          ? { toolbar: false, comments: false }
-          : {
-              toolbar: {
-                container: toolbarRef.current ?? undefined,
-              },
-            },
-        onReady: () => {
+        // 复制一份：SuperDoc 可能把 buffer 转移给 worker，之后重试/重建不能复用
+        document: bytes.slice(0),
+        documentMode: readOnlyRef.current ? "viewing" : "editing",
+        role: "editor",
+        user: { name: userNameRef.current },
+        ui: {
+          toolbar: {
+            container: toolbarRef.current ?? undefined,
+          },
+        },
+        onContentError: ({ error }: { error: unknown }) => {
+          console.error("[superdoc] content error", error);
+        },
+        onException: (payload: unknown) => {
+          console.error("[superdoc] exception", payload);
+        },
+        onReady: ({ superdoc }: { superdoc: SuperDoc }) => {
           readyRef.current = true;
+          // 建立期间编辑锁可能已经拿到，按最新状态校准一次
+          try {
+            superdoc.setDocumentMode(readOnlyRef.current ? "viewing" : "editing");
+          } catch {
+            // 忽略：下次 readOnly 变化还会再设
+          }
+          clearChunkReloadFlag();
         },
       });
       instance.on("editor-update", () => {
@@ -131,7 +162,6 @@ export function SuperDocEditor({
         onDirtyRef.current();
       });
       instanceRef.current = instance;
-      clearChunkReloadFlag();
     })().catch((e: unknown) => {
       if (cancelled) return;
       // 部署后旧 chunk 失效：整页刷新一次即可拿到新构建
@@ -145,7 +175,7 @@ export function SuperDocEditor({
       instance?.destroy();
       instanceRef.current = null;
     };
-  }, [bytes, readOnly, userName, mountToken]);
+  }, [bytes, mountToken]);
 
   // 父组件的保存流程从这里取当前 DOCX 字节
   useEffect(() => {
@@ -180,11 +210,16 @@ export function SuperDocEditor({
 
   return (
     <div ref={rootRef} className="flex min-h-0 flex-1 flex-col">
-      {!readOnly && (
-        <div
-          ref={toolbarRef}
-          className="min-h-9 shrink-0 border-b border-line bg-surface px-2 py-1"
-        />
+      {/* 工具条容器始终存在：编辑锁是异步拿到的，不能在拿到锁后才发现没地方挂工具条 */}
+      <div
+        ref={toolbarRef}
+        className="min-h-9 shrink-0 border-b border-line bg-surface px-2 py-1"
+        aria-disabled={readOnly}
+      />
+      {readOnly && (
+        <p className="border-b border-line bg-surface-2 px-3 py-1 text-[11px] text-ink-faint">
+          当前为只读模式；拿到编辑锁或获得授权后会自动切换为可编辑。
+        </p>
       )}
       <div className="relative min-h-0 flex-1 overflow-hidden bg-sunken/40">
         <div ref={hostRef} className="h-full overflow-auto" title={filename} />
