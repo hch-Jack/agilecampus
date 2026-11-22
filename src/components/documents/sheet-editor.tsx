@@ -9,7 +9,6 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import * as XLSX from "xlsx";
-import type ExcelJS from "exceljs";
 import {
   cellDisplay,
   cellRaw,
@@ -21,21 +20,6 @@ import {
   writeSheet,
   type SheetBook,
 } from "@/lib/documents/sheet.client";
-import {
-  ensureExcelSheetLimits,
-  excelColWidth,
-  excelDisplay,
-  excelRange,
-  excelRaw,
-  excelRowHeight,
-  excelSetCell,
-  excelSetColWidth,
-  excelSetRowHeight,
-  excelSheet,
-  excelSheetNames,
-  loadExcelBook,
-  writeExcelBook,
-} from "@/lib/documents/sheet-exceljs.client";
 import {
   SHEET_MAX_COLS,
   SHEET_MAX_ROWS,
@@ -49,7 +33,7 @@ export type SheetEditorApi = {
   isDirty: () => boolean;
 };
 
-type SheetRef = XLSX.WorkSheet | ExcelJS.Worksheet;
+type SheetRef = XLSX.WorkSheet;
 
 type Engine = {
   names: string[];
@@ -101,49 +85,27 @@ function sheetjsEngine(wb: SheetBook, bookType: SheetBookType): Engine {
   return {
     names: wb.SheetNames,
     sheet: (index) => wb.Sheets[wb.SheetNames[index]] ?? null,
-    range: (sheet) => sheetRange(sheet as XLSX.WorkSheet),
-    display: (sheet, r, c) => cellDisplay(sheet as XLSX.WorkSheet, r, c),
-    raw: (sheet, r, c) => cellRaw(sheet as XLSX.WorkSheet, r, c),
-    setCell: (sheet, r, c, value) =>
-      setCellValue(sheet as XLSX.WorkSheet, r, c, value, bookType),
-    colWidth: (sheet, c) => sheetColWidth(sheet as XLSX.WorkSheet, c),
+    range: (sheet) => sheetRange(sheet),
+    display: (sheet, r, c) => cellDisplay(sheet, r, c),
+    raw: (sheet, r, c) => cellRaw(sheet, r, c),
+    setCell: (sheet, r, c, value) => setCellValue(sheet, r, c, value, bookType),
+    colWidth: (sheet, c) => sheetColWidth(sheet, c),
     setColWidth: (sheet, c, px) => {
-      const ws = sheet as XLSX.WorkSheet;
-      const cols = ws["!cols"] ?? [];
+      const cols = sheet["!cols"] ?? [];
       cols[c] = { ...(cols[c] ?? {}), wpx: px };
-      ws["!cols"] = cols;
+      sheet["!cols"] = cols;
     },
-    rowHeight: (sheet, r) => sheetRowHeight(sheet as XLSX.WorkSheet, r),
+    rowHeight: (sheet, r) => sheetRowHeight(sheet, r),
     setRowHeight: (sheet, r, px) => {
-      const ws = sheet as XLSX.WorkSheet;
-      const rows = ws["!rows"] ?? [];
+      const rows = sheet["!rows"] ?? [];
       rows[r] = { ...(rows[r] ?? {}), hpx: px };
-      ws["!rows"] = rows;
+      sheet["!rows"] = rows;
     },
-  };
-}
-
-function exceljsEngine(wb: ExcelJS.Workbook): Engine {
-  return {
-    names: excelSheetNames(wb),
-    sheet: (index) => excelSheet(wb, index),
-    range: (sheet) => excelRange(sheet as ExcelJS.Worksheet),
-    display: (sheet, r, c) => excelDisplay(sheet as ExcelJS.Worksheet, r, c),
-    raw: (sheet, r, c) => excelRaw(sheet as ExcelJS.Worksheet, r, c),
-    setCell: (sheet, r, c, value) => excelSetCell(sheet as ExcelJS.Worksheet, r, c, value),
-    colWidth: (sheet, c) => excelColWidth(sheet as ExcelJS.Worksheet, c),
-    setColWidth: (sheet, c, px) => excelSetColWidth(sheet as ExcelJS.Worksheet, c, px),
-    rowHeight: (sheet, r) => excelRowHeight(sheet as ExcelJS.Worksheet, r),
-    setRowHeight: (sheet, r, px) => excelSetRowHeight(sheet as ExcelJS.Worksheet, r, px),
   };
 }
 
 /**
- * 表格编辑器。
- *
- * .xlsx 走 ExcelJS（MIT）：样式、列宽、行高、合并单元格与数字格式随文件
- * 原样加载并写回；旧式 .xls / .csv 仍走 SheetJS（这些格式本身不承载现代
- * 样式，或 ExcelJS 不支持二进制 .xls）。
+ * 旧式 .xls / .csv 表格编辑器（SheetJS）。`.xlsx` 已由 BetterOffice 编辑器接管。
  */
 export function SheetEditor({
   bytes,
@@ -155,8 +117,6 @@ export function SheetEditor({
   onSave,
 }: Props) {
   const [wb, setWb] = useState<SheetBook | null>(null);
-  const [ewb, setEwb] = useState<ExcelJS.Workbook | null>(null);
-  const [editTick, setEditTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [activeSheet, setActiveSheet] = useState(0);
   const [selected, setSelected] = useState<{ r: number; c: number }>({ r: 0, c: 0 });
@@ -172,21 +132,11 @@ export function SheetEditor({
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
-          if (bookType === "xlsx") {
-            const parsed = await loadExcelBook(bytes);
-            if (cancelled) return;
-            const first = excelSheet(parsed, 0);
-            setEwb(parsed);
-            setWb(null);
-            setFormula(first ? excelRaw(first, 0, 0) : "");
-          } else {
-            const parsed = parseSheet(bytes, bookType);
-            if (cancelled) return;
-            const first = parsed.Sheets[parsed.SheetNames[0]];
-            setWb(parsed);
-            setEwb(null);
-            setFormula(first ? cellRaw(first, 0, 0) : "");
-          }
+          const parsed = parseSheet(bytes, bookType);
+          if (cancelled) return;
+          const first = parsed.Sheets[parsed.SheetNames[0]];
+          setWb(parsed);
+          setFormula(first ? cellRaw(first, 0, 0) : "");
           setError(null);
           setActiveSheet(0);
           setSelected({ r: 0, c: 0 });
@@ -196,10 +146,8 @@ export function SheetEditor({
           clearChunkReloadFlag();
         } catch (e) {
           if (cancelled) return;
-          // ExcelJS 是动态加载的：部署后旧 chunk 失效时整页刷新一次
           if (reloadOnceForChunkError(e)) return;
           setWb(null);
-          setEwb(null);
           setError(e instanceof Error ? e.message : "表格解析失败");
         }
       })();
@@ -210,14 +158,12 @@ export function SheetEditor({
     };
   }, [bytes, bookType, reloadToken]);
 
-  const engine = useMemo<Engine | null>(() => {
-    if (bookType === "xlsx") return ewb ? exceljsEngine(ewb) : null;
-    return wb ? sheetjsEngine(wb, bookType) : null;
-  }, [bookType, wb, ewb]);
+  const engine = useMemo<Engine | null>(
+    () => (wb ? sheetjsEngine(wb, bookType) : null),
+    [bookType, wb],
+  );
 
   const sheet = useMemo(() => engine?.sheet(activeSheet) ?? null, [engine, activeSheet]);
-  // editTick 只用于强制重渲染：ExcelJS 改的是可变工作簿，对象引用不会变
-  void editTick;
 
   const range = useMemo(() => {
     const r = engine && sheet ? engine.range(sheet) : { rows: 0, cols: 0 };
@@ -239,11 +185,10 @@ export function SheetEditor({
     onDirty();
   }, [onDirty]);
 
-  /** 编辑后触发重渲染：ExcelJS 直接改可变对象，SheetJS 换一个 workBook 引用 */
+  /** 编辑后换一个 workBook 引用触发重渲染 */
   const touch = useCallback(() => {
-    if (bookType === "xlsx") setEditTick((t) => t + 1);
-    else setWb((prev) => (prev ? { ...prev } : prev));
-  }, [bookType]);
+    setWb((prev) => (prev ? { ...prev } : prev));
+  }, []);
 
   // 拖动列宽 / 行高：写回工作表自身的列宽/行高，保存时随文件一起写出。
   const resizeCleanupRef = useRef<(() => void) | null>(null);
@@ -314,11 +259,6 @@ export function SheetEditor({
   useEffect(() => {
     apiRef.current = {
       getBytes: async () => {
-        if (bookType === "xlsx") {
-          if (!ewb) return null;
-          ensureExcelSheetLimits(ewb);
-          return writeExcelBook(ewb);
-        }
         if (!wb) return null;
         ensureSheetLimits(wb);
         markFullCalc(wb);
@@ -326,7 +266,7 @@ export function SheetEditor({
       },
       isDirty: () => dirty,
     };
-  }, [apiRef, wb, ewb, bookType, dirty]);
+  }, [apiRef, wb, bookType, dirty]);
 
   useEffect(() => {
     if (!editing) return;

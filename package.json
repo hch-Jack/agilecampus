@@ -34,7 +34,6 @@
     "docx": "^9.15.3",
     "docx-preview": "^0.4.1",
     "drizzle-orm": "^0.45.2",
-    "exceljs": "^4.4.0",
     "js-sha256": "^1.1.0",
     "jszip": "^3.10.2",
     "mammoth": "^1.13.0",
@@ -69,5 +68,14 @@
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.9"
+  },
+  "allowScripts": {
+    "esbuild": true,
+    "sharp": true,
+    "msw": true,
+    "unrs-resolver": true
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
   }
 }

@@ -33,9 +33,9 @@ export function defaultUploadRoot(cwd = process.cwd()): string {
   const marker = `${path.sep}.next${path.sep}`;
   const at = cwd.lastIndexOf(marker);
   if (at !== -1) {
-    return path.resolve(cwd.slice(0, at), "..", "data", "uploads");
+    return path.resolve(/*turbopackIgnore: true*/ cwd.slice(0, at), "..", "data", "uploads");
   }
-  return path.join(cwd, "data", "uploads");
+  return path.join(/*turbopackIgnore: true*/ cwd, "data", "uploads");
 }
 
 export function uploadRoot(): string {
@@ -53,7 +53,7 @@ export function isBlobKey(value: unknown): value is string {
 /** 只接受本模块生成的键；挡掉 `../` 之类的路径穿越 */
 export function blobPath(storageKey: string): string {
   if (!isBlobKey(storageKey)) throw new AppError("文件不存在");
-  return path.join(uploadRoot(), storageKey);
+  return path.join(/*turbopackIgnore: true*/ uploadRoot(), storageKey);
 }
 
 function newKey(): string {
@@ -108,9 +108,9 @@ export async function saveBlobFromStream(
   if (!stream) throw new AppError("没有收到文件内容");
 
   const storageKey = newKey();
-  const dir = path.join(uploadRoot(), storageKey.slice(0, 2));
+  const dir = path.join(/*turbopackIgnore: true*/ uploadRoot(), storageKey.slice(0, 2));
   await mkdir(dir, { recursive: true });
-  const finalPath = path.join(uploadRoot(), storageKey);
+  const finalPath = path.join(/*turbopackIgnore: true*/ uploadRoot(), storageKey);
   const partPath = `${finalPath}.part`;
 
   const handle = await open(partPath, "w");
@@ -151,9 +151,9 @@ export async function saveBlobFromBuffer(
   if (data.length > maxSize) throw new AppError(`文件不能超过 ${MAX_FILE_SIZE_LABEL}`);
 
   const storageKey = newKey();
-  const dir = path.join(uploadRoot(), storageKey.slice(0, 2));
+  const dir = path.join(/*turbopackIgnore: true*/ uploadRoot(), storageKey.slice(0, 2));
   await mkdir(dir, { recursive: true });
-  const finalPath = path.join(uploadRoot(), storageKey);
+  const finalPath = path.join(/*turbopackIgnore: true*/ uploadRoot(), storageKey);
   const partPath = `${finalPath}.part`;
 
   const handle = await open(partPath, "w");
@@ -185,8 +185,8 @@ export async function copyBlob(
   if (info.size > maxSize) throw new AppError(`文件不能超过 ${MAX_FILE_SIZE_LABEL}`);
 
   const storageKey = newKey();
-  await mkdir(path.join(uploadRoot(), storageKey.slice(0, 2)), { recursive: true });
-  await copyFile(sourcePath, path.join(uploadRoot(), storageKey));
+  await mkdir(path.join(/*turbopackIgnore: true*/ uploadRoot(), storageKey.slice(0, 2)), { recursive: true });
+  await copyFile(sourcePath, path.join(/*turbopackIgnore: true*/ uploadRoot(), storageKey));
   return { storageKey, size: info.size };
 }
 
@@ -229,5 +229,5 @@ export function blobReadStream(storageKey: string) {
 /** 删除磁盘 blob，尽力而为：文件已不在不算错 */
 export async function deleteBlob(storageKey: string | null | undefined): Promise<void> {
   if (!storageKey || !isBlobKey(storageKey)) return;
-  await unlink(path.join(uploadRoot(), storageKey)).catch(() => {});
+  await unlink(path.join(/*turbopackIgnore: true*/ uploadRoot(), storageKey)).catch(() => {});
 }
