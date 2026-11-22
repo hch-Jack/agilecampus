@@ -194,14 +194,14 @@ export function LibraryPicker({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4"
+      className="ac-backdrop-in fixed inset-0 z-50 grid place-items-center bg-ink/50 p-4 backdrop-blur-md"
       role="dialog"
       aria-modal="true"
       aria-label={title}
       onClick={() => (!pickingId ? onClose() : undefined)}
     >
       <div
-        className="ac-card flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden p-3"
+        className="ac-card ac-modal-in flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden p-3"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-2 flex items-center justify-between gap-2">

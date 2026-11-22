@@ -269,6 +269,21 @@ body.proj-cosmic [role="dialog"] * {
   transform-origin: top right;
   animation: ac-pop-in .22s cubic-bezier(.22, .72, .28, 1) both;
 }
+
+/* —— 上拉菜单：从按钮下方浮入（附件来源菜单等） —— */
+@keyframes ac-pop-up-in {
+  from { opacity: 0; transform: translateY(6px) scale(.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.ac-pop-up-in {
+  transform-origin: bottom left;
+  animation: ac-pop-up-in .2s cubic-bezier(.22, .72, .28, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ac-pop-up-in {
+    animation: none;
+  }
+}
 .ac-modal-in {
   animation: ac-modal-in .3s cubic-bezier(.22, .72, .28, 1) both;
 }

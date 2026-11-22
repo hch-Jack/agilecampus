@@ -109,7 +109,7 @@ export function AttachmentSourceButton({
       {open && !disabled && !busy && (
         <div
           role="menu"
-          className="absolute bottom-full left-0 z-50 mb-1 w-44 overflow-hidden rounded-field border border-line bg-surface py-1 shadow-lg"
+          className="ac-pop-up-in absolute bottom-full left-0 z-50 mb-1 w-44 overflow-hidden rounded-field border border-line bg-surface/85 py-1 shadow-pop backdrop-blur"
         >
           <button
             type="button"
