@@ -21,6 +21,16 @@ export async function signOutAction() {
   await signOut({ redirectTo: "/login" });
 }
 
+/** 设置菜单：登录后是否显示欢迎页 */
+export async function setShowWelcomeAction(
+  value: boolean,
+): Promise<{ ok: true } | { error: string }> {
+  const session = await auth();
+  if (!session?.user) return { error: "请先登录" };
+  await db.update(users).set({ showWelcome: value }).where(eq(users.id, session.user.id));
+  return { ok: true };
+}
+
 // 「设置」菜单里「退出」下方的「注销账号」：经密码二次确认后匿名化当前账号。
 // 匿名化（而非硬删）的原因见 lib/user.ts 的 anonymizeUser：用户在他人项目里的附件/动态
 // 引用了 users.id 且非级联外键，硬删会撞外键；匿名化擦 PII、保外键、历史不丢，账号无法再登录。

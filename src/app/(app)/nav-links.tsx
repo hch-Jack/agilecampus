@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { FolderIcon } from "@/components/file-type-icon";
 import { activeNavKey, NAV_ITEMS } from "./nav-items";
 
 type LibraryTeam = { id: string; name: string };
@@ -144,12 +145,13 @@ export function NavLinks({
                     ref={menuRef}
                     role="menu"
                     aria-label="选择资源库"
+                    className="ac-pop-in fixed z-50 rounded-card border border-line bg-surface/85 p-1 shadow-pop backdrop-blur"
                     style={{
                       top: menuPos.top,
                       left: menuPos.left,
                       width: menuPos.width,
+                      transformOrigin: "top left",
                     }}
-                    className="fixed z-50 rounded-card border border-line bg-surface/85 p-1 shadow-pop backdrop-blur"
                   >
                     <Link
                       href="/library"
@@ -176,7 +178,7 @@ export function NavLinks({
                           className="flex min-h-9 items-center gap-2 rounded-field px-2.5 text-sm text-ink-soft hover:bg-primary-soft hover:text-primary"
                           title={team.name}
                         >
-                          <span aria-hidden>📁</span>
+                          <FolderIcon className="h-4 w-4 shrink-0" />
                           <span className="min-w-0 truncate">{team.name}</span>
                         </Link>
                       ))

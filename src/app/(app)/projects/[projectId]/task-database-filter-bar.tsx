@@ -3,13 +3,13 @@
 // 任务数据库（只读总览表）的筛选条：与看板 FilterBar 同款的点选式 chips——
 // 每个维度一排可点选的值（点「张三」只看张三的任务，再点取消），多选=任一命中。
 // 条件写入 URL 的 dbf 参数（JSON 编码），与看板筛选参数共存同一条 URL（只动 dbf 键）。
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { PRIORITY_TEXT, STATUS_TEXT } from "@/lib/task-constants";
 import {
   EMPTY_DB_FILTERS,
   parseDbFilters,
-  serializeDbFilters,
+  setDbFiltersOnParams,
   type DbFilters,
 } from "@/lib/task-database-filters";
 
@@ -67,15 +67,22 @@ export function TaskDatabaseFilterBar({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const [, startTransition] = useTransition();
   const filters = useMemo(() => parseDbFilters(searchParams.get("dbf")), [searchParams]);
+  // 连续快速点选时 URL 还没回来，下一次点击必须基于上一次的待提交值，否则会丢选中
+  const filtersRef = useRef(filters);
+  useEffect(() => {
+    filtersRef.current = filters;
+  }, [filters]);
 
   function push(next: DbFilters) {
-    const params = new URLSearchParams(searchParams.toString());
-    const serialized = serializeDbFilters(next);
-    if (serialized) params.set("dbf", encodeURIComponent(serialized));
-    else params.delete("dbf");
-    const qs = params.toString();
-    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    // 只动 dbf 键；URLSearchParams 自己负责编码，别再 encodeURIComponent（双重编码会让筛选读不出来）
+    filtersRef.current = next;
+    const qs = setDbFiltersOnParams(searchParams, next).toString();
+    // 服务端重渲染标成 transition：连续点多个 chips 时输入/按钮不被阻塞
+    startTransition(() => {
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    });
   }
 
   const dirty =
@@ -103,13 +110,17 @@ export function TaskDatabaseFilterBar({
 
   /** 点选自定义属性的一个值（toggle） */
   const toggleProp = (defId: string, value: string) => {
-    const cur = filters.props[defId] ?? [];
+    const current = filtersRef.current;
+    const cur = current.props[defId] ?? [];
     const next = cur.includes(value) ? cur.filter((x) => x !== value) : [...cur, value];
-    const props = { ...filters.props };
+    const props = { ...current.props };
     if (next.length) props[defId] = next;
     else delete props[defId];
-    push({ ...filters, props });
+    push({ ...current, props });
   };
+
+  const toggleValue = (list: string[], id: string) =>
+    list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
 
   function PropGroup({
     def,
@@ -181,10 +192,8 @@ export function TaskDatabaseFilterBar({
               on={filters.status.includes(c.id)}
               onClick={() =>
                 push({
-                  ...filters,
-                  status: filters.status.includes(c.id)
-                    ? filters.status.filter((x) => x !== c.id)
-                    : [...filters.status, c.id],
+                  ...filtersRef.current,
+                  status: toggleValue(filtersRef.current.status, c.id),
                 })
               }
             >
@@ -200,10 +209,8 @@ export function TaskDatabaseFilterBar({
               on={filters.assignee.includes(m.id)}
               onClick={() =>
                 push({
-                  ...filters,
-                  assignee: filters.assignee.includes(m.id)
-                    ? filters.assignee.filter((x) => x !== m.id)
-                    : [...filters.assignee, m.id],
+                  ...filtersRef.current,
+                  assignee: toggleValue(filtersRef.current.assignee, m.id),
                 })
               }
             >
@@ -219,10 +226,8 @@ export function TaskDatabaseFilterBar({
               on={filters.priority.includes(p.id)}
               onClick={() =>
                 push({
-                  ...filters,
-                  priority: filters.priority.includes(p.id)
-                    ? filters.priority.filter((x) => x !== p.id)
-                    : [...filters.priority, p.id],
+                  ...filtersRef.current,
+                  priority: toggleValue(filtersRef.current.priority, p.id),
                 })
               }
             >
@@ -239,10 +244,8 @@ export function TaskDatabaseFilterBar({
                 on={filters.label.includes(l.id)}
                 onClick={() =>
                   push({
-                    ...filters,
-                    label: filters.label.includes(l.id)
-                      ? filters.label.filter((x) => x !== l.id)
-                      : [...filters.label, l.id],
+                    ...filtersRef.current,
+                    label: toggleValue(filtersRef.current.label, l.id),
                   })
                 }
               >
@@ -260,10 +263,8 @@ export function TaskDatabaseFilterBar({
                 on={filters.milestone.includes(m.id)}
                 onClick={() =>
                   push({
-                    ...filters,
-                    milestone: filters.milestone.includes(m.id)
-                      ? filters.milestone.filter((x) => x !== m.id)
-                      : [...filters.milestone, m.id],
+                    ...filtersRef.current,
+                    milestone: toggleValue(filtersRef.current.milestone, m.id),
                   })
                 }
               >
@@ -273,7 +274,15 @@ export function TaskDatabaseFilterBar({
           </Group>
         )}
 
-        <Chip on={filters.overdue} onClick={() => push({ ...filters, overdue: !filters.overdue })}>
+        <Chip
+          on={filters.overdue}
+          onClick={() =>
+            push({
+              ...filtersRef.current,
+              overdue: !filtersRef.current.overdue,
+            })
+          }
+        >
           仅看逾期
         </Chip>
 

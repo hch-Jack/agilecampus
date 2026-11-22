@@ -45,6 +45,7 @@ export default async function AppLayout({
       timezone: users.timezone,
       avatarUpdatedAt: users.avatarUpdatedAt,
       tutorialSeenAt: users.tutorialSeenAt,
+      showWelcome: users.showWelcome,
     })
     .from(users)
     .where(eq(users.id, session.user.id));
@@ -151,6 +152,7 @@ export default async function AppLayout({
                     // 选项在服务端生成后整份传给客户端：两边各算一次会因 ICU 版本不同而不一致
                     options: listTimeZones(),
                   }}
+                  showWelcome={row?.showWelcome ?? true}
                 />
               </div>
             </header>

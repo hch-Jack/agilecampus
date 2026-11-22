@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { submitCompletionAction } from "@/app/(app)/projects/[projectId]/actions";
 import { MAX_FILE_SIZE, MAX_FILE_SIZE_LABEL } from "@/lib/file-limits";
 import { uploadFileRaw } from "@/lib/upload-client";
+import { FileTypeIcon } from "@/components/file-type-icon";
 
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -181,7 +182,11 @@ export function CompletionRequestModal({
                       key={`${f.name}-${f.size}-${i}`}
                       className="flex items-center gap-2 rounded-field bg-sunken px-2 py-1 text-xs text-ink-soft"
                     >
-                      <span aria-hidden>📄</span>
+                      <FileTypeIcon
+                        filename={f.name}
+                        mimeType={f.type}
+                        className="h-4 w-4 shrink-0"
+                      />
                       <span className="min-w-0 flex-1 truncate">{f.name}</span>
                       <span className="shrink-0 text-ink-faint">{fmtSize(f.size)}</span>
                       <button

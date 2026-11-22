@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { GeneratedFileEntry } from "@/lib/agent/assistant-panel-shared";
+import { FileTypeIcon } from "@/components/file-type-icon";
 
 /**
  * 面板顶部的两个检索入口（互斥展开，共用一整行按钮）：
@@ -47,13 +48,6 @@ function fmtSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
-}
-
-/** 文件卡片左侧的扩展名角标（如 PDF / DOCX），太长就取前 4 个字符 */
-function fileBadge(filename: string): string {
-  const dot = filename.lastIndexOf(".");
-  const ext = dot === -1 ? "" : filename.slice(dot + 1).toUpperCase();
-  return (ext || "FILE").slice(0, 4);
 }
 
 const CHEVRON = (
@@ -353,9 +347,11 @@ export function AssistantBoards({
                     className="flex min-w-0 flex-1 items-center gap-2 text-left disabled:opacity-60"
                     title="跳到生成它的那条答复"
                   >
-                    <span className="grid h-8 w-8 shrink-0 place-items-center rounded bg-primary-soft text-[10px] font-semibold uppercase text-primary">
-                      {fileBadge(f.filename)}
-                    </span>
+                    <FileTypeIcon
+                      filename={f.filename}
+                      mimeType={f.mimeType}
+                      className="h-8 w-8 shrink-0"
+                    />
                     <span className="min-w-0">
                       <span className="block truncate text-[12px] font-medium text-ink">
                         {f.filename}

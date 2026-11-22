@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { FilePreviewModal } from "@/components/file-preview";
+import { FileTypeIcon } from "@/components/file-type-icon";
 import { RejectReasonDialog } from "@/components/reject-reason-dialog";
 import { decideApprovalAction } from "@/app/(app)/dashboard/actions";
 import type { ApprovalDetail } from "@/lib/approval";
@@ -182,7 +183,11 @@ export function SystemApprovalModal({
                               }
                               className="flex w-full items-center gap-1.5 rounded-field px-2 py-1 text-left text-xs text-primary hover:bg-sunken"
                             >
-                              <span aria-hidden>📄</span>
+                              <FileTypeIcon
+                                filename={a.filename}
+                                mimeType={a.mimeType}
+                                className="h-4 w-4 shrink-0"
+                              />
                               <span className="min-w-0 flex-1 truncate">{a.filename}</span>
                               <span className="shrink-0 text-ink-faint">{fmtSize(a.size)}</span>
                             </button>

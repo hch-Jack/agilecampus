@@ -5,6 +5,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -27,6 +28,7 @@ import {
   type AssistantPromptDetail,
 } from "@/lib/right-panels";
 import { setRightPanelOpen } from "@/components/right-panel-push";
+import { RightPanelResizeHandle } from "@/components/right-panel-width";
 
 /**
  * 主界面右侧的 AI 助手面板。
@@ -37,10 +39,10 @@ import { setRightPanelOpen } from "@/components/right-panel-push";
  * 四个容易踩的点：
  * 1. 面板必须是 `<header>` 的**兄弟**：顶栏带 backdrop-blur，会成为 fixed 后代的包含块，
  *    抽屉放进去就不再相对视口定位（顶栏的「设置」弹窗因此 portal 到 body）。
- * 2. `lg:pr-[570px]` 由 **RightPanelPush** 统一加在整页外层，消息浮窗共用同一层；
+ * 2. 右侧挤压宽度由 **RightPanelPush** 统一加在整页外层，消息浮窗共用同一层；
  *    不能加在 `mx-auto max-w-5xl` 的内容盒上 —— 加在内容盒里会让正文在剩余区域里
- *    不居中，顶栏右侧按钮也会被抽屉盖住。**这个数与抽屉的 `lg:w-[570px]` 必须一致**，
- *    改宽度时三处（RightPanelPush / 助手抽屉 / 消息抽屉）一起改。
+ *    不居中，顶栏右侧按钮也会被抽屉盖住。宽度统一走 `--right-panel-width`
+ *    （见 right-panel-width.tsx），抽屉与挤压层读同一个变量，拖动时不会不同步。
  * 3. 抽屉**常驻挂载**，收起时移出视口（translate + inert）。若按需卸载，`AgentChat` 的
  *    `useState(initialMessages)` 会在下次打开时重新播种，这段时间里发的消息就丢了。
  * 4. `viewKey` 只在**显式切换/新建/删除当前会话/重置**时递增，用来重新播种 `AgentChat`。
@@ -185,10 +187,12 @@ export function AssistantShell({
 
   // 正文挤压宽度交给 RightPanelPush 统一算：两个面板互斥，切换时宽度不变，
   // 不会出现「外层刚开始撑、内层还没收」的错帧抖动。
-  useEffect(() => {
+  // 用 layout effect：在抽屉 transform 的首帧绘制前同步挤压层，
+  // 否则 push 会晚一帧启动，看起来就是「抽屉先动、正文滞后」。
+  useLayoutEffect(() => {
     setRightPanelOpen("assistant", open);
   }, [open]);
-  useEffect(() => () => setRightPanelOpen("assistant", false), []);
+  useLayoutEffect(() => () => setRightPanelOpen("assistant", false), []);
   useEffect(() => {
     const close = () => setOpen(false);
     window.addEventListener(MESSAGES_PANEL_OPEN_EVENT, close);
@@ -535,10 +539,11 @@ export function AssistantShell({
         aria-label="AI 助手"
         aria-hidden={!open}
         inert={!open}
-        className={`assistant-panel fixed inset-y-0 right-0 z-40 flex w-full max-w-[630px] flex-col border-l border-line bg-surface shadow-pop transition-transform duration-300 ease-out lg:w-[570px] ${
+        className={`assistant-panel fixed inset-y-0 right-0 z-40 flex w-full max-w-[630px] flex-col border-l border-line bg-surface shadow-pop transition-transform duration-300 ease-out lg:w-[var(--right-panel-width)] lg:max-w-none ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >
+        <RightPanelResizeHandle label="AI 助手" />
         {panelBody}
       </aside>
     </AssistantUiContext.Provider>

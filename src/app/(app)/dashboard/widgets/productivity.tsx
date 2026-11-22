@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { FileTypeIcon } from "@/components/file-type-icon";
 import { dateIn, formatDateTime } from "@/lib/time";
 import type {
   DashboardAttachment,
@@ -143,19 +144,26 @@ export function RecentAttachmentsWidget({
       ) : (
         <ul className="space-y-2">
           {attachments.map((attachment) => (
-            <li key={attachment.id}>
-              <Link
-                href={`/projects/${attachment.projectId}/tasks/${attachment.taskId}`}
-                className="dw-item block truncate font-medium text-ink hover:text-primary"
-                title={attachment.filename}
-              >
-                {attachment.filename}
-              </Link>
-              <p className="dw-meta mt-0.5 truncate text-ink-faint">
-                {attachment.projectName} · {attachment.taskTitle} · {formatSize(attachment.size)}
-                {" · "}
-                {dateIn(tz, attachment.createdAt)}
-              </p>
+            <li key={attachment.id} className="flex items-start gap-1.5">
+              <FileTypeIcon
+                filename={attachment.filename}
+                mimeType={attachment.mimeType}
+                className="mt-0.5 h-3.5 w-3.5 shrink-0"
+              />
+              <div className="min-w-0 flex-1">
+                <Link
+                  href={`/projects/${attachment.projectId}/tasks/${attachment.taskId}`}
+                  className="dw-item block truncate font-medium text-ink hover:text-primary"
+                  title={attachment.filename}
+                >
+                  {attachment.filename}
+                </Link>
+                <p className="dw-meta mt-0.5 truncate text-ink-faint">
+                  {attachment.projectName} · {attachment.taskTitle} · {formatSize(attachment.size)}
+                  {" · "}
+                  {dateIn(tz, attachment.createdAt)}
+                </p>
+              </div>
             </li>
           ))}
         </ul>

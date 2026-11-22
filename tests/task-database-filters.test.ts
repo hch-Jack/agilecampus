@@ -3,6 +3,7 @@ import {
   applyDbFilters,
   parseDbFilters,
   serializeDbFilters,
+  setDbFiltersOnParams,
   EMPTY_DB_FILTERS,
   type DbFilterableTask,
   type DbFilterContext,
@@ -57,6 +58,22 @@ describe("URL 序列化往返", () => {
       props: { [PROP_A]: [OPT_HIGH, "none"], [PROP_C]: ["checked"] },
     };
     expect(parseDbFilters(serializeDbFilters(f))).toEqual(f);
+  });
+
+  it("写回 URLSearchParams 只编码一次，服务端仍能解析", () => {
+    const f = {
+      status: ["doing"],
+      assignee: [U1],
+      priority: [],
+      label: [],
+      milestone: [],
+      overdue: false,
+      props: { [PROP_A]: [OPT_HIGH] },
+    };
+    const params = setDbFiltersOnParams(new URLSearchParams("tab=db"), f);
+    const round = new URLSearchParams(params.toString()); // 模拟浏览器 URL → Next searchParams 解码
+    expect(round.get("tab")).toBe("db");
+    expect(parseDbFilters(round.get("dbf"))).toEqual(f);
   });
 
   it("空态序列化为空串，垃圾输入还原为空态", () => {

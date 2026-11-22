@@ -3,6 +3,7 @@
 import { useActionState, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FilePreviewModal } from "@/components/file-preview";
+import { FileTypeIcon } from "@/components/file-type-icon";
 import { EditDocumentButton } from "@/components/documents/edit-document-button";
 import { detectEditableFormat } from "@/lib/documents/format";
 import { formatShortDateTime } from "@/lib/time";
@@ -92,6 +93,11 @@ function AttachmentRow({
 
   return (
     <li className="flex items-center gap-2 rounded px-1 py-1 hover:bg-sunken">
+      <FileTypeIcon
+        filename={attachment.filename}
+        mimeType={attachment.mimeType}
+        className="h-4 w-4 shrink-0"
+      />
       <div className="min-w-0 flex-1">
         <span className="block truncate text-sm text-ink">{attachment.filename}</span>
         <span className="block truncate text-xs text-ink-faint">

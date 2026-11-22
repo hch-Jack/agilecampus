@@ -118,6 +118,8 @@ export const users = pgTable(
     railLayout: jsonb("rail_layout"),
     // 常驻栏收起状态：记住用户上次的选择（按账号跨设备）；NULL = 默认收起。
     railCollapsed: boolean("rail_collapsed"),
+    // 登录成功后是否落到欢迎页（false = 直接进工作台）
+    showWelcome: boolean("show_welcome").notNull().default(true),
     // 头像：PNG/JPEG/WebP 直存库内（与私信附件同构），经 /api/avatars/[userId] 流出。
     // avatarUpdatedAt 兼作缓存破坏版本号（URL 带 ?v=），换头像即覆盖旧图。
     avatarData: bytea("avatar_data"),

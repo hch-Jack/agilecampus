@@ -10,6 +10,7 @@ import {
 import type { SheetTable } from "@/lib/file-preview-office";
 import { detectEditableFormat } from "@/lib/documents/format";
 import { EditDocumentButton } from "@/components/documents/edit-document-button";
+import { FileTypeIcon } from "@/components/file-type-icon";
 
 /** 预览目标：url 是现成的下载路由（带会话鉴权），组件内按需取内容 */
 export type PreviewFile = {
@@ -350,7 +351,7 @@ export function FilePreviewModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3 sm:p-5"
+      className="ac-backdrop-in fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3 sm:p-5"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -359,13 +360,16 @@ export function FilePreviewModal({
       {/* 宇宙主题的 --color-surface 只有 45% 不透明度，弹窗会透出星空与页面文字；
           project.css 给 .ac-file-preview 单独压厚（浅色主题仍是纯白 surface） */}
       <div
-        className="ac-file-preview relative flex h-[92vh] max-h-[1000px] w-[min(96vw,1440px)] flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-2xl"
+        className="ac-file-preview ac-modal-in relative flex h-[92vh] max-h-[1000px] w-[min(96vw,1440px)] flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2 sm:px-4 sm:py-2.5">
-          <span className="shrink-0 rounded bg-sunken px-1.5 py-0.5 text-[11px] text-ink-soft">
-            {kindLabel(kind)}
-          </span>
+          <FileTypeIcon
+            filename={file.filename}
+            mimeType={file.mimeType}
+            className="h-5 w-5 shrink-0"
+            title={kindLabel(kind)}
+          />
           <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink" title={file.filename}>
             {file.filename}
           </span>
@@ -526,9 +530,11 @@ export function FilePreviewModal({
           {kind === "unsupported" && (
             <div className="grid min-h-0 flex-1 place-items-center p-6">
               <div className="text-center">
-                <p className="text-4xl" aria-hidden>
-                  📄
-                </p>
+                <FileTypeIcon
+                  filename={file.filename}
+                  mimeType={file.mimeType}
+                  className="mx-auto h-14 w-14"
+                />
                 <p className="mt-2 text-sm text-ink-soft">{unsupportedHint}</p>
                 <div className="mt-3">{downloadBtn}</div>
               </div>
