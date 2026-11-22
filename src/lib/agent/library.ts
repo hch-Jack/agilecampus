@@ -275,11 +275,10 @@ async function listAccessibleLibraries(
   }
 
   const myTeams = await listMyTeams(actorId);
-  const targetTeams =
-    scope === "team"
-      ? myTeams.filter((t) => t.id === teamId)
-      : myTeams;
-  if (scope === "team" && targetTeams.length === 0)
+  // teamId 省略 = 搜索/浏览我所在的全部团队库（scope=all 内部会这样调用）；
+  // 只有明确指定了 teamId 却不在团队里才是错误。
+  const targetTeams = teamId ? myTeams.filter((t) => t.id === teamId) : myTeams;
+  if (scope === "team" && teamId && targetTeams.length === 0)
     throw new AppError("找不到该团队或你不在团队里");
 
   const out: AccessibleLibrary[] = [];
