@@ -66,6 +66,12 @@ const SORT_LABELS: Record<LibrarySortField, string> = {
   type: "类型",
 };
 
+// 列表里每一行都是**独立的 grid 容器**：末列若用 auto，各行动作按钮多少不同，
+// 会把前面的固定列推得左右错位（表头也和行对不上）。统一固定末列宽，
+// 表头与所有行共用同一套轨道，修改时间 / 类型 / 大小严格竖向对齐。
+const ROW_GRID =
+  "grid-cols-1 sm:grid-cols-[minmax(0,1fr)_9.5rem_7rem_6.5rem_12rem]";
+
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -416,7 +422,9 @@ export function LibraryBrowser({
       </p>
 
       <div className="ac-card overflow-hidden p-0">
-        <div className="hidden grid-cols-[minmax(0,1fr)_9.5rem_7rem_6.5rem_auto] gap-2 border-b border-line bg-surface-2 px-3 py-1.5 text-[11px] font-medium text-ink-faint sm:grid">
+        <div
+          className={`hidden gap-2 border-b border-line bg-surface-2 px-3 py-1.5 text-[11px] font-medium text-ink-faint sm:grid ${ROW_GRID}`}
+        >
           <span>名称</span>
           <span>修改时间</span>
           <span>类型</span>
@@ -437,17 +445,19 @@ export function LibraryBrowser({
             {view.folders.map((folder) => (
               <li
                 key={folder.id}
-                className="group grid grid-cols-1 items-center gap-1 px-3 py-2 hover:bg-sunken sm:grid-cols-[minmax(0,1fr)_9.5rem_7rem_6.5rem_auto] sm:gap-2"
+                className={`group relative grid items-start gap-1 px-3 py-2 hover:bg-sunken sm:gap-2 ${ROW_GRID}`}
               >
-                <div className="flex min-w-0 items-center gap-2">
-                  <FolderIcon className="h-4 w-4 shrink-0" />
-                  <div className="min-w-0">
+                <div className="flex min-w-0 items-start gap-2">
+                  <FolderIcon className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    {/* 覆盖层挂在不带 overflow:hidden 的 Link 上，整行都可点；
+                        truncate 放在内层 span，否则 ::after 会被一起裁掉 */}
                     <Link
                       href={buildHref(folder.id)}
-                      className="block truncate text-sm font-medium text-ink hover:text-primary"
+                      className="block max-w-full text-sm font-medium text-ink after:absolute after:inset-0 after:content-[''] hover:text-primary"
                       title={folder.name}
                     >
-                      {folder.name}
+                      <span className="block truncate">{folder.name}</span>
                     </Link>
                     {view.searching && folder.path && (
                       <span className="block truncate text-[11px] text-ink-faint">
@@ -456,14 +466,16 @@ export function LibraryBrowser({
                     )}
                   </div>
                 </div>
-                <span className="text-xs text-ink-faint">
+                <span className="text-xs leading-5 text-ink-faint">
                   {formatShortDateTime(timeZone, folder.updatedAt)}
                 </span>
-                <span className="text-xs text-ink-soft">文件夹</span>
-                <span className="text-xs text-ink-faint sm:text-right">
+                <span className="text-xs leading-5 text-ink-soft">文件夹</span>
+                <span className="text-xs leading-5 text-ink-faint sm:text-right">
                   {folder.itemCount} 个文件
                 </span>
-                <div className="flex justify-end gap-2 text-xs">
+                {/* z-10：压在整行覆盖层之上，否则改名/删除会先触发打开文件夹；
+                    容器本身放行指针事件，让右侧留白也能点开整行 */}
+                <div className="pointer-events-none relative z-10 flex justify-end gap-2 text-xs [&>*]:pointer-events-auto">
                   {view.canEdit && !folder.isDefault && (
                     <>
                       <button
@@ -492,7 +504,7 @@ export function LibraryBrowser({
               return (
                 <li
                   key={item.id}
-                  className="group grid grid-cols-1 items-center gap-1 px-3 py-2 hover:bg-sunken sm:grid-cols-[minmax(0,1fr)_9.5rem_7rem_6.5rem_auto] sm:gap-2"
+                  className={`group relative grid items-start gap-1 px-3 py-2 hover:bg-sunken sm:gap-2 ${ROW_GRID}`}
                 >
                   <div className="flex min-w-0 items-start gap-2">
                     <FileTypeIcon
@@ -504,10 +516,10 @@ export function LibraryBrowser({
                       <button
                         type="button"
                         onClick={() => setPreviewId(item.id)}
-                        className="block max-w-full truncate text-left text-sm text-ink hover:text-primary"
+                        className="block max-w-full text-left text-sm text-ink after:absolute after:inset-0 after:content-[''] hover:text-primary"
                         title={item.filename}
                       >
-                        {item.filename}
+                        <span className="block truncate">{item.filename}</span>
                       </button>
                       <span className="mt-0.5 flex flex-wrap items-center gap-1.5">
                         <span className="ac-badge bg-sunken text-ink-soft">
@@ -529,19 +541,19 @@ export function LibraryBrowser({
                       </span>
                     </div>
                   </div>
-                  <span className="text-xs text-ink-faint">
+                  <span className="text-xs leading-5 text-ink-faint">
                     {formatShortDateTime(timeZone, new Date(modifiedAt))}
                     <span className="block truncate text-[11px]">
                       {item.currentActorName ?? "未知用户"}
                     </span>
                   </span>
-                  <span className="text-xs text-ink-soft">
+                  <span className="text-xs leading-5 text-ink-soft">
                     {libraryFileTypeLabel(item.filename, item.mimeType)}
                   </span>
-                  <span className="text-xs text-ink-faint sm:text-right">
+                  <span className="text-xs leading-5 text-ink-faint sm:text-right">
                     {fmtSize(item.size)}
                   </span>
-                  <div className="flex flex-wrap justify-end gap-2 text-xs">
+                  <div className="pointer-events-none relative z-10 flex flex-wrap justify-end gap-2 text-xs [&>*]:pointer-events-auto">
                     <button
                       type="button"
                       className="text-primary underline"
