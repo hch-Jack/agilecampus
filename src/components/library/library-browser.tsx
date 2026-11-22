@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { EditDocumentButton } from "@/components/documents/edit-document-button";
 import { FileTypeIcon, FolderIcon } from "@/components/file-type-icon";
 import { detectEditableFormat } from "@/lib/documents/format";
@@ -27,13 +27,16 @@ import {
   createFolderAction,
   deleteFolderAction,
   deleteItemAction,
+  listLibraryDestinationsAction,
   listLibraryFoldersAction,
   moveItemAction,
   renameFolderAction,
   renameItemAction,
   syncLibraryNowAction,
   type FolderOption,
+  type LibraryDestination,
 } from "@/app/(app)/library/actions";
+import { FolderTree } from "./folder-tree";
 import { LibraryPreviewDialog } from "./library-preview-dialog";
 
 const OPERATION_LABEL: Record<string, string> = {
@@ -72,6 +75,101 @@ const SORT_LABELS: Record<LibrarySortField, string> = {
 const ROW_GRID =
   "grid-cols-1 sm:grid-cols-[minmax(0,1fr)_9.5rem_7rem_6.5rem_12rem]";
 
+/** 小窗口外壳：点击遮罩取消（busy 时由调用方拦住） */
+function Dialog({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onClick={onClose}
+    >
+      <div
+        className="ac-card max-h-[85vh] w-full max-w-md overflow-y-auto p-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <p className="text-sm font-medium text-ink">{title}</p>
+          <button
+            type="button"
+            className="grid h-7 w-7 place-items-center rounded text-ink-faint hover:bg-sunken hover:text-ink"
+            aria-label="关闭"
+            onClick={onClose}
+          >
+            ×
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** 新建 / 重命名共用的小窗：替代浏览器 prompt */
+function NameDialog({
+  title,
+  initial,
+  confirmLabel,
+  onCancel,
+  onSubmit,
+}: {
+  title: string;
+  initial: string;
+  confirmLabel: string;
+  onCancel: () => void;
+  /** 返回 false 表示未成功，窗口保持打开 */
+  onSubmit: (name: string) => Promise<boolean>;
+}) {
+  const [name, setName] = useState(initial);
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    const value = name.trim();
+    if (!value || busy) return;
+    setBusy(true);
+    const ok = await onSubmit(value);
+    setBusy(false);
+    if (ok) onCancel();
+  }
+
+  return (
+    <Dialog title={title} onClose={() => (!busy ? onCancel() : undefined)}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void submit();
+        }}
+      >
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          maxLength={120}
+          className="ac-field w-full text-sm"
+          placeholder="名称"
+        />
+        <div className="mt-3 flex justify-end gap-2">
+          <button type="button" className="ac-btn-ghost px-3 py-1.5 text-xs" onClick={onCancel} disabled={busy}>
+            取消
+          </button>
+          <button type="submit" className="ac-btn px-3 py-1.5 text-xs" disabled={busy || !name.trim()}>
+            {busy ? "保存中…" : confirmLabel}
+          </button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -104,9 +202,23 @@ export function LibraryBrowser({
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [moveItem, setMoveItem] = useState<LibraryItemView | null>(null);
   const [moveFolders, setMoveFolders] = useState<FolderOption[]>([]);
+  const [moveDest, setMoveDest] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<LibraryItemView | null>(null);
   const [deleteSources, setDeleteSources] = useState(false);
   const [deleteLinkCount, setDeleteLinkCount] = useState(0);
+  const [nameDialog, setNameDialog] = useState<{
+    title: string;
+    initial: string;
+    confirmLabel: string;
+    onSubmit: (name: string) => Promise<boolean>;
+  } | null>(null);
+  const [folderDelete, setFolderDelete] = useState<{ id: string; name: string } | null>(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
+  const [destinations, setDestinations] = useState<LibraryDestination[]>([]);
+  const [destKey, setDestKey] = useState(scope === "team" ? `team:${teamId}` : "personal");
+  const [uploadFolderId, setUploadFolderId] = useState<string | null>(null);
+  const [uploading, setUploading] = useState<{ done: number; total: number } | null>(null);
 
   // 离开页面时别让防抖中的搜索把用户拉回来
   useEffect(() => {
@@ -180,68 +292,125 @@ export function LibraryBrowser({
     }
   }
 
-  async function upload(file: File | undefined) {
-    if (!file) return;
-    if (file.size === 0) {
-      setError("不能上传空文件");
-      return;
+  async function openUpload(files: File[]) {
+    if (files.length === 0) return;
+    const tooLarge = files.filter((f) => f.size > MAX_FILE_SIZE);
+    const empty = files.filter((f) => f.size === 0);
+    const valid = files.filter((f) => f.size > 0 && f.size <= MAX_FILE_SIZE);
+    if (tooLarge.length > 0 || empty.length > 0) {
+      const bits: string[] = [];
+      if (empty.length > 0) bits.push(`${empty.length} 个空文件`);
+      if (tooLarge.length > 0) bits.push(`${tooLarge.length} 个超过 ${MAX_FILE_SIZE_LABEL} 的文件`);
+      setError(`已跳过${bits.join("、")}`);
     }
-    if (file.size > MAX_FILE_SIZE) {
-      setError(`附件不能超过 ${MAX_FILE_SIZE_LABEL}`);
-      return;
-    }
-    setBusy("upload");
+    if (valid.length === 0) return;
     setError("");
-    const res = await uploadFileRaw<{ id: string }>("/api/library/upload", file, {
-      scope,
-      ...(teamId ? { teamId } : {}),
-      ...(view.folder ? { folderId: view.folder.id } : {}),
-    });
-    setBusy("");
-    if (!res.ok) {
-      setError(res.error);
-      return;
+    setUploadFiles(valid);
+    setUploadOpen(true);
+    setUploading(null);
+    setDestKey(scope === "team" && teamId ? `team:${teamId}` : "personal");
+    // 默认传到当前浏览的文件夹；在根目录时就是根目录
+    setUploadFolderId(view.folder?.id ?? null);
+    setDestinations([]);
+    const res = await listLibraryDestinationsAction();
+    if (res.ok) setDestinations(res.data);
+    else setError(res.error);
+  }
+
+  async function confirmUpload() {
+    if (uploading || uploadFiles.length === 0) return;
+    const dest = destinations.find((d) => d.key === destKey);
+    if (!dest) return;
+    setError("");
+    setUploading({ done: 0, total: uploadFiles.length });
+    for (let i = 0; i < uploadFiles.length; i++) {
+      const res = await uploadFileRaw<{ id: string }>("/api/library/upload", uploadFiles[i], {
+        scope: dest.scope,
+        ...(dest.teamId ? { teamId: dest.teamId } : {}),
+        folderId: uploadFolderId ?? "root",
+      });
+      if (!res.ok) {
+        setError(res.error);
+        setUploading(null);
+        return;
+      }
+      setUploading({ done: i + 1, total: uploadFiles.length });
     }
+    setUploading(null);
+    setUploadOpen(false);
+    setUploadFiles([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
     router.refresh();
   }
 
-  async function newFolder() {
-    const name = window.prompt("新建文件夹名称")?.trim();
-    if (!name) return;
-    await run("folder", () =>
-      createFolderAction({
-        scope,
-        teamId,
-        parentId: view.folder?.id ?? null,
-        name,
-      }),
-    );
+  function newFolder() {
+    setNameDialog({
+      title: "新建文件夹",
+      initial: "",
+      confirmLabel: "新建",
+      onSubmit: (name) =>
+        run("folder", () =>
+          createFolderAction({
+            scope,
+            teamId,
+            parentId: view.folder?.id ?? null,
+            name,
+          }),
+        ),
+    });
   }
 
-  async function renameFolder(id: string, current: string) {
-    const name = window.prompt("文件夹新名称", current)?.trim();
-    if (!name || name === current) return;
-    await run("folder", () => renameFolderAction(id, name));
+  function renameFolder(id: string, current: string) {
+    setNameDialog({
+      title: "重命名文件夹",
+      initial: current,
+      confirmLabel: "保存",
+      onSubmit: (name) =>
+        name === current ? Promise.resolve(true) : run("folder", () => renameFolderAction(id, name)),
+    });
   }
 
-  async function removeFolder(id: string, name: string) {
-    if (!confirm(`删除文件夹「${name}」？只能删除空文件夹。`)) return;
-    await run("folder", () => deleteFolderAction(id));
+  function removeFolder(id: string, name: string) {
+    setFolderDelete({ id, name });
   }
 
-  async function renameItem(item: LibraryItemView) {
-    const name = window.prompt("文件新名称", item.filename)?.trim();
-    if (!name || name === item.filename) return;
-    await run("item", () => renameItemAction(item.id, name));
+  async function confirmFolderDelete(mode: "delete-all" | "keep-files") {
+    if (!folderDelete || busy) return;
+    const ok = await run("folder", () => deleteFolderAction(folderDelete.id, mode));
+    if (ok) setFolderDelete(null);
+  }
+
+  function renameItem(item: LibraryItemView) {
+    setNameDialog({
+      title: "重命名文件",
+      initial: item.filename,
+      confirmLabel: "保存",
+      onSubmit: (name) =>
+        name === item.filename ? Promise.resolve(true) : run("item", () => renameItemAction(item.id, name)),
+    });
   }
 
   async function openMove(item: LibraryItemView) {
     setMoveItem(item);
+    setMoveDest(item.folderId);
     setError("");
+    setMoveFolders([]);
     const res = await listLibraryFoldersAction(scope, teamId);
     if (res.ok) setMoveFolders(res.data);
     else setError(res.error);
+  }
+
+  async function confirmMove() {
+    if (!moveItem || busy) return;
+    const ok = await run("item", () => moveItemAction(moveItem.id, moveDest));
+    if (ok) setMoveItem(null);
+  }
+
+  function goUp() {
+    if (!view.folder) return;
+    startTransition(() =>
+      router.replace(buildHref(view.folder?.parentId ?? null), { scroll: false }),
+    );
   }
 
   async function openDelete(item: LibraryItemView) {
@@ -273,6 +442,16 @@ export function LibraryBrowser({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
+        {view.folder && (
+          <button
+            type="button"
+            className="ac-btn-ghost shrink-0 px-2.5 py-1 text-xs"
+            onClick={goUp}
+            title="返回上一级文件夹"
+          >
+            ← 上一级
+          </button>
+        )}
         <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-sm text-ink-soft">
           <Link href={buildHref(null)} className="hover:text-primary">
             {libraryName}
@@ -303,13 +482,18 @@ export function LibraryBrowser({
                 disabled={!!busy}
                 onClick={() => fileInputRef.current?.click()}
               >
-                {busy === "upload" ? "上传中…" : "上传文件"}
+                上传文件
               </button>
               <input
                 ref={fileInputRef}
                 type="file"
+                multiple
                 className="hidden"
-                onChange={(e) => void upload(e.target.files?.[0])}
+                onChange={(e) => {
+                  const files = Array.from(e.target.files ?? []);
+                  e.currentTarget.value = "";
+                  void openUpload(files);
+                }}
               />
             </>
           )}
@@ -643,46 +827,181 @@ export function LibraryBrowser({
       )}
 
       {moveItem && (
-        <div
-          className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4"
-          role="dialog"
-          aria-modal="true"
-          onClick={() => setMoveItem(null)}
+        <Dialog
+          title={`移动「${moveItem.filename}」`}
+          onClose={() => (!busy ? setMoveItem(null) : undefined)}
         >
-          <div className="ac-card w-full max-w-sm p-4" onClick={(e) => e.stopPropagation()}>
-            <p className="text-sm font-medium text-ink">移动「{moveItem.filename}」</p>
-            <select
-              className="ac-field mt-3 w-full text-sm"
-              defaultValue=""
-              onChange={(e) => {
-                const folderId = e.target.value;
-                if (!folderId) return;
-                void run("item", () => moveItemAction(moveItem.id, folderId)).then((ok) => {
-                  if (ok) setMoveItem(null);
-                });
-              }}
+          <p className="mb-1 text-xs text-ink-faint">选择目标文件夹</p>
+          {moveFolders.length === 0 ? (
+            <p className="rounded-field border border-line p-3 text-sm text-ink-faint">
+              正在加载文件夹…
+            </p>
+          ) : (
+            <FolderTree
+              folders={moveFolders}
+              value={moveDest}
+              onChange={setMoveDest}
+              rootLabel={`${libraryName} · 根目录`}
+              disabledId={moveItem.folderId}
+            />
+          )}
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              className="ac-btn-ghost px-3 py-1.5 text-sm"
+              onClick={() => setMoveItem(null)}
+              disabled={!!busy}
             >
-              <option value="">选择目标文件夹…</option>
-              {moveFolders
-                .filter((f) => f.id !== moveItem.folderId)
-                .map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {" ".repeat(f.depth * 2)}
-                    {f.name}
+              取消
+            </button>
+            <button
+              type="button"
+              className="ac-btn px-3 py-1.5 text-sm"
+              onClick={() => void confirmMove()}
+              disabled={!!busy || moveFolders.length === 0}
+            >
+              {busy === "item" ? "移动中…" : "移动到这里"}
+            </button>
+          </div>
+        </Dialog>
+      )}
+
+      {uploadOpen && (
+        <Dialog
+          title="上传文件"
+          onClose={() => {
+            if (uploading) return;
+            setUploadOpen(false);
+            setUploadFiles([]);
+          }}
+        >
+          <div className="space-y-3">
+            <label className="block text-xs text-ink-faint">
+              上传到
+              <select
+                className="ac-field mt-1 w-full text-sm"
+                value={destKey}
+                disabled={!!uploading}
+                onChange={(e) => {
+                  setDestKey(e.target.value);
+                  setUploadFolderId(null);
+                }}
+              >
+                {destinations.map((d) => (
+                  <option key={d.key} value={d.key}>
+                    {d.label}
                   </option>
                 ))}
-            </select>
-            <div className="mt-3 flex justify-end">
+              </select>
+            </label>
+
+            <div>
+              <p className="mb-1 text-xs text-ink-faint">目标文件夹</p>
+              {destinations.length === 0 ? (
+                <p className="rounded-field border border-line p-3 text-sm text-ink-faint">
+                  正在加载资源库…
+                </p>
+              ) : (
+                <FolderTree
+                  folders={
+                    destinations.find((d) => d.key === destKey)?.folders ?? []
+                  }
+                  value={uploadFolderId}
+                  onChange={setUploadFolderId}
+                  rootLabel="资源库根目录"
+                />
+              )}
+            </div>
+
+            <ul className="max-h-24 space-y-1 overflow-y-auto rounded-field border border-line p-2 text-xs text-ink-soft">
+              {uploadFiles.map((f, i) => (
+                <li key={`${i}-${f.name}`} className="flex justify-between gap-2">
+                  <span className="truncate">{f.name}</span>
+                  <span className="shrink-0 text-ink-faint">{fmtSize(f.size)}</span>
+                </li>
+              ))}
+            </ul>
+
+            {error && <p className="text-sm text-high">{error}</p>}
+
+            <div className="flex justify-end gap-2">
               <button
                 type="button"
                 className="ac-btn-ghost px-3 py-1.5 text-sm"
-                onClick={() => setMoveItem(null)}
+                disabled={!!uploading}
+                onClick={() => {
+                  setUploadOpen(false);
+                  setUploadFiles([]);
+                }}
               >
                 取消
               </button>
+              <button
+                type="button"
+                className="ac-btn px-3 py-1.5 text-sm"
+                disabled={!!uploading || destinations.length === 0}
+                onClick={() => void confirmUpload()}
+              >
+                {uploading
+                  ? `上传中 ${uploading.done}/${uploading.total}…`
+                  : `上传 ${uploadFiles.length} 个文件`}
+              </button>
             </div>
           </div>
-        </div>
+        </Dialog>
+      )}
+
+      {nameDialog && (
+        <NameDialog
+          title={nameDialog.title}
+          initial={nameDialog.initial}
+          confirmLabel={nameDialog.confirmLabel}
+          onCancel={() => setNameDialog(null)}
+          onSubmit={nameDialog.onSubmit}
+        />
+      )}
+
+      {folderDelete && (
+        <Dialog
+          title={`删除文件夹「${folderDelete.name}」`}
+          onClose={() => (!busy ? setFolderDelete(null) : undefined)}
+        >
+          <p className="text-sm text-ink-soft">请选择里面内容的处理方式：</p>
+          <div className="mt-3 space-y-2">
+            <button
+              type="button"
+              className="ac-btn-ghost block w-full rounded-field p-3 text-left"
+              disabled={!!busy}
+              onClick={() => void confirmFolderDelete("keep-files")}
+            >
+              <span className="block text-sm text-ink">只删除文件夹，内容移到上一级</span>
+              <span className="block text-xs text-ink-faint">
+                文件和子文件夹都会保留，只是挪到上一级目录
+              </span>
+            </button>
+            <button
+              type="button"
+              className="ac-btn-ghost block w-full rounded-field p-3 text-left"
+              disabled={!!busy}
+              onClick={() => void confirmFolderDelete("delete-all")}
+            >
+              <span className="block text-sm text-high">连同里面的文件和子文件夹一起删除</span>
+              <span className="block text-xs text-ink-faint">
+                不可恢复，文件的历史版本也会一并删除
+              </span>
+            </button>
+          </div>
+          <div className="mt-3 flex justify-end">
+            <button
+              type="button"
+              className="ac-btn-ghost px-3 py-1.5 text-sm"
+              disabled={!!busy}
+              onClick={() => setFolderDelete(null)}
+            >
+              {busy === "folder" ? "处理中…" : "取消"}
+            </button>
+          </div>
+        </Dialog>
       )}
 
       {deleteTarget && (

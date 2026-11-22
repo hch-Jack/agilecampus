@@ -194,12 +194,15 @@ export async function renameFolderAction(
   }
 }
 
-export async function deleteFolderAction(folderId: string): Promise<ActionResult> {
+export async function deleteFolderAction(
+  folderId: string,
+  mode: "delete-all" | "keep-files" = "keep-files",
+): Promise<ActionResult<{ deletedItems: number; movedItems: number; movedFolders: number }>> {
   try {
     const userId = await requireUserId();
-    await deleteLibraryFolder(userId, folderId);
+    const data = await deleteLibraryFolder(userId, folderId, mode);
     revalidateLibraryByFolder();
-    return { ok: true, data: null };
+    return { ok: true, data };
   } catch (e) {
     return fail(e);
   }
@@ -221,7 +224,8 @@ export async function renameItemAction(
 
 export async function moveItemAction(
   itemId: string,
-  folderId: string,
+  /** null = 资源库根目录 */
+  folderId: string | null,
 ): Promise<ActionResult> {
   try {
     const userId = await requireUserId();

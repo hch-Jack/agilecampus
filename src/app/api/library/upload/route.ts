@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { AppError, ForbiddenError } from "@/lib/errors";
 import type { LibraryRef } from "@/lib/library/types";
@@ -18,7 +19,13 @@ export async function POST(req: Request) {
   const url = new URL(req.url);
   const scope = url.searchParams.get("scope");
   const teamId = url.searchParams.get("teamId") ?? "";
-  const folderId = url.searchParams.get("folderId") || null;
+  // 缺省 = 默认「手动上传」文件夹；root = 资源库根目录
+  const folderParam = url.searchParams.get("folderId");
+  let folderId: string | null | undefined;
+  if (folderParam === null) folderId = undefined;
+  else if (folderParam === "root" || folderParam === "") folderId = null;
+  else if (z.uuid().safeParse(folderParam).success) folderId = folderParam;
+  else return NextResponse.json({ error: "上传目标文件夹不正确" }, { status: 400 });
   const filename = url.searchParams.get("name") ?? "";
   const mimeType = url.searchParams.get("type") || null;
 

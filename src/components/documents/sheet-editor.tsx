@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import * as XLSX from "xlsx";
 import {
   cellDisplay,
@@ -36,6 +43,27 @@ type Props = {
 };
 
 const PAGE_ROWS = 100;
+const DEFAULT_COL_WIDTH = 96;
+const DEFAULT_ROW_HEIGHT = 28;
+const MIN_COL_WIDTH = 32;
+const MIN_ROW_HEIGHT = 18;
+
+/** 读取 worksheet 的列宽（像素）；SheetJS 写入时 `!cols[].wpx` 会被保留 */
+function colWidth(ws: XLSX.WorkSheet, c: number): number {
+  const col = ws["!cols"]?.[c];
+  if (!col) return DEFAULT_COL_WIDTH;
+  if (typeof col.wpx === "number") return col.wpx;
+  if (typeof col.wch === "number") return Math.round(col.wch * 7 + 5);
+  if (typeof col.width === "number") return Math.round(col.width * 7 + 5);
+  return DEFAULT_COL_WIDTH;
+}
+
+function rowHeight(ws: XLSX.WorkSheet, r: number): number {
+  const row = ws["!rows"]?.[r];
+  if (row && typeof row.hpx === "number") return row.hpx;
+  if (row && typeof row.hpt === "number") return Math.round(row.hpt * 4 / 3);
+  return DEFAULT_ROW_HEIGHT;
+}
 
 /**
  * 表格编辑器：SheetJS 直接改 worksheet 单元格，保留未编辑单元格的
@@ -109,6 +137,63 @@ export function SheetEditor({
     setDirty(true);
     onDirty();
   }, [onDirty]);
+
+  // 拖动列宽 / 行高：写回 worksheet 的 !cols / !rows，保存时随文件一起写出。
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => resizeCleanupRef.current?.(), []);
+
+  function startResize(
+    kind: "col" | "row",
+    index: number,
+    e: ReactPointerEvent<HTMLElement>,
+  ) {
+    if (readOnly || !ws) return;
+    e.preventDefault();
+    e.stopPropagation();
+    resizeCleanupRef.current?.();
+
+    const startPos = kind === "col" ? e.clientX : e.clientY;
+    const base = kind === "col" ? colWidth(ws, index) : rowHeight(ws, index);
+    const min = kind === "col" ? MIN_COL_WIDTH : MIN_ROW_HEIGHT;
+    const max = kind === "col" ? 600 : 300;
+    let latest = base;
+    let raf = 0;
+
+    const apply = () => {
+      raf = 0;
+      if (kind === "col") {
+        const cols = ws["!cols"] ?? [];
+        cols[index] = { ...(cols[index] ?? {}), wpx: latest };
+        ws["!cols"] = cols;
+      } else {
+        const rows = ws["!rows"] ?? [];
+        rows[index] = { ...(rows[index] ?? {}), hpx: latest };
+        ws["!rows"] = rows;
+      }
+      setWb((prev) => (prev ? { ...prev } : prev));
+      markDirty();
+    };
+
+    const onMove = (ev: PointerEvent) => {
+      const delta = (kind === "col" ? ev.clientX : ev.clientY) - startPos;
+      latest = Math.min(max, Math.max(min, base + delta));
+      if (!raf) raf = requestAnimationFrame(apply);
+    };
+    const finish = () => {
+      if (raf) {
+        cancelAnimationFrame(raf);
+        apply();
+      }
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+      resizeCleanupRef.current = null;
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+    resizeCleanupRef.current = finish;
+  }
 
   const commitCell = useCallback(
     (r: number, c: number, value: string) => {
@@ -199,31 +284,55 @@ export function SheetEditor({
 
       {/* 网格 */}
       <div className="min-h-0 flex-1 overflow-auto">
-        <table className="border-collapse text-[13px]">
+        <table className="border-collapse text-[13px]" style={{ tableLayout: "fixed" }}>
+          <colgroup>
+            <col style={{ width: 40 }} />
+            {cols.map((c) => (
+              <col key={c} style={{ width: colWidth(ws, c) }} />
+            ))}
+          </colgroup>
           <thead>
             <tr>
               <th className="sticky left-0 top-0 z-20 w-10 border border-line bg-surface-2 px-1 py-1 text-xs font-normal text-ink-faint" />
               {cols.map((c) => (
                 <th
                   key={c}
-                  className={`sticky top-0 z-10 min-w-[96px] border border-line bg-surface-2 px-2 py-1 text-xs font-normal ${
+                  className={`sticky top-0 z-10 border border-line bg-surface-2 px-2 py-1 text-xs font-normal ${
                     selected.c === c ? "text-ink" : "text-ink-faint"
                   }`}
                 >
                   {XLSX.utils.encode_col(c)}
+                  {!readOnly && (
+                    <span
+                      role="separator"
+                      aria-label={`调整 ${XLSX.utils.encode_col(c)} 列宽`}
+                      title="拖动调整列宽"
+                      className="absolute right-0 top-0 z-20 h-full w-1.5 cursor-col-resize select-none hover:bg-primary/40"
+                      onPointerDown={(e) => startResize("col", c, e)}
+                    />
+                  )}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r}>
+              <tr key={r} style={{ height: rowHeight(ws, r) }}>
                 <th
                   className={`sticky left-0 z-10 w-10 border border-line bg-surface-2 px-1 py-1 text-xs font-normal ${
                     selected.r === r ? "text-ink" : "text-ink-faint"
                   }`}
                 >
                   {r + 1}
+                  {!readOnly && (
+                    <span
+                      role="separator"
+                      aria-label={`调整第 ${r + 1} 行行高`}
+                      title="拖动调整行高"
+                      className="absolute bottom-0 left-0 h-1.5 w-full cursor-row-resize select-none hover:bg-primary/40"
+                      onPointerDown={(e) => startResize("row", r, e)}
+                    />
+                  )}
                 </th>
                 {cols.map((c) => {
                   const isEditing = editing?.r === r && editing.c === c;
@@ -231,7 +340,7 @@ export function SheetEditor({
                   return (
                     <td
                       key={c}
-                      className={`h-7 max-w-[320px] cursor-cell truncate border border-line px-2 ${
+                      className={`max-w-[320px] cursor-cell truncate border border-line px-2 ${
                         isSelected ? "bg-accent-soft/40 outline outline-1 outline-accent" : ""
                       }`}
                       onClick={() => {
@@ -332,7 +441,8 @@ export function SheetEditor({
         </div>
       </div>
       <div className="border-t border-line px-3 py-1 text-[11px] text-ink-faint">
-        双击单元格编辑；公式以 = 开头 · 不保存样式/图表/条件格式
+        双击单元格编辑；公式以 = 开头 · 拖动列标右缘调列宽、行号下缘调行高 ·
+        字体/颜色/图表/条件格式不随社区版 SheetJS 保存
       </div>
     </div>
   );

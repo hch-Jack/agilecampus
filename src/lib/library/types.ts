@@ -94,7 +94,8 @@ export type LibraryFolderView = {
 
 export type LibraryItemView = {
   id: string;
-  folderId: string;
+  /** null = 资源库根目录 */
+  folderId: string | null;
   filename: string;
   mimeType: string | null;
   size: number;
