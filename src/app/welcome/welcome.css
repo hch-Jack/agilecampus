@@ -46,6 +46,7 @@
 .welcome .blob {
   position: absolute; z-index: 1; border-radius: 50%;
   filter: blur(95px); pointer-events: none;
+  opacity: 1;
   animation: welcome-drift 30s ease-in-out infinite alternate;
 }
 .welcome .blob.b1 { width: 46vw; height: 46vw; left: -12vw; top: -14vw;
@@ -59,11 +60,187 @@
   to   { transform: translate(6vw, 5vh) scale(1.15); }
 }
 
+/* ============ 进入特效：极光光波扩散 + 星野依次点亮 ============ */
+
+/* 极光涟漪：中心光球向外扩散，蓝→青→紫，辉光更足、扩散更大 */
+.welcome .wave {
+  position: absolute; left: 50%; top: 50%; z-index: 1;
+  width: 12vmax; height: 12vmax; margin: -6vmax 0 0 -6vmax;
+  border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle,
+    rgba(200,230,255,.98) 0%,
+    rgba(150,190,255,.62) 30%,
+    rgba(130,220,200,.34) 55%,
+    rgba(180,150,255,.18) 72%,
+    transparent 85%);
+  box-shadow: 0 0 90px rgba(150,190,255,.6), 0 0 170px rgba(130,220,200,.34);
+  animation: welcome-wave 2.1s cubic-bezier(.22,.61,.36,1) both;
+}
+@keyframes welcome-wave {
+  0%   { transform: scale(0); opacity: 0; }
+  20%  { opacity: 1; }
+  60%  { opacity: .85; }
+  100% { transform: scale(3.4); opacity: 0; }
+}
+
+/* 三圈彩色涟漪环：细光环错开向外荡开，像能量冲击波 */
+.welcome .ring {
+  position: absolute; left: 50%; top: 50%; z-index: 1;
+  width: 16vmax; height: 16vmax; margin: -8vmax 0 0 -8vmax;
+  border-radius: 50%; pointer-events: none;
+  border: 2px solid rgba(156,196,245,.55);
+  box-shadow: 0 0 24px rgba(156,196,245,.45), inset 0 0 18px rgba(156,196,245,.25);
+  animation: welcome-ring 1.9s cubic-bezier(.22,.61,.36,1) both;
+}
+.welcome .ring.r2 { animation-delay: .18s; border-color: rgba(122,214,178,.55);
+  box-shadow: 0 0 24px rgba(122,214,178,.45), inset 0 0 18px rgba(122,214,178,.25); }
+.welcome .ring.r3 { animation-delay: .36s; border-color: rgba(176,146,255,.55);
+  box-shadow: 0 0 24px rgba(176,146,255,.45), inset 0 0 18px rgba(176,146,255,.25); }
+@keyframes welcome-ring {
+  0%   { transform: scale(.15); opacity: 0; }
+  12%  { opacity: .95; }
+  100% { transform: scale(5.5); opacity: 0; }
+}
+
+/* 星野：三层 radial-gradient 星点，错开 delay 依次点亮 */
+.welcome .stars {
+  position: absolute; inset: 0; z-index: 1;
+  pointer-events: none;
+  animation: welcome-star-in 1.6s ease-out both;
+}
+.welcome .stars.s1 { animation-delay: .25s; }
+.welcome .stars.s2 { animation-delay: .45s; }
+.welcome .stars.s3 { animation-delay: .65s; }
+@keyframes welcome-star-in {
+  0%   { opacity: 0; transform: scale(.6); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* 第一波：大而亮的星 */
+.welcome .stars.s1 {
+  background-image:
+    radial-gradient(2.2px 2.2px at 12% 18%, rgba(255,255,255,.92), transparent 62%),
+    radial-gradient(2px 2px at 34% 9%, rgba(216,234,255,.9), transparent 62%),
+    radial-gradient(2.4px 2.4px at 56% 15%, rgba(255,255,255,.95), transparent 62%),
+    radial-gradient(2px 2px at 78% 22%, rgba(216,234,255,.88), transparent 62%),
+    radial-gradient(2.3px 2.3px at 92% 11%, rgba(255,255,255,.9), transparent 62%),
+    radial-gradient(2px 2px at 8% 44%, rgba(216,234,255,.85), transparent 62%),
+    radial-gradient(2.2px 2.2px at 26% 38%, rgba(255,255,255,.88), transparent 62%),
+    radial-gradient(2.4px 2.4px at 48% 52%, rgba(255,255,255,.93), transparent 62%),
+    radial-gradient(2px 2px at 66% 35%, rgba(216,234,255,.86), transparent 62%),
+    radial-gradient(2.2px 2.2px at 84% 48%, rgba(255,255,255,.9), transparent 62%),
+    radial-gradient(2px 2px at 20% 72%, rgba(216,234,255,.84), transparent 62%),
+    radial-gradient(2.4px 2.4px at 60% 68%, rgba(255,255,255,.92), transparent 62%),
+    radial-gradient(2px 2px at 38% 85%, rgba(216,234,255,.85), transparent 62%),
+    radial-gradient(2.3px 2.3px at 76% 78%, rgba(255,255,255,.9), transparent 62%),
+    radial-gradient(2px 2px at 94% 66%, rgba(216,234,255,.88), transparent 62%);
+}
+
+/* 第二波：中等星 */
+.welcome .stars.s2 {
+  background-image:
+    radial-gradient(1.5px 1.5px at 5% 10%, rgba(216,234,255,.7), transparent 60%),
+    radial-gradient(1.4px 1.4px at 22% 28%, rgba(255,255,255,.68), transparent 60%),
+    radial-gradient(1.6px 1.6px at 40% 20%, rgba(216,234,255,.72), transparent 60%),
+    radial-gradient(1.4px 1.4px at 58% 9%, rgba(255,255,255,.66), transparent 60%),
+    radial-gradient(1.5px 1.5px at 72% 16%, rgba(216,234,255,.7), transparent 60%),
+    radial-gradient(1.6px 1.6px at 88% 30%, rgba(255,255,255,.7), transparent 60%),
+    radial-gradient(1.4px 1.4px at 15% 58%, rgba(216,234,255,.66), transparent 60%),
+    radial-gradient(1.5px 1.5px at 32% 48%, rgba(255,255,255,.68), transparent 60%),
+    radial-gradient(1.6px 1.6px at 52% 42%, rgba(216,234,255,.72), transparent 60%),
+    radial-gradient(1.4px 1.4px at 70% 55%, rgba(255,255,255,.66), transparent 60%),
+    radial-gradient(1.5px 1.5px at 85% 42%, rgba(216,234,255,.68), transparent 60%),
+    radial-gradient(1.4px 1.4px at 10% 80%, rgba(255,255,255,.64), transparent 60%),
+    radial-gradient(1.6px 1.6px at 28% 66%, rgba(216,234,255,.68), transparent 60%),
+    radial-gradient(1.5px 1.5px at 44% 74%, rgba(255,255,255,.66), transparent 60%),
+    radial-gradient(1.4px 1.4px at 62% 82%, rgba(216,234,255,.7), transparent 60%),
+    radial-gradient(1.6px 1.6px at 80% 88%, rgba(255,255,255,.68), transparent 60%);
+}
+
+/* 第三波：细小微星 */
+.welcome .stars.s3 {
+  background-image:
+    radial-gradient(1px 1px at 8% 28%, rgba(216,234,255,.5), transparent 55%),
+    radial-gradient(1px 1px at 18% 50%, rgba(255,255,255,.48), transparent 55%),
+    radial-gradient(1px 1px at 30% 15%, rgba(216,234,255,.5), transparent 55%),
+    radial-gradient(1px 1px at 44% 32%, rgba(255,255,255,.46), transparent 55%),
+    radial-gradient(1px 1px at 55% 48%, rgba(216,234,255,.52), transparent 55%),
+    radial-gradient(1px 1px at 63% 62%, rgba(255,255,255,.48), transparent 55%),
+    radial-gradient(1px 1px at 75% 30%, rgba(216,234,255,.5), transparent 55%),
+    radial-gradient(1px 1px at 90% 45%, rgba(255,255,255,.46), transparent 55%),
+    radial-gradient(1px 1px at 14% 68%, rgba(216,234,255,.48), transparent 55%),
+    radial-gradient(1px 1px at 36% 56%, rgba(255,255,255,.5), transparent 55%),
+    radial-gradient(1px 1px at 50% 78%, rgba(216,234,255,.5), transparent 55%),
+    radial-gradient(1px 1px at 66% 50%, rgba(255,255,255,.46), transparent 55%),
+    radial-gradient(1px 1px at 82% 68%, rgba(216,234,255,.48), transparent 55%),
+    radial-gradient(1px 1px at 93% 85%, rgba(255,255,255,.46), transparent 55%),
+    radial-gradient(1px 1px at 24% 88%, rgba(216,234,255,.48), transparent 55%),
+    radial-gradient(1px 1px at 70% 12%, rgba(255,255,255,.46), transparent 55%),
+    radial-gradient(1px 1px at 88% 10%, rgba(216,234,255,.48), transparent 55%),
+    radial-gradient(1px 1px at 42% 90%, rgba(255,255,255,.46), transparent 55%);
+}
+
+/* 白天模式：星点换成深蓝/紫/金微光，浅底上清晰可见；涟漪与光环用柔和亮色 */
+.welcome.day .stars { animation: welcome-star-in 1.6s ease-out both; }
+.welcome.day .stars.s1 {
+  background-image:
+    radial-gradient(2.2px 2.2px at 12% 18%, rgba(53,98,159,.85), transparent 62%),
+    radial-gradient(2.4px 2.4px at 40% 12%, rgba(122,111,181,.8), transparent 62%),
+    radial-gradient(2px 2px at 66% 20%, rgba(53,98,159,.75), transparent 62%),
+    radial-gradient(2.3px 2.3px at 88% 14%, rgba(201,138,63,.8), transparent 62%),
+    radial-gradient(2.2px 2.2px at 24% 40%, rgba(53,98,159,.75), transparent 62%),
+    radial-gradient(2.4px 2.4px at 52% 50%, rgba(122,111,181,.8), transparent 62%),
+    radial-gradient(2px 2px at 76% 36%, rgba(53,98,159,.75), transparent 62%),
+    radial-gradient(2.3px 2.3px at 18% 72%, rgba(201,138,63,.75), transparent 62%),
+    radial-gradient(2.2px 2.2px at 60% 70%, rgba(53,98,159,.8), transparent 62%),
+    radial-gradient(2px 2px at 90% 60%, rgba(122,111,181,.75), transparent 62%);
+}
+.welcome.day .stars.s2 {
+  background-image:
+    radial-gradient(1.5px 1.5px at 8% 14%, rgba(53,98,159,.6), transparent 60%),
+    radial-gradient(1.6px 1.6px at 30% 26%, rgba(122,111,181,.58), transparent 60%),
+    radial-gradient(1.4px 1.4px at 52% 10%, rgba(53,98,159,.56), transparent 60%),
+    radial-gradient(1.5px 1.5px at 72% 22%, rgba(201,138,63,.58), transparent 60%),
+    radial-gradient(1.6px 1.6px at 90% 36%, rgba(53,98,159,.58), transparent 60%),
+    radial-gradient(1.4px 1.4px at 18% 60%, rgba(122,111,181,.55), transparent 60%),
+    radial-gradient(1.5px 1.5px at 42% 44%, rgba(53,98,159,.56), transparent 60%),
+    radial-gradient(1.6px 1.6px at 66% 58%, rgba(201,138,63,.56), transparent 60%),
+    radial-gradient(1.4px 1.4px at 84% 74%, rgba(53,98,159,.58), transparent 60%),
+    radial-gradient(1.5px 1.5px at 12% 84%, rgba(122,111,181,.55), transparent 60%);
+}
+.welcome.day .stars.s3 {
+  background-image:
+    radial-gradient(1px 1px at 14% 30%, rgba(53,98,159,.45), transparent 55%),
+    radial-gradient(1px 1px at 36% 16%, rgba(122,111,181,.42), transparent 55%),
+    radial-gradient(1px 1px at 60% 40%, rgba(53,98,159,.45), transparent 55%),
+    radial-gradient(1px 1px at 80% 18%, rgba(201,138,63,.42), transparent 55%),
+    radial-gradient(1px 1px at 24% 56%, rgba(53,98,159,.42), transparent 55%),
+    radial-gradient(1px 1px at 48% 70%, rgba(122,111,181,.45), transparent 55%),
+    radial-gradient(1px 1px at 70% 82%, rgba(53,98,159,.42), transparent 55%),
+    radial-gradient(1px 1px at 92% 56%, rgba(201,138,63,.4), transparent 55%),
+    radial-gradient(1px 1px at 8% 78%, rgba(53,98,159,.42), transparent 55%),
+    radial-gradient(1px 1px at 88% 12%, rgba(122,111,181,.4), transparent 55%);
+}
+.welcome.day .wave {
+  background: radial-gradient(circle,
+    rgba(255,255,255,.85) 0%,
+    rgba(200,228,255,.5) 34%,
+    rgba(150,190,255,.22) 58%,
+    transparent 78%);
+  box-shadow: 0 0 90px rgba(150,190,255,.5), 0 0 160px rgba(190,220,255,.35);
+}
+.welcome.day .ring {
+  border-color: rgba(80,130,190,.5);
+  box-shadow: 0 0 24px rgba(80,130,190,.4), inset 0 0 18px rgba(80,130,190,.2);
+}
+
 /* 顶部品牌 */
 .welcome .brand {
   position: absolute; top: 34px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 10px; z-index: 3;
+  opacity: 0;
 }
+.welcome.reveal .brand { opacity: 1; transition: opacity .8s ease .3s; }
 .welcome .brand .dot {
   width: 20px; height: 20px; border-radius: 7px;
   background: linear-gradient(135deg, #9cc4f5, #d8eaff);
@@ -175,15 +352,13 @@
   transition: all .3s;
 }
 .welcome .enter:hover { background: rgba(255,255,255,.10); border-color: rgba(216,234,255,.42); box-shadow: 0 0 24px -6px rgba(156,196,245,.5); }
+/* 进入特效未结束前（.reveal 还没加）按钮只是占位，不可点，防止透过 intro 覆盖层误触 */
+.welcome:not(.reveal) .enter { pointer-events: none; }
 
-/* ============ 入场动画：背景缓缓亮起，文字从右往左排队浮现，时间数字弹跳 ============ */
-.welcome .bg {
-  animation: welcome-bg-in 1.6s ease-out both;
-}
-@keyframes welcome-bg-in {
-  from { opacity: 0; transform: scale(1.07); }
-  to   { opacity: 1; transform: scale(1); }
-}
+/* ============ 入场动画：进入特效结束后（.reveal）背景缓缓亮起，文字从右往左排队浮现 ============ */
+.welcome:not(.reveal) { background: #071120; }
+/* 背景图常亮：不做「黑→亮」突变，光圈收场时直接露出完整背景 */
+.welcome .bg { opacity: 1; }
 
 @keyframes welcome-slide-in {
   from { opacity: 0; transform: translateX(46px); }
@@ -200,35 +375,49 @@
   to   { opacity: 1; }
 }
 
-/* 文字：从右往左依次排队浮现（delay 逐个错开，形成队列） */
+/* 文字：默认隐藏，进入动画结束后从右往左依次排队浮现 */
 .welcome .date,
 .welcome .greet,
 .welcome .quote,
 .welcome .quote-by,
 .welcome .chips,
 .welcome .enter {
-  animation: welcome-slide-in .7s cubic-bezier(.22, .7, .28, 1) both;
+  opacity: 0;
 }
-.welcome .date     { animation-delay: .06s; }
-.welcome .greet    { animation-delay: .5s; }
-.welcome .quote    { animation-delay: .62s; }
-.welcome .quote-by { animation-delay: .74s; }
-.welcome .chips    { animation-delay: .88s; }
-.welcome .enter    { animation-delay: 1.02s; }
+.welcome.reveal .date,
+.welcome.reveal .greet,
+.welcome.reveal .quote,
+.welcome.reveal .quote-by,
+.welcome.reveal .chips,
+.welcome.reveal .enter {
+  animation: welcome-fade-in .6s ease-out both;
+}
+.welcome.reveal .date     { animation-delay: .4s; }
+.welcome.reveal .greet    { animation-delay: .55s; }
+.welcome.reveal .quote    { animation-delay: .7s; }
+.welcome.reveal .quote-by { animation-delay: .85s; }
+.welcome.reveal .chips    { animation-delay: 1s; }
+.welcome.reveal .enter    { animation-delay: 1.15s; }
 
-/* 时间数字：拆成 hh / mm / ss 三段，逐个弹跳浮现 */
+/* 时间数字：默认隐藏，进入动画结束后拆成 hh / mm / ss 逐个弹跳浮现 */
 .welcome .clock .t {
   display: inline-block;
   font-variant-numeric: tabular-nums;
-  animation: welcome-pop .62s ease-out both;
+  opacity: 0;
 }
-.welcome .clock .t1 { animation-delay: .1s; }
-.welcome .clock .t2 { animation-delay: .22s; }
-.welcome .clock .t3 { animation-delay: .34s; }
 .welcome .clock .sep {
   display: inline-block;
-  animation: welcome-fade-in .5s ease-out both;
-  animation-delay: .2s;
+  opacity: 0;
+}
+.welcome.reveal .clock .t {
+  animation: welcome-pop .62s ease-out both;
+}
+.welcome.reveal .clock .t1 { animation-delay: .45s; }
+.welcome.reveal .clock .t2 { animation-delay: .55s; }
+.welcome.reveal .clock .t3 { animation-delay: .65s; }
+.welcome.reveal .clock .sep {
+  animation: welcome-fade-in .4s ease-out both;
+  animation-delay: .5s;
 }
 /* 拆段后阴影需落到每个数字上（text-shadow 不继承） */
 .welcome .clock .t,

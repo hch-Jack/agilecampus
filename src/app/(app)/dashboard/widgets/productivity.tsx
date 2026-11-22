@@ -314,15 +314,25 @@ export function FocusTimerWidget({ instanceId }: { instanceId: string }) {
 
       <div className="dw-focus-actions mt-2 flex flex-wrap gap-2">
         {running ? (
-          <button type="button" onClick={pause} className="ac-btn-ghost px-3 py-1 text-xs">
+          <button type="button" onClick={pause} className="dw-focus-btn dw-focus-btn-ghost">
+            <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+              <path d="M5.8 3.5v9M10.2 3.5v9" strokeLinecap="round" />
+            </svg>
             暂停
           </button>
         ) : (
-          <button type="button" onClick={start} className="ac-btn px-3 py-1 text-xs">
+          <button type="button" onClick={start} className="dw-focus-btn dw-focus-btn-primary">
+            <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+              <path d="M5.2 3.4v9.2l7.2-4.6-7.2-4.6Z" />
+            </svg>
             {finished ? "再来一轮" : "开始"}
           </button>
         )}
-        <button type="button" onClick={reset} className="ac-btn-ghost px-3 py-1 text-xs">
+        <button type="button" onClick={reset} className="dw-focus-btn dw-focus-btn-ghost">
+          <svg className="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+            <path d="M3.2 8a4.8 4.8 0 1 0 1.5-3.5" strokeLinecap="round" />
+            <path d="M3 3.4v2.7h2.7" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
           重置
         </button>
       </div>

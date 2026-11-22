@@ -26,6 +26,8 @@ const QUOTES = [
 
 type Props = {
   username: string;
+  /** 用户头像 URL，null 表示没传过头像（回落成名字首字） */
+  avatarUrl: string | null;
   /** 用户所选时区：钟面、日期、昼夜与问候语一律按它算，不按浏览器本地时间 */
   timeZone: string;
   doing: number;
@@ -35,6 +37,7 @@ type Props = {
 
 export function WelcomeScreen({
   username,
+  avatarUrl,
   timeZone,
   doing,
   todo,
@@ -80,12 +83,15 @@ export function WelcomeScreen({
     else greet = "晚上好";
   }
 
+  const cls = `welcome${day ? " day" : ""} reveal`;
+
   return (
-    <div className={day ? "welcome day" : "welcome"}>
-      <div className="bg" />
-      <div className="blob b1" />
-      <div className="blob b2" />
-      <div className="blob b3" />
+    <>
+      <div className={cls}>
+        <div className="bg" />
+        <div className="blob b1" />
+        <div className="blob b2" />
+        <div className="blob b3" />
 
       <div className="brand">
         <div className="dot" />
@@ -120,10 +126,11 @@ export function WelcomeScreen({
           </div>
         </div>
 
-        <Link className="enter" href="/dashboard">
-          进入工作台 →
-        </Link>
-      </main>
-    </div>
+          <Link className="enter" href="/dashboard">
+            进入工作台 →
+          </Link>
+        </main>
+      </div>
+    </>
   );
 }

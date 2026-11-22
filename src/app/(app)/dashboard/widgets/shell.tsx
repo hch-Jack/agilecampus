@@ -26,9 +26,20 @@ export function WidgetShell({
         {href && (
           <Link
             href={href}
-            className="ac-hit dw-meta shrink-0 text-ink-faint transition-colors hover:text-primary"
+            className="group ac-hit flex shrink-0 items-center gap-1 text-ink-faint transition-colors hover:text-primary"
           >
             {hrefLabel}
+            {/* 箭头在悬停时向右滑一小段：动作感的点睛 */}
+            <svg
+              className="h-3.5 w-3.5 transition-transform duration-200 group-hover:translate-x-0.5"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              aria-hidden="true"
+            >
+              <path d="M3 8h9.5M8.5 4.5 12 8l-3.5 3.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </Link>
         )}
       </div>

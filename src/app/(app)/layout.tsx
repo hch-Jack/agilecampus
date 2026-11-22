@@ -98,11 +98,11 @@ export default async function AppLayout({
                 <Link href="/welcome" className="ac-hit flex items-center gap-2">
                   <span
                     aria-hidden
-                    className="grid h-7 w-7 place-items-center rounded-md bg-primary font-display text-sm font-bold text-white shadow-sm"
+                    className="ac-brand-mark grid h-7 w-7 place-items-center rounded-md bg-primary font-display text-sm font-bold text-white shadow-sm"
                   >
                     A
                   </span>
-                  <span className="hidden font-display text-lg font-semibold text-ink sm:inline">AgileCampus</span>
+                  <span className="ac-brand-word hidden font-display text-lg font-semibold text-ink sm:inline">AgileCampus</span>
                 </Link>
                 <NavLinks className="hidden sm:flex" />
               </div>

@@ -106,20 +106,33 @@ export default async function ProjectPage({
           <h1 className="min-w-0 font-display text-2xl font-semibold text-ink">
             {project.name}
           </h1>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2.5">
             <Link
               href={`/projects/${projectId}/timeline`}
-              className="ac-btn-ghost whitespace-nowrap"
+              className="ac-btn-ghost proj-nav-link whitespace-nowrap"
             >
+              <svg
+                viewBox="0 0 16 16"
+                className="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                aria-hidden="true"
+              >
+                <circle cx="3" cy="8" r="1.5" />
+                <circle cx="8" cy="8" r="1.5" />
+                <circle cx="13" cy="8" r="1.5" />
+                <path d="M4.5 8h2M9.5 8h2" />
+              </svg>
               时间线
             </Link>
             <Link
               href={`/projects/${projectId}/graph`}
-              className="ac-btn-ghost whitespace-nowrap"
+              className="ac-btn-ghost proj-nav-link whitespace-nowrap"
             >
               <svg
                 viewBox="0 0 16 16"
-                className="h-3.5 w-3.5"
+                className="h-4 w-4"
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="1.3"
@@ -134,11 +147,11 @@ export default async function ProjectPage({
             </Link>
             <Link
               href={`/projects/${projectId}/flow`}
-              className="ac-btn-ghost whitespace-nowrap"
+              className="ac-btn-ghost proj-nav-link whitespace-nowrap"
             >
               <svg
                 viewBox="0 0 16 16"
-                className="h-3.5 w-3.5"
+                className="h-4 w-4"
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="1.3"

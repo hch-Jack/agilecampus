@@ -15,7 +15,11 @@
  * 样式值只接受校验过的十六进制颜色与固定枚举，不让文件内容注入标记或脚本。
  */
 import * as CFB from "cfb";
-import * as XLSX from "xlsx";
+// xlsx 体积较大改为动态加载，仅在 excelToSheets 内按需 import，避免首屏依赖阻塞
+// 类型走 import type（编译期擦除、不打包运行时），运行时仍按需 import
+import type * as XLSX from "xlsx";
+// 运行时在 excelToSheets 内按需 import；definite assignment 告诉 TS 它会被赋值
+let _xlsx!: typeof XLSX;
 import type mammothMain from "mammoth";
 // 浏览器端用 mammoth 预构建 UMD bundle（lib 入口引 node 依赖），类型借主入口的声明
 import mammothBrowser from "mammoth/mammoth.browser";
@@ -467,7 +471,7 @@ function cellCss(cell: XLSX.CellObject | undefined, text: string, clip: boolean)
 
 function cellText(cell: XLSX.CellObject): string {
   try {
-    const formatted = XLSX.utils.format_cell(cell);
+    const formatted = _xlsx.utils.format_cell(cell);
     return typeof formatted === "string" ? formatted : String(formatted ?? "");
   } catch {
     return cell.v === undefined || cell.v === null ? "" : String(cell.v);
@@ -490,7 +494,7 @@ function visibleSpan(index: number[], from: number, to: number): { start: number
 
 function renderSheet(ws: XLSX.WorkSheet): Omit<SheetTable, "name"> {
   if (!ws["!ref"]) return { html: "", truncated: false, colsTruncated: false };
-  const range = XLSX.utils.decode_range(ws["!ref"]);
+  const range = _xlsx.utils.decode_range(ws["!ref"]);
   const truncated = range.e.r - range.s.r + 1 > MAX_SHEET_ROWS;
   if (truncated) range.e.r = range.s.r + MAX_SHEET_ROWS - 1;
   const colsTruncated = range.e.c - range.s.c + 1 > MAX_SHEET_COLS;
@@ -517,7 +521,7 @@ function renderSheet(ws: XLSX.WorkSheet): Omit<SheetTable, "name"> {
     const rowSpan = visibleSpan(visibleRows, r1, r2);
     const colSpan = visibleSpan(visibleCols, c1, c2);
     if (!rowSpan || !colSpan) continue;
-    const anchorCell = ws[XLSX.utils.encode_cell(merge.s)];
+    const anchorCell = ws[_xlsx.utils.encode_cell(merge.s)];
     anchors.set(`${rowSpan.start}:${colSpan.start}`, {
       rows: rowSpan.count,
       cols: colSpan.count,
@@ -538,7 +542,7 @@ function renderSheet(ws: XLSX.WorkSheet): Omit<SheetTable, "name"> {
     const r = visibleRows[ri];
     // 先行取整行文本：一是避免重复 format_cell，二是判断右侧邻格是否有内容（决定裁切还是溢出）
     const rowTexts = visibleCols.map((c) => {
-      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      const cell = ws[_xlsx.utils.encode_cell({ r, c })];
       return cell ? cellText(cell) : "";
     });
     const cells: string[] = [];
@@ -546,7 +550,7 @@ function renderSheet(ws: XLSX.WorkSheet): Omit<SheetTable, "name"> {
       const key = `${ri}:${ci}`;
       if (covered.has(key)) continue;
       const anchor = anchors.get(key);
-      const cell = ws[XLSX.utils.encode_cell({ r, c: visibleCols[ci] })];
+      const cell = ws[_xlsx.utils.encode_cell({ r, c: visibleCols[ci] })] as XLSX.CellObject | undefined;
       const text = anchor ? anchor.text : rowTexts[ci];
       // 跨列的合并格不裁切；普通格右侧邻格有字时按 Excel 规则裁掉溢出
       const clip = !anchor && ci + 1 < visibleCols.length && rowTexts[ci + 1].length > 0;
@@ -572,7 +576,8 @@ function renderSheet(ws: XLSX.WorkSheet): Omit<SheetTable, "name"> {
 export async function excelToSheets(buf: ArrayBuffer): Promise<SheetTable[]> {
   // cellStyles 让 SheetJS 顺带解析 styles.xml（字体/底色/边框/对齐）；
   // cellNF 保留数字格式，format_cell 输出和 Excel 里看到的一致
-  const wb = XLSX.read(buf, { type: "array", cellStyles: true, cellNF: true });
+  if (!_xlsx) _xlsx = await (new Function("return import('xlsx')") as () => Promise<typeof XLSX>)();
+  const wb = _xlsx.read(buf, { type: "array", cellStyles: true, cellNF: true });
   return wb.SheetNames.map((name) => ({ name, ...renderSheet(wb.Sheets[name]) }));
 }
 

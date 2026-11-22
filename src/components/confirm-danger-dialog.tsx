@@ -1,11 +1,15 @@
 "use client";
 
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 
 /**
  * 危险操作确认弹窗 —— 替换浏览器原生 confirm()。
  * 红色警示风格：alert 三角图标 + 红色渐变头部 + 半透明深色遮罩 + 毛玻璃。
  * 关闭途径：取消按钮 / 点遮罩 / Escape。
+ *
+ * 用 Portal 挂到 document.body：侧栏/卡片容器若有 transform（侧滑、缩放动画），
+ * 会把 position:fixed 的弹窗「困」在容器里并裁切 —— 挂到 body 才永远铺满视口。
  */
 export function ConfirmDangerDialog({
   open,
@@ -34,10 +38,10 @@ export function ConfirmDangerDialog({
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onCancel]);
 
-  if (!open) return null;
+  if (!open || typeof document === "undefined") return null;
 
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center p-4">
+  return createPortal(
+    <div className="fixed inset-0 z-[90] grid place-items-center p-4">
       {/* 遮罩 */}
       <div
         aria-hidden
@@ -45,19 +49,19 @@ export function ConfirmDangerDialog({
         className="absolute inset-0 bg-black/40 backdrop-blur-sm"
       />
 
-      {/* 弹窗卡片 */}
+      {/* 弹窗卡片：限制最大高度，内容多时内部滚动，绝不超出视口 */}
       <div
         role="alertdialog"
         aria-modal="true"
         aria-label={title}
-        className="relative w-full max-w-sm overflow-hidden rounded-card border border-line
-                   bg-surface shadow-pop"
+        className="ac-dialog-pop relative w-full max-w-sm max-h-[min(86vh,34rem)] overflow-y-auto
+                   rounded-card border border-line bg-surface shadow-pop"
       >
         {/* 红色警示头部 */}
-        <header className="flex items-center gap-3 border-b border-line/60 bg-danger/5 px-5 py-4">
+        <header className="flex items-center gap-3 border-b border-line/60 bg-danger/5 px-4 py-3">
           {/* alert 三角 */}
           <svg
-            className="h-6 w-6 flex-shrink-0 text-danger"
+            className="h-5 w-5 flex-shrink-0 text-danger"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -73,7 +77,7 @@ export function ConfirmDangerDialog({
         </header>
 
         {/* 内容区 */}
-        <div className="px-5 py-4 text-sm text-ink-soft leading-relaxed">
+        <div className="px-4 py-3 text-sm text-ink-soft leading-relaxed">
           {children}
         </div>
 
@@ -101,6 +105,7 @@ export function ConfirmDangerDialog({
           </button>
         </footer>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

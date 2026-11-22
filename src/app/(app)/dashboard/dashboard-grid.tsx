@@ -15,6 +15,7 @@ import { useLayoutEditor } from "./use-layout-editor";
 import { WidgetLibrary } from "./widget-library";
 import { renderWidgetContent } from "./widget-content";
 import { TextScaleControl, ZoomControl } from "./zoom-control";
+import { ConfirmDangerDialog } from "@/components/confirm-danger-dialog";
 import "./dashboard.css";
 
 export function DashboardGrid({
@@ -26,6 +27,7 @@ export function DashboardGrid({
 }) {
   const { editing, setEditing } = useDashboardEdit();
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
 
   const {
@@ -155,7 +157,7 @@ export function DashboardGrid({
               </button>
               <button
                 type="button"
-                onClick={handleReset}
+                onClick={() => setResetOpen(true)}
                 className="ac-btn-ghost px-3 py-1.5 text-xs"
               >
                 恢复默认
@@ -173,13 +175,39 @@ export function DashboardGrid({
             <button
               type="button"
               onClick={() => setEditing(true)}
-              className="ac-btn-ghost dashboard-edit-toggle px-3 py-1.5 text-xs"
+              className="dashboard-edit-toggle inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium"
             >
+              {/* 滑杆图标：一眼看出「这里是调布局的开关」 */}
+              <svg
+                className="h-4 w-4"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                aria-hidden="true"
+              >
+                <path d="M2.5 5.2h11M2.5 10.8h11" strokeLinecap="round" />
+                <circle cx="6.2" cy="5.2" r="1.7" fill="currentColor" stroke="none" />
+                <circle cx="10.2" cy="10.8" r="1.7" fill="currentColor" stroke="none" />
+              </svg>
               编辑工作台
             </button>
           )}
         </div>
       </header>
+
+      <ConfirmDangerDialog
+        open={resetOpen}
+        title="恢复默认布局"
+        confirmLabel="恢复默认"
+        onCancel={() => setResetOpen(false)}
+        onConfirm={() => {
+          setResetOpen(false);
+          handleReset();
+        }}
+      >
+        恢复默认布局？已添加的卡片与各卡片的自定义设置（便签、倒计时、时钟、日程表分区）都会清空。
+      </ConfirmDangerDialog>
 
       <div className="mt-4 space-y-4">
         {editing && libraryOpen && (

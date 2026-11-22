@@ -9,9 +9,11 @@ body.proj-cosmic {
   --color-canvas: #080b14;
   --color-surface: rgba(14, 19, 34, 0.45);
   --color-sunken: rgba(216, 234, 255, 0.05);
-  --color-ink: #e9edf6;
-  --color-ink-soft: #a9b2c4;
-  --color-ink-faint: #6d7588;
+  --color-ink: #f1f5fc;
+  --color-ink-soft: #c3cbdb;
+  --color-ink-faint: #93a0b6;
+  /* 标题：近白冰色，比正文更亮一档，深底上「抬头即见」 */
+  --color-ink-heading: #f6f9ff;
   --color-line: rgba(216, 234, 255, 0.12);
   --color-line-strong: rgba(216, 234, 255, 0.26);
 
@@ -23,16 +25,19 @@ body.proj-cosmic {
   --color-accent: #e0a86a;
   --color-accent-soft: rgba(224, 168, 106, 0.16);
 
+  /* 状态色与浅色主题同一套语义：灰蓝=待办、湛蓝=进行中、薄荷=已完成 */
   --color-todo: #7c8698;
   --color-doing: #9cc4f5;
   --color-done: #8fc0ab;
 
-  --color-high: #e0a86a;
-  --color-high-soft: rgba(224, 168, 106, 0.16);
-  --color-medium: #9cc4f5;
-  --color-medium-soft: rgba(156, 196, 245, 0.16);
-  --color-low: #8fc0ab;
-  --color-low-soft: rgba(143, 192, 171, 0.16);
+  /* 优先级对齐浅色主题的「越暖越急」：珊瑚橙 > 金琥珀 > 中性灰蓝
+     （原来深色版的优先级直接复用了状态色，导致「高优」和「强调色」同色，语义打架） */
+  --color-high: #f0855e;
+  --color-high-soft: rgba(240, 133, 94, 0.16);
+  --color-medium: #e0b06a;
+  --color-medium-soft: rgba(224, 176, 106, 0.16);
+  --color-low: #8b96ab;
+  --color-low-soft: rgba(139, 150, 171, 0.16);
 
   background-color: #080b14;
   background-image: none; /* 去掉全局暖白点阵 */
@@ -48,9 +53,13 @@ body.proj-cosmic .proj-bg {
 }
 body.proj-cosmic .proj-shade {
   position: fixed; inset: 0; z-index: -3; pointer-events: none;
-  background: linear-gradient(180deg,
-    rgba(8, 11, 20, .88) 0%, rgba(8, 11, 20, .62) 40%,
-    rgba(8, 11, 20, .62) 60%, rgba(8, 11, 20, .92) 100%);
+  /* 在基础暗幕上叠两抹极淡的暮紫 / 松石星云，让深色底不再是纯蓝灰 */
+  background:
+    radial-gradient(42% 32% at 86% 10%, rgba(140, 120, 220, .10), transparent 70%),
+    radial-gradient(36% 28% at 10% 78%, rgba(70, 170, 170, .07), transparent 70%),
+    linear-gradient(180deg,
+      rgba(8, 11, 20, .88) 0%, rgba(8, 11, 20, .62) 40%,
+      rgba(8, 11, 20, .62) 60%, rgba(8, 11, 20, .92) 100%);
 }
 /* 星轨延时摄影：同心圆弧绕天极极慢旋转 */
 body.proj-cosmic .proj-startrail {
@@ -90,7 +99,7 @@ body.proj-cosmic .proj-blob.b1 { width: 46vw; height: 46vw; left: -12vw; top: -1
 body.proj-cosmic .proj-blob.b2 { width: 40vw; height: 40vw; right: -10vw; top: 30vh;
   background: radial-gradient(circle, rgba(224, 168, 106, .10), transparent 72%); animation-delay: -12s; }
 body.proj-cosmic .proj-blob.b3 { width: 34vw; height: 34vw; left: 30vw; bottom: -16vw;
-  background: radial-gradient(circle, rgba(255, 255, 255, .09), transparent 70%); animation-delay: -22s; }
+  background: radial-gradient(circle, rgba(150, 128, 232, .13), transparent 70%); animation-delay: -22s; }
 @keyframes proj-drift {
   from { transform: translate(0, 0) scale(1); }
   to   { transform: translate(6vw, 5vh) scale(1.15); }
@@ -141,6 +150,34 @@ body.proj-cosmic .ac-btn-ghost:hover {
   color: var(--color-primary);
   background-color: var(--color-primary-soft);
 }
+/* 项目页右上角三个功能按钮：时间线 / 关系图 / 流程图 —— 胶囊放大 + 冰蓝光晕 */
+body.proj-cosmic .proj-nav-link {
+  padding: 0.55rem 1.15rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  gap: 0.5rem;
+  border-radius: 999px;
+  background-image: linear-gradient(180deg, rgba(156, 196, 245, 0.10), rgba(14, 19, 34, 0) 65%);
+  transition:
+    transform 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    color 0.18s ease,
+    background-color 0.18s ease;
+}
+body.proj-cosmic .proj-nav-link:hover {
+  color: var(--color-ink);
+  border-color: var(--color-primary-ring);
+  background-color: rgba(156, 196, 245, 0.10);
+  box-shadow: 0 0 0 3px var(--color-primary-soft), 0 6px 20px -6px rgba(156, 196, 245, 0.45);
+  transform: translateY(-1px);
+}
+body.proj-cosmic .proj-nav-link svg {
+  transition: transform 0.18s ease;
+}
+body.proj-cosmic .proj-nav-link:hover svg {
+  transform: scale(1.14);
+}
 /* 身份徽章：深色玻璃 + 语义色描边（提亮字色、加实底色，确保在深色顶栏清晰可辨） */
 body.proj-cosmic .ac-identity-teacher {
   color: #ffd9a0;
@@ -174,12 +211,22 @@ body.proj-cosmic .proj-avatar {
     0 0 18px -4px rgba(156, 196, 245, .65);
   text-shadow: 0 1px 2px rgba(8, 11, 20, .35);
 }
+/* 深色主题标题：保留得意黑（与浅色页统一气质），只把字距微调得更舒展 */
 body.proj-cosmic header .font-display,
 body.proj-cosmic h1,
 body.proj-cosmic h2,
 body.proj-cosmic h3 {
-  font-family: var(--font-sans);
-  letter-spacing: .02em;
+  letter-spacing: .06em;
+}
+
+/* 深色页主标题的「冰面质感」：白 → 冰蓝 → 淡紫的竖向渐变，
+   像深空里被星光照亮的金属字，而不是一块纯白 */
+body.proj-cosmic h1.font-display {
+  background-image: linear-gradient(180deg, #ffffff 0%, #e6efff 48%, #c6d2f0 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 22px rgba(156, 196, 245, .28));
 }
 
 /* —— 5. 分层入场动画：标题 → 大框/卡片 → 文字 —— */

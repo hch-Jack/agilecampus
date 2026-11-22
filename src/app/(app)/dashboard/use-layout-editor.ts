@@ -275,14 +275,8 @@ export function useLayoutEditor({
     commit(removeWidget(layoutRef.current, id));
   }
 
+  // 确认交给 UI 层的 ConfirmDangerDialog（dashboard-grid），这里只执行重置
   function handleReset() {
-    if (
-      !window.confirm(
-        "恢复默认布局？已添加的卡片与各卡片的自定义设置（便签、倒计时、时钟、日程表分区）都会清空。",
-      )
-    ) {
-      return;
-    }
     commit(getResetLayout());
   }
 

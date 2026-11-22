@@ -1,5 +1,9 @@
 import { redirect } from "next/navigation";
+import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
+import { db } from "@/db";
+import { users } from "@/db/schema";
+import { userAvatarUrl } from "@/lib/user";
 import { getWelcomeStats } from "@/lib/welcome";
 import { resolveUserTimeZone } from "@/lib/time-pref";
 import { WelcomeScreen } from "./welcome-screen";
@@ -13,9 +17,17 @@ export default async function WelcomePage() {
   const tz = await resolveUserTimeZone(session.user.id);
   const s = await getWelcomeStats(session.user.id, tz);
 
+  // 头像：没传过头像就 null，客户端回落成名字首字
+  const [row] = await db
+    .select({ avatarUpdatedAt: users.avatarUpdatedAt })
+    .from(users)
+    .where(eq(users.id, session.user.id));
+  const avatarUrl = userAvatarUrl(session.user.id, row?.avatarUpdatedAt ?? null);
+
   return (
     <WelcomeScreen
       username={session.user.name ?? ""}
+      avatarUrl={avatarUrl}
       timeZone={tz}
       doing={s.doing}
       todo={s.todo}
