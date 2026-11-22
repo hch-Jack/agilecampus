@@ -179,7 +179,7 @@ export function itemBrief(
 }
 
 /** 列表工具一次最多回多少条（其余让模型缩小范围或分页） */
-const BROWSE_ITEM_LIMIT = 100;
+const BROWSE_ITEM_LIMIT = 50;
 const SEARCH_ITEM_LIMIT = 50;
 const SEARCH_FOLDER_LIMIT = 20;
 

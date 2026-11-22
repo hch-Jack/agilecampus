@@ -204,12 +204,17 @@ export async function buildPersonalSnapshot(actorId: string): Promise<string> {
     contextBlock;
   if (full.length <= SNAPSHOT_CHAR_LIMIT) return full;
 
+  // 资源库块最先舍弃：目录、计数和 itemId 都能用工具现查，
+  // 不值得为了它挤掉待办 / 项目 / 个人上下文（工具查不回来的东西）。
+  const withoutLibrary =
+    head + teamBlock + messageBlock + widgetBlock + projectBlock + taskBlock + contextBlock;
+  if (withoutLibrary.length <= SNAPSHOT_CHAR_LIMIT) return withoutLibrary;
+
   const withoutTasks =
-    head + teamBlock + messageBlock + widgetBlock + libraryBlock + projectBlock + contextBlock;
+    head + teamBlock + messageBlock + widgetBlock + projectBlock + contextBlock;
   if (withoutTasks.length <= SNAPSHOT_CHAR_LIMIT) return withoutTasks;
 
-  const withoutProjects =
-    head + teamBlock + messageBlock + widgetBlock + libraryBlock + contextBlock;
+  const withoutProjects = head + teamBlock + messageBlock + widgetBlock + contextBlock;
   if (withoutProjects.length <= SNAPSHOT_CHAR_LIMIT) return withoutProjects;
 
   // 卡片目录能靠 list_dashboard_widgets 现查，先于「我自己的上下文」被舍弃

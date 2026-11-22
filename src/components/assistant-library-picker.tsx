@@ -91,9 +91,8 @@ export function AssistantLibraryPicker({
         if (!res.ok) throw new Error(data?.error ?? "读取资源库失败");
         if (!cancelled) setSources(data);
       })
-      .catch((e: unknown) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : "读取资源库失败");
-      });
+      // 来源列表失败不该挡住个人库：团队按钮不显示，目录仍照常浏览
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -114,6 +113,7 @@ export function AssistantLibraryPicker({
         if (!res.ok) throw new Error(data?.error ?? "读取资源库失败");
         if (id !== requestId.current) return;
         setView(data);
+        setError(null);
       })
       .catch((e: unknown) => {
         if (id !== requestId.current) return;
