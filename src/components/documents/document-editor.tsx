@@ -11,6 +11,7 @@ import {
 } from "@/components/library/library-save-as-dialog";
 import { FileTypeIcon } from "@/components/file-type-icon";
 import { EditorSidebar } from "./editor-sidebar";
+import { PptxEditorHost, type PptxEditorApi } from "./pptx-editor";
 import { SheetEditor, type SheetEditorApi } from "./sheet-editor";
 import { SuperDocEditor, type SuperDocEditorApi } from "./superdoc-editor";
 import { TextEditor } from "./text-editor";
@@ -24,7 +25,8 @@ type SaveMode = "autosave" | "manual" | "force" | "saveAs";
 type Payload =
   | { kind: "text"; text: string }
   | { kind: "docx"; bytes: Uint8Array }
-  | { kind: "sheet"; bytes: Uint8Array };
+  | { kind: "sheet"; bytes: Uint8Array }
+  | { kind: "pptx"; bytes: Uint8Array };
 
 type SavePhase =
   | { kind: "idle" }
@@ -105,6 +107,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
   const [text, setText] = useState("");
   const [docxBytes, setDocxBytes] = useState<ArrayBuffer | null>(null);
   const [sheetBytes, setSheetBytes] = useState<ArrayBuffer | null>(null);
+  const [pptxBytes, setPptxBytes] = useState<ArrayBuffer | null>(null);
   const [originalUtf8, setOriginalUtf8] = useState(true);
   const [reloadToken, setReloadToken] = useState(0);
 
@@ -124,6 +127,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
 
   const sheetApiRef = useRef<SheetEditorApi | null>(null);
   const docxApiRef = useRef<SuperDocEditorApi | null>(null);
+  const pptxApiRef = useRef<PptxEditorApi | null>(null);
   const savingRef = useRef(false);
   const pendingRef = useRef(false);
   const reloadingRef = useRef(false);
@@ -205,6 +209,8 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
       if (format === "docx") {
         // SuperDoc 直接在 DOCX 字节上编辑；旧版 Tiptap editorState 不再使用
         setDocxBytes(await fetchBytes());
+      } else if (format === "pptx") {
+        setPptxBytes(await fetchBytes());
       } else if (format === "text") {
         const decoded = decodeText(await fetchBytes());
         setText(decoded.text);
@@ -276,6 +282,10 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
       const bytes = await docxApiRef.current?.getBytes();
       return bytes ? { kind: "docx", bytes } : null;
     }
+    if (format === "pptx") {
+      const bytes = await pptxApiRef.current?.getBytes();
+      return bytes ? { kind: "pptx", bytes } : null;
+    }
     const bytes = (await sheetApiRef.current?.getBytes()) ?? null;
     return bytes ? { kind: "sheet", bytes } : null;
   }
@@ -303,7 +313,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
 
     try {
       let res: Response;
-      if (payload.kind === "sheet" || payload.kind === "docx") {
+      if (payload.kind !== "text") {
         const query = new URLSearchParams({
           baseVersion: String(versionRef.current),
           sessionId,
@@ -311,7 +321,12 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
         });
         if (opts.mode === "force") query.set("force", "1");
         if (opts.mode === "saveAs" && opts.saveAsName) query.set("asName", opts.saveAsName);
-        const endpoint = payload.kind === "sheet" ? "save-sheet" : "save-docx";
+        const endpoint =
+          payload.kind === "sheet"
+            ? "save-sheet"
+            : payload.kind === "docx"
+              ? "save-docx"
+              : "save-pptx";
         res = await fetch(`/api/documents/${documentId}/${endpoint}?${query.toString()}`, {
           method: "POST",
           headers: { "content-type": "application/octet-stream" },
@@ -500,8 +515,9 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
   // 自动保存：按格式防抖 + 最小间隔；有冲突/远程新版本时暂停
   useEffect(() => {
     if (!dirty || !editingAllowed || conflict || remote) return;
-    const debounce = format === "text" ? 1500 : format === "docx" ? 3000 : 2000;
-    const minGap = format === "text" ? 8000 : format === "docx" ? 20000 : 15000;
+    const heavy = format === "docx" || format === "pptx";
+    const debounce = format === "text" ? 1500 : heavy ? 3000 : 2000;
+    const minGap = format === "text" ? 8000 : heavy ? 20000 : 15000;
     const wait = Math.max(debounce, minGap - (Date.now() - lastSaveAtRef.current));
     const timer = window.setTimeout(() => {
       void saveRef.current({ mode: "autosave" });
@@ -690,7 +706,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
     if (!payload) return { ok: false, error: "当前内容尚未准备好，请稍后再试" };
     try {
       let res: Response;
-      if (payload.kind === "sheet" || payload.kind === "docx") {
+      if (payload.kind !== "text") {
         const query = new URLSearchParams({
           filename: input.filename,
           scope: input.scope,
@@ -698,7 +714,11 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
         if (input.teamId) query.set("teamId", input.teamId);
         if (input.folderId) query.set("folderId", input.folderId);
         const endpoint =
-          payload.kind === "sheet" ? "save-as-library-sheet" : "save-as-library-docx";
+          payload.kind === "sheet"
+            ? "save-as-library-sheet"
+            : payload.kind === "docx"
+              ? "save-as-library-docx"
+              : "save-as-library-pptx";
         res = await fetch(`/api/documents/${documentId}/${endpoint}?${query.toString()}`, {
           method: "POST",
           headers: { "content-type": "application/octet-stream" },
@@ -729,9 +749,14 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
     if (!payload) return false;
     try {
       let res: Response;
-      if (payload.kind === "sheet" || payload.kind === "docx") {
+      if (payload.kind !== "text") {
         const query = new URLSearchParams({ filename });
-        const endpoint = payload.kind === "sheet" ? "export-sheet" : "export-docx";
+        const endpoint =
+          payload.kind === "sheet"
+            ? "export-sheet"
+            : payload.kind === "docx"
+              ? "export-docx"
+              : "export-pptx";
         res = await fetch(`/api/documents/${documentId}/${endpoint}?${query.toString()}`, {
           method: "POST",
           headers: { "content-type": "application/octet-stream" },
@@ -974,6 +999,16 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
               filename={docInfo.filename}
               userName={initial.currentUserName}
               apiRef={docxApiRef}
+              onDirty={markDirty}
+              onSave={kickManualSave}
+            />
+          ) : format === "pptx" ? (
+            <PptxEditorHost
+              bytes={pptxBytes}
+              reloadToken={reloadToken}
+              readOnly={readOnly}
+              filename={docInfo.filename}
+              apiRef={pptxApiRef}
               onDirty={markDirty}
               onSave={kickManualSave}
             />

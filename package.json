@@ -14,6 +14,7 @@
   "dependencies": {
     "@ai-sdk/openai-compatible": "^1.0.46",
     "@betteroffice/fonts": "^0.4.2",
+    "@betteroffice/fonts-cjk": "^0.4.2",
     "@betteroffice/pptx-react": "^0.5.1",
     "@dnd-kit/core": "^6.3.1",
     "@embedpdf/fonts-sc": "^1.0.0",

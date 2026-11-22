@@ -12,6 +12,7 @@ import type { DocumentFormat } from "./types";
 export const TEXT_EDIT_MAX_BYTES = 2 * 1024 * 1024;
 export const DOCX_EDIT_MAX_BYTES = 20 * 1024 * 1024;
 export const SHEET_EDIT_MAX_BYTES = 10 * 1024 * 1024;
+export const PPTX_EDIT_MAX_BYTES = 50 * 1024 * 1024;
 export const SHEET_MAX_ROWS = 5000;
 export const SHEET_MAX_COLS = 100;
 export const SHEET_MAX_SHEETS = 20;
@@ -39,6 +40,10 @@ export function detectEditableFormat(
 ): EditableInfo {
   const ext = extOf(filename);
   const kind = detectPreviewKind(filename, mimeType);
+  // 旧版二进制 .ppt 连预览都不支持，单独给一条可执行的建议
+  if (ext === "ppt") {
+    return { editable: false, reason: "旧版 .ppt 请另存为 .pptx 后在线编辑" };
+  }
   const tooBig = (max: number, label: string): EditableInfo | null =>
     typeof size === "number" && size > max
       ? { editable: false, reason: `文件超过在线编辑上限 ${label}，请下载后用本地软件编辑` }
@@ -80,7 +85,17 @@ export function detectEditableFormat(
     return { editable: true, format: "sheet", bookType, maxBytes: SHEET_EDIT_MAX_BYTES };
   }
 
-  if (kind === "ppt") return { editable: false, reason: "PPT 暂不支持在线编辑，可下载后编辑" };
+  if (kind === "ppt") {
+    if (ext !== "pptx") {
+      return {
+        editable: false,
+        reason: "仅 .pptx 支持在线编辑；旧版 .ppt / 启用宏的演示文稿请下载后在本地编辑",
+      };
+    }
+    const blocked = tooBig(PPTX_EDIT_MAX_BYTES, "50MB");
+    if (blocked) return blocked;
+    return { editable: true, format: "pptx", maxBytes: PPTX_EDIT_MAX_BYTES };
+  }
   if (kind === "doc") return { editable: false, reason: "旧版 .doc 仅支持只读预览，请另存为 .docx 后上传" };
   if (kind === "pdf") return { editable: false, reason: "PDF 暂不支持在线编辑" };
   if (kind === "image") return { editable: false, reason: "图片暂不支持在线编辑" };
@@ -103,6 +118,7 @@ export function isSameEditableFormat(
     return extOf(originalFilename) === extOf(nextFilename);
   }
   if (format === "docx") return extOf(nextFilename) === "docx";
+  if (format === "pptx") return extOf(nextFilename) === "pptx";
   return true;
 }
 
@@ -118,5 +134,7 @@ export function formatLabel(format: DocumentFormat): string {
       return "Word";
     case "sheet":
       return "表格";
+    case "pptx":
+      return "演示文稿";
   }
 }

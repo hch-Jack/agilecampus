@@ -4,6 +4,7 @@ import mammoth from "mammoth";
 import { decodeTextWithFallback } from "@/lib/file-preview";
 import {
   DOCX_EDIT_MAX_BYTES,
+  PPTX_EDIT_MAX_BYTES,
   SHEET_EDIT_MAX_BYTES,
   TEXT_EDIT_MAX_BYTES,
   detectEditableFormat,
@@ -54,7 +55,7 @@ describe("detectEditableFormat：哪些文件能在线编辑", () => {
     expect(sheetBookTypeOf("data.csv")).toBe("csv");
   });
 
-  it("docx / xlsx / xls 可编辑", () => {
+  it("docx / xlsx / xls / pptx 可编辑", () => {
     expect(detectEditableFormat("报告.docx")).toMatchObject({
       editable: true,
       format: "docx",
@@ -70,13 +71,18 @@ describe("detectEditableFormat：哪些文件能在线编辑", () => {
       format: "sheet",
       bookType: "xls",
     });
+    expect(detectEditableFormat("幻灯片.pptx")).toMatchObject({
+      editable: true,
+      format: "pptx",
+      maxBytes: PPTX_EDIT_MAX_BYTES,
+    });
   });
 
   it("只读格式给出明确原因", () => {
     const cases: [string, string][] = [
       ["旧文档.doc", "docx"],
       ["启用宏.xlsm", "宏"],
-      ["幻灯片.pptx", "PPT"],
+      ["旧演示.ppt", "pptx"],
       ["扫描.pdf", "PDF"],
       ["图片.png", "图片"],
       ["视频.mp4", "音视频"],

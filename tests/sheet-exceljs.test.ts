@@ -11,6 +11,13 @@ import {
   writeExcelBook,
 } from "@/lib/documents/sheet-exceljs.client";
 
+// ExcelJS 自带一份 Buffer 声明，和本仓库 @types/node 的 Buffer 不是同一个类型
+type XlsxLoadArg = Parameters<ExcelJS.Workbook["xlsx"]["load"]>[0];
+
+async function loadBytes(wb: ExcelJS.Workbook, bytes: Uint8Array): Promise<void> {
+  await wb.xlsx.load(Buffer.from(bytes) as unknown as XlsxLoadArg);
+}
+
 async function sourceBytes(): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Sheet1");
@@ -43,14 +50,14 @@ describe("ExcelJS 表格引擎", () => {
     const out = await writeExcelBook(loaded);
 
     const check = new ExcelJS.Workbook();
-    await check.xlsx.load(Buffer.from(out));
+    await loadBytes(check, out);
     const ws = check.getWorksheet("Sheet1")!;
     const cell = ws.getCell("A1");
     expect(cell.value).toBe("改过之后");
     expect(cell.font?.name).toBe("宋体");
     expect(cell.font?.bold).toBe(true);
     expect(cell.font?.color?.argb).toBe("FFFF0000");
-    expect(cell.fill?.fgColor?.argb).toBe("FFFFFF00");
+    expect((cell.fill as ExcelJS.FillPattern).fgColor?.argb).toBe("FFFFFF00");
     expect(ws.getColumn(1).width).toBeCloseTo((180 - 5) / 7);
     expect(ws.getRow(1).height).toBeCloseTo(30);
   });
@@ -62,7 +69,7 @@ describe("ExcelJS 表格引擎", () => {
 
     excelSetCell(sheet, 2, 0, "42");
     const check = new ExcelJS.Workbook();
-    await check.xlsx.load(Buffer.from(await writeExcelBook(loaded)));
+    await loadBytes(check, await writeExcelBook(loaded));
     const value = check.getWorksheet("Sheet1")!.getCell("B2").value as {
       formula?: string;
     };

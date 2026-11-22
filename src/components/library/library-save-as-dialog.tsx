@@ -35,7 +35,7 @@ export function LibrarySaveAsDialog({
   originalFilename: string;
   defaultFilename?: string;
   sourceType: string;
-  format: "text" | "docx" | "sheet";
+  format: "text" | "docx" | "sheet" | "pptx";
   onClose: () => void;
   onSaveToLibrary: (input: LibrarySaveInput) => Promise<{
     ok: boolean;

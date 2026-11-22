@@ -9,7 +9,7 @@ import { db } from "@/db";
  * 编辑器、版本、锁、SSE、权限面板都只认 `documentId` 与 `DocumentAccess`。
  */
 
-export type DocumentFormat = "text" | "docx" | "sheet";
+export type DocumentFormat = "text" | "docx" | "sheet" | "pptx";
 
 /** 来源侧可执行的事务/连接；adapter 必须用传进来的 exec 写库 */
 export type DbExec = DbTx | typeof db;
