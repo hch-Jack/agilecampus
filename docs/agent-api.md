@@ -290,7 +290,7 @@ curl -X POST "$AGILECAMPUS_URL/api/agent/messages" \
 # → {"sent":1,"targetType":"user","targetName":"周瑜"}
 ```
 
-附件按 id 读字节后**复制**进 `dm_attachments`（跨表无外键），单文件 ≤10MB。
+附件按 id 读字节后**复制**进 `dm_attachments`（跨表无外键），单文件 ≤1GB。
 越权读附件或目标 → `403`；空消息 / 目标二选一不成立 → `400`。
 
 ### 19. 列我的群聊 — `GET /api/agent/groups`

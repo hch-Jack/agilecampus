@@ -30,7 +30,8 @@ const nextConfig: NextConfig = {
       "./node_modules/@embedpdf/fonts-sc/fonts/NotoSansHans-Bold.otf",
     ],
   },
-  // 附件上传走 server action：默认 1MB 不够，放开到 12mb（附件上限 10MB + multipart 开销余量）
+  // 大文件上传走 route handler 流式写盘（上限 1GB，见 lib/file-limits.ts），
+  // 不经过 server action；这里的 12mb 只兜底历史遗留的小文件 action。
   experimental: {
     serverActions: {
       bodySizeLimit: "12mb",
