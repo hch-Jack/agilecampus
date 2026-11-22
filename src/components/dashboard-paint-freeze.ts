@@ -22,23 +22,34 @@ let railBlurCleanup: (() => void) | null = null;
 export function beginRailPaintBlur(nextCollapsed: boolean): void {
   if (typeof document === "undefined") return;
 
-  // 工作台页面：和右侧抽屉一样冻结首尾帧——按左侧栏宽度差算出主内容最终宽度，
+  // 工作台页面：和右侧抽屉一样冻结首尾帧——按**内容容器的可用宽**算出主内容最终宽度，
   // 立刻锁宽并整体模糊，不再逐帧重排。常规栏宽 304px / 收起 30px（见 project.css）。
+  // 注意：必须从 .app-content 的可用宽出发，不能用 shell 当前宽 + 栏宽差——
+  // 宽屏下 shell 已被 max-width 封顶，开合常驻栏吃掉的是居中留白、shell 宽度不变；
+  // 旧算法会在点击帧把 shell 锁窄、580ms 清理时又弹回自然宽，看起来就是「抽风闪一下」。
   const shell = document.querySelector<HTMLElement>(".dashboard-shell");
   const rail = document.querySelector<HTMLElement>(".app-rail");
   if (shell && rail && window.matchMedia("(min-width: 1024px)").matches) {
     const targetRailWidth = nextCollapsed ? 30 : 304;
-    const rawWidth =
-      shell.getBoundingClientRect().width +
-      rail.getBoundingClientRect().width -
-      targetRailWidth;
-    const maxWidth = parseFloat(getComputedStyle(shell.parentElement!).maxWidth);
-    const finalShellWidth = Number.isFinite(maxWidth)
-      ? Math.min(maxWidth, rawWidth)
-      : rawWidth;
-    if (finalShellWidth > 0) {
-      beginDashboardPaintFreeze({ targetWidth: finalShellWidth });
-      return;
+    const railNow = rail.getBoundingClientRect().width;
+    const appContent = document.querySelector<HTMLElement>(".app-content");
+    if (appContent) {
+      const rect = appContent.getBoundingClientRect();
+      const style = getComputedStyle(appContent);
+      const padX =
+        (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+      const finalAvailable = rect.width - padX + (targetRailWidth - railNow);
+      const maxWidth = parseFloat(getComputedStyle(shell.parentElement!).maxWidth);
+      const finalShellWidth = Number.isFinite(maxWidth)
+        ? Math.min(maxWidth, finalAvailable)
+        : finalAvailable;
+      // shell 宽度不会变的情形（宽屏被 max-width 封顶）：没有重排要遮掩，
+      // 直接跳过冻结与模糊，只让常驻栏按自己的 CSS 过渡平滑展开。
+      if (Math.abs(finalShellWidth - shell.getBoundingClientRect().width) < 1) return;
+      if (finalShellWidth > 0) {
+        beginDashboardPaintFreeze({ targetWidth: finalShellWidth });
+        return;
+      }
     }
   }
 
