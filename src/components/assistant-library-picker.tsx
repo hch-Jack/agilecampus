@@ -130,7 +130,13 @@ export function AssistantLibraryPicker({
       if (e.key === "Escape" && !pickingId) onClose();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // 与预览弹窗一致：打开期间锁背景滚动
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
   }, [open, onClose, pickingId]);
 
   if (!open) return null;
