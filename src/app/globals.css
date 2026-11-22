@@ -84,6 +84,16 @@ body {
     box-shadow: var(--shadow-card);
   }
 
+  /* 编辑器弹窗：近不透明的毛玻璃卡片，避免底层文字透上来 */
+  .ac-dialog-panel {
+    border-radius: var(--radius-card);
+    border: 1px solid var(--color-line-strong);
+    background-color: color-mix(in srgb, var(--color-canvas) 96%, transparent);
+    box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+  }
+
   /* 整卡可点：标题链的伪元素铺满最近的定位祖先（卡片），
      点卡片任意空白处也能进详情；卡片必须自带 `relative`。 */
   .card-link::after {

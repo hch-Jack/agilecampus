@@ -45,6 +45,8 @@ export type SuperDocEditorApi = {
   applyAiEdits: (
     edits: { find: string; replace: string }[],
   ) => Promise<{ applied: number; failed: string[] }>;
+  /** 接受/拒绝全部修订（AI 修改以修订形式暂存） */
+  reviewAiEdits: (action: "accept" | "reject") => Promise<void>;
 };
 
 type SuperDocDocLike = {
@@ -225,7 +227,25 @@ export function SuperDocEditor({
       isDirty: () => dirtyRef.current,
       getText: async () => {
         try {
-          const value = await editorDoc()?.getText?.({});
+          // getText() 会把段落拼成一行，AI 于是会给出跨两段的 find、永远匹配不上。
+          // 用 HTML 还原段落换行；标题/列表/表格行也各占一行。
+          const docApi = editorDoc() as
+            | (SuperDocDocLike & { getHtml?: (input: Record<string, unknown>) => unknown })
+            | null;
+          const html = await docApi?.getHtml?.({});
+          if (typeof html === "string" && html.trim()) {
+            return html
+              .replace(/<\/(p|div|li|h[1-6]|tr|blockquote|pre)>/gi, "\n")
+              .replace(/<br\s*\/?>/gi, "\n")
+              .replace(/<[^>]+>/g, "")
+              .replace(/&nbsp;/g, " ")
+              .replace(/&amp;/g, "&")
+              .replace(/&lt;/g, "<")
+              .replace(/&gt;/g, ">")
+              .replace(/\n{3,}/g, "\n\n")
+              .trim();
+          }
+          const value = await docApi?.getText?.({});
           return typeof value === "string" ? value : "";
         } catch {
           return "";
@@ -236,28 +256,81 @@ export function SuperDocEditor({
         if (!doc?.query || !doc.replace) throw new Error("Word 编辑器尚未就绪");
         let applied = 0;
         const failed: string[] = [];
-        for (const edit of edits) {
-          try {
-            const match = await doc.query.match({
-              select: { type: "text", pattern: edit.find },
-              require: "exactlyOne",
-            });
-            const item = match.items?.[0];
-            if (!item || item.matchKind !== "text") {
-              failed.push(edit.find);
-              continue;
+
+        const replaceOnce = async (pattern: string, text: string): Promise<boolean> => {
+          for (const require of ["exactlyOne", "first"] as const) {
+            try {
+              const match = await doc.query!.match({
+                select: { type: "text", pattern },
+                require,
+              });
+              const item = match.items?.[0];
+              if (!item || item.matchKind !== "text") continue;
+              const receipt = await doc.replace!(
+                { target: item.target, text },
+                { changeMode: "tracked", expectedRevision: match.evaluatedRevision },
+              );
+              if (receipt.success !== false) return true;
+            } catch {
+              // 换下一种匹配方式
             }
-            const receipt = await doc.replace(
-              { target: item.target, text: edit.replace },
-              { changeMode: "tracked", expectedRevision: match.evaluatedRevision },
-            );
-            if (receipt.success === false) failed.push(edit.find);
-            else applied += 1;
-          } catch {
-            failed.push(edit.find);
           }
+          return false;
+        };
+
+        for (const edit of edits) {
+          // 模型偶尔会改掉空格/换行：先精确唯一匹配，再退到首个匹配与空白归一化版本
+          const candidates = [
+            edit.find,
+            edit.find.trim(),
+            edit.find.replace(/\s+/g, " ").trim(),
+          ].filter((v, i, arr) => v.length > 0 && arr.indexOf(v) === i);
+          let done = false;
+          for (const pattern of candidates) {
+            if (await replaceOnce(pattern, edit.replace)) {
+              applied += 1;
+              done = true;
+              break;
+            }
+          }
+
+          // 跨多段的 find 匹配不上时：若 find/replace 行数一致，按行拆开逐段替换
+          if (!done && edit.find.includes("\n")) {
+            const findLines = edit.find.split("\n");
+            const replaceLines = edit.replace.split("\n");
+            if (findLines.length === replaceLines.length) {
+              let allLines = true;
+              for (let i = 0; i < findLines.length; i++) {
+                if (findLines[i] === replaceLines[i]) continue;
+                if (!(await replaceOnce(findLines[i], replaceLines[i]))) {
+                  allLines = false;
+                  break;
+                }
+              }
+              if (allLines) {
+                applied += 1;
+                done = true;
+              }
+            }
+          }
+
+          if (!done) failed.push(edit.find);
         }
         return { applied, failed };
+      },
+      reviewAiEdits: async (action) => {
+        const ui = instanceRef.current?.ui as
+          | {
+              trackChanges?: {
+                acceptAllAsync?: () => Promise<unknown>;
+                rejectAllAsync?: () => Promise<unknown>;
+              };
+            }
+          | undefined;
+        const tc = ui?.trackChanges;
+        if (!tc) throw new Error("当前 Word 编辑器不支持批量审阅修订");
+        if (action === "accept") await tc.acceptAllAsync?.();
+        else await tc.rejectAllAsync?.();
       },
     };
     return () => {

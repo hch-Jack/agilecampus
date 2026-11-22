@@ -51,13 +51,16 @@ const cellsSchema = z.object({
 
 const REPLACE_SYSTEM = `你是严谨的文档编辑助手。用户会给你文档内容和一条修改指令。
 必须以 JSON 对象返回结果（json 字段结构见下），不要输出任何解释性文字。
-只返回最小必要的修改，不要改写未要求的内容。
+只返回最小必要的修改，最多 8 条，不要改写未要求的内容。
 每条修改必须给出：
-- find：在给定文档内容中**原样出现**的连续文本（区分大小写，不能是正则，尽量唯一，通常 1~2 句）
+- find：从给定内容中**原样复制**的连续文本（区分大小写，不能是正则，连同空格一起复制）
 - replace：替换后的文本
 - note：一句话说明（可选）
-如果无法完成，edits 返回空数组，并在 summary 说明原因。
-不要臆造文档中不存在的文字。
+重要限制：
+1. 当前编辑器只能应用「文字替换」。仅加粗、居中、字号、行距这类纯格式属性无法生效。
+2. find **不能跨段落、不能包含换行**。如果一处修改涉及多段，必须拆成多条 edit，每条只覆盖一个段落内的一小段文字。
+3. 若无法用段落内的文字替换做到用户要求，edits 返回空数组，并在 summary 说明当前只支持文字内容修改。
+如果无法完成，edits 返回空数组，并在 summary 说明原因。不要臆造文档中不存在的文字。
 返回的 JSON 形状必须严格是：
 {"summary":"一句话说明","edits":[{"find":"原文片段","replace":"替换后","note":"可选说明"}]}`;
 
@@ -109,6 +112,7 @@ export async function POST(req: Request, ctx: Ctx) {
       schema: isSheet ? cellsSchema : replacementsSchema,
       system: isSheet ? CELL_SYSTEM : REPLACE_SYSTEM,
       prompt,
+      temperature: 0,
       maxRetries: 0,
     });
 

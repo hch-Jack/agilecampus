@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { isSameEditableFormat } from "@/lib/documents/format";
 import { FolderTree } from "./folder-tree";
 import { listLibraryDestinationsAction } from "@/app/(app)/library/actions";
@@ -174,15 +175,15 @@ export function LibrarySaveAsDialog({
     }
   }
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4"
+      className="fixed inset-0 z-[9999] grid place-items-center bg-ink/50 p-4 backdrop-blur-md"
       role="dialog"
       aria-modal="true"
       onClick={onClose}
     >
       <div
-        className="ac-card w-full max-w-md space-y-3 p-4"
+        className="ac-dialog-panel w-full max-w-md space-y-3 p-4"
         onClick={(e) => e.stopPropagation()}
       >
         <p className="text-sm font-semibold text-ink">另存为 / 下载</p>
@@ -272,6 +273,7 @@ export function LibrarySaveAsDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -282,6 +282,15 @@ body.proj-cosmic .ac-modal-in {
 
 /* —— 新手教程小窗的换步动画：内容淡入上浮，同款曲线 ——
    弹窗内元素被 [role="dialog"] * 的 animation:none 禁掉，星空主题下需同款 !important 恢复 */
+/* 编辑器侧栏（历史版本/权限）滑入 */
+@keyframes ac-sidebar-in {
+  from { opacity: 0; transform: translateX(14px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.ac-sidebar-in {
+  animation: ac-sidebar-in .2s cubic-bezier(.22, .72, .28, 1) both;
+}
+
 @keyframes ac-step-in {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }

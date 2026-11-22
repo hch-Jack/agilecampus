@@ -185,6 +185,12 @@ export function PptxEditorHost({
         if (staged.length > 0) {
           await access.propose("ai-assistant", summary, staged);
           await api.refreshProposals();
+          // 自动打开 Agent proposals 审阅面板，别让提示只停留在一条小字
+          try {
+            await api.commands.execute("proposalsPanel", { open: true });
+          } catch {
+            // 面板打不开不影响提案本身，按钮仍可手动打开
+          }
         }
         return { staged: staged.length, failed };
       },

@@ -85,7 +85,7 @@ export function EditorSidebar({
   );
 
   return (
-    <aside className="flex w-80 shrink-0 flex-col border-l border-line bg-surface">
+    <aside className="ac-sidebar-in flex w-80 shrink-0 flex-col border-l border-line bg-surface">
       <div className="flex items-center justify-between border-b border-line px-3 py-2">
         <div className="flex items-center gap-1">
           <button
@@ -112,7 +112,7 @@ export function EditorSidebar({
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto p-3">
+      <div key={tab} className="ac-step-in min-h-0 flex-1 overflow-auto p-3">
         {tab === "versions" ? (
           <VersionList
             versions={versions}

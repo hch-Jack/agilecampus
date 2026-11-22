@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 // 局域网 http://<IP> 属于非安全上下文：先补齐 SuperDoc/BetterOffice 需要的 crypto API
 import "@/lib/insecure-crypto-polyfill";
@@ -41,6 +42,42 @@ type SavePhase =
 type Conflict = { currentVersion: number; latest: DocumentVersionDto | null };
 
 type RemoteSaved = { version: number; text: string };
+
+/**
+ * 编辑器弹窗：portal 到 body + 高层级 + 毛玻璃遮罩。
+ * SuperDoc/BetterOffice 的内部浮层层级很高，放在编辑器子树里会出现
+ * 「点了弹窗却点到下面的编辑器」；挂到 body 上并用 z-[9999] 可避免。
+ */
+function EditorModal({
+  label,
+  onClose,
+  children,
+  panelClassName = "",
+}: {
+  label: string;
+  onClose: () => void;
+  children: ReactNode;
+  panelClassName?: string;
+}) {
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9999] grid place-items-center bg-ink/50 p-4 backdrop-blur-md"
+      role="dialog"
+      aria-modal="true"
+      aria-label={label}
+      onClick={onClose}
+    >
+      <div
+        className={`ac-dialog-panel w-full max-w-md p-5 ${panelClassName}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>,
+    document.body,
+  );
+}
 
 const HEARTBEAT_MS = 30_000;
 
@@ -134,6 +171,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState("");
   const [aiHint, setAiHint] = useState("");
+  const [aiReview, setAiReview] = useState<{ count: number } | null>(null);
   const [aiPreview, setAiPreview] = useState<{
     summary: string;
     edits: AiReplacement[];
@@ -815,10 +853,17 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
           return;
         }
         const applied = await docxApiRef.current.applyAiEdits(result.edits);
+        if (applied.applied === 0) {
+          setAiError(
+            `AI 的 ${applied.failed.length} 条建议都没能在原文中匹配到，未产生任何修改。请换一种更具体的描述（例如直接说明要把哪一段改成什么）。`,
+          );
+          return;
+        }
         setAiOpen(false);
         setAiHint(
-          `已生成 ${applied.applied} 处修订${applied.failed.length ? `（${applied.failed.length} 处未匹配到原文）` : ""}，请在工具条接受/拒绝修订。`,
+          `已生成 ${applied.applied} 处修订${applied.failed.length ? `（${applied.failed.length} 处未匹配到原文）` : ""}。`,
         );
+        setAiReview({ count: applied.applied });
         return;
       }
       if (format === "pptx") {
@@ -870,6 +915,18 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
     }
     setAiOpen(false);
     setAiPreview(null);
+  }
+
+  async function reviewAiEdits(action: "accept" | "reject") {
+    if (!docxApiRef.current) return;
+    try {
+      await docxApiRef.current.reviewAiEdits(action);
+      markDirty();
+      setAiReview(null);
+      setAiHint(action === "accept" ? "已接受全部 AI 修订，记得保存。" : "已拒绝全部 AI 修订。");
+    } catch (e) {
+      setAiHint(e instanceof Error ? e.message : "修订处理失败");
+    }
   }
 
   /** 返回/离开页面：有未保存修改时先让用户选保存还是放弃 */
@@ -1165,6 +1222,35 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
         </div>
       )}
 
+      {aiReview && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-line bg-accent-soft px-3 py-1.5 text-xs text-ink">
+          <span className="min-w-0 flex-1">
+            AI 已生成 {aiReview.count} 处修订（正文里带修订标记）。
+          </span>
+          <button
+            type="button"
+            className="ac-btn px-2.5 py-1 text-xs"
+            onClick={() => void reviewAiEdits("accept")}
+          >
+            接受全部修订
+          </button>
+          <button
+            type="button"
+            className="ac-btn-ghost px-2.5 py-1 text-xs"
+            onClick={() => void reviewAiEdits("reject")}
+          >
+            拒绝全部修订
+          </button>
+          <button
+            type="button"
+            className="text-ink-faint hover:text-ink"
+            onClick={() => setAiReview(null)}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       {readOnlyReason && (
         <div className="flex flex-wrap items-center gap-2 border-b border-line bg-surface-2 px-3 py-1.5 text-xs text-ink-soft">
           <span>{readOnlyReason}</span>
@@ -1386,13 +1472,11 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
       )}
 
       {aiOpen && (
-        <div
-          className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label="AI 编辑"
+        <EditorModal
+          label="AI 编辑"
+          onClose={() => !aiBusy && setAiOpen(false)}
+          panelClassName="max-w-lg space-y-3"
         >
-          <div className="w-full max-w-lg space-y-3 rounded-lg border border-line bg-surface p-5 shadow-xl">
             <div className="flex items-center justify-between">
               <h2 className="font-display text-lg font-semibold text-ink">✨ AI 编辑</h2>
               <button
@@ -1420,7 +1504,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
                 <div className="flex justify-end gap-2">
                   <button
                     type="button"
-                    className="ac-btn-ghost px-3 py-1.5 text-xs"
+                    className="ac-btn-ghost justify-center px-3 py-1.5 text-center text-xs"
                     onClick={() => {
                       setAiOpen(false);
                       setAiPreview(null);
@@ -1430,7 +1514,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
                   </button>
                   <button
                     type="button"
-                    className="ac-btn px-3 py-1.5 text-xs"
+                    className="ac-btn justify-center px-3 py-1.5 text-center text-xs"
                     onClick={applyTextAiEdits}
                   >
                     应用修改
@@ -1458,7 +1542,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
                 <div className="flex justify-end gap-2">
                   <button
                     type="button"
-                    className="ac-btn-ghost px-3 py-1.5 text-xs"
+                    className="ac-btn-ghost justify-center px-3 py-1.5 text-center text-xs"
                     disabled={aiBusy}
                     onClick={() => setAiOpen(false)}
                   >
@@ -1466,7 +1550,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
                   </button>
                   <button
                     type="button"
-                    className="ac-btn px-3 py-1.5 text-xs"
+                    className="ac-btn justify-center px-3 py-1.5 text-center text-xs"
                     disabled={aiBusy || !aiInstruction.trim()}
                     onClick={() => void runAiEdits()}
                   >
@@ -1475,53 +1559,49 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
                 </div>
               </>
             )}
-          </div>
-        </div>
+        </EditorModal>
       )}
 
       {exitTarget && (
-        <div
-          className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-label="未保存的修改"
+        <EditorModal
+          label="未保存的修改"
+          onClose={() => savePhase.kind !== "saving" && setExitTarget(null)}
+          panelClassName="max-w-sm space-y-3"
         >
-          <div className="w-full max-w-sm space-y-3 rounded-lg border border-line bg-surface p-5 shadow-xl">
-            <h2 className="font-display text-lg font-semibold text-ink">有未保存的修改</h2>
-            <p className="text-sm text-ink-soft">
-              离开前要保存这次编辑吗？保存会生成一个新版本。
-            </p>
-            <div className="space-y-2">
-              <button
-                type="button"
-                className="ac-btn w-full px-3 py-2 text-sm"
-                disabled={savePhase.kind === "saving"}
-                onClick={() => void saveAndExit()}
-              >
-                {savePhase.kind === "saving" ? "保存中…" : "保存并退出"}
-              </button>
-              <button
-                type="button"
-                className="ac-btn-ghost w-full px-3 py-2 text-sm text-high"
-                disabled={savePhase.kind === "saving"}
-                onClick={discardAndExit}
-              >
-                放弃更改并退出
-              </button>
-              <button
-                type="button"
-                className="w-full px-3 py-2 text-xs text-ink-faint hover:text-ink"
-                disabled={savePhase.kind === "saving"}
-                onClick={() => setExitTarget(null)}
-              >
-                取消
-              </button>
-            </div>
-            {savePhase.kind === "error" && (
-              <p className="text-xs text-danger">{savePhase.message}</p>
-            )}
+          <h2 className="font-display text-lg font-semibold text-ink">有未保存的修改</h2>
+          <p className="text-sm text-ink-soft">
+            离开前要保存这次编辑吗？保存会生成一个新版本。
+          </p>
+          <div className="space-y-2">
+            <button
+              type="button"
+              className="ac-btn w-full justify-center px-3 py-2 text-center text-sm"
+              disabled={savePhase.kind === "saving"}
+              onClick={() => void saveAndExit()}
+            >
+              {savePhase.kind === "saving" ? "保存中…" : "保存并退出"}
+            </button>
+            <button
+              type="button"
+              className="ac-btn-ghost w-full justify-center px-3 py-2 text-center text-sm text-high"
+              disabled={savePhase.kind === "saving"}
+              onClick={discardAndExit}
+            >
+              放弃更改并退出
+            </button>
+            <button
+              type="button"
+              className="w-full px-3 py-2 text-center text-xs text-ink-faint hover:text-ink"
+              disabled={savePhase.kind === "saving"}
+              onClick={() => setExitTarget(null)}
+            >
+              取消
+            </button>
           </div>
-        </div>
+          {savePhase.kind === "error" && (
+            <p className="text-xs text-danger">{savePhase.message}</p>
+          )}
+        </EditorModal>
       )}
 
       <LibrarySaveAsDialog
