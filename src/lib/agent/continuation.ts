@@ -34,6 +34,16 @@ export const DRAFT_TOOL_LABELS: Record<string, string> = {
   manage_dashboard_widgets: "工作台卡片",
   manage_task_plans: "日程表排期",
   create_skill: "新技能",
+  create_library_folder: "新建资源库文件夹",
+  rename_library_folder: "重命名资源库文件夹",
+  delete_library_folder: "删除资源库文件夹",
+  rename_library_file: "重命名资源库文件",
+  move_library_file: "移动资源库文件",
+  copy_library_file: "复制资源库文件",
+  delete_library_file: "删除资源库文件",
+  save_file_to_library: "文件保存进资源库",
+  save_library_file_to_task: "资源库文件进任务",
+  restore_library_version: "恢复资源库版本",
 };
 
 /**
@@ -59,6 +69,11 @@ const CONTINUABLE_TOOLS = new Set([
   // 用户可能想立刻把它贴到某个任务上
   "create_resource_usage",
   "create_label",
+  // 新建资源库文件夹会产生 folderId，保存/复制文件会产生 itemId：
+  // 用户可能紧接着想把别的文件放进去、读它或发给别人
+  "create_library_folder",
+  "save_file_to_library",
+  "copy_library_file",
 ]);
 
 export function isContinuableTool(tool: string): boolean {

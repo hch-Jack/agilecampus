@@ -18,7 +18,8 @@ import { MESSAGE_TAG_MAX, normalizeMessageTag } from "@/lib/message-tag";
 import { uploadFileRaw } from "@/lib/upload-client";
 import { Markdown } from "@/components/markdown";
 import { FilePreviewModal } from "@/components/file-preview";
-import { FileTypeIcon } from "@/components/file-type-icon";
+import { FileTypeIcon, FolderIcon } from "@/components/file-type-icon";
+import { AssistantLibraryPicker } from "@/components/assistant-library-picker";
 import { AssistantFileCards } from "@/components/assistant-file-cards";
 
 /**
@@ -155,6 +156,8 @@ export function AgentChat({
   const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  /** 「从资源库选择附件」弹窗 */
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   // 翻历史时别被后续消息（答复、删除、pending 切换）拽回底部：
@@ -374,6 +377,18 @@ export function AgentChat({
   function removeAttachment(id: string) {
     setAttachments((list) => list.filter((f) => f.id !== id));
     void fetch(`/api/assistant/files/${id}`, { method: "DELETE" }).catch(() => {});
+  }
+
+  /** 从资源库选中的文件已经登记成 assistant 文件，直接加入待发送附件 */
+  function addLibraryAttachment(file: MessageAttachment) {
+    if (attachments.length >= ASSISTANT_ATTACHMENTS_MAX) {
+      setUploadError(`一句话最多带 ${ASSISTANT_ATTACHMENTS_MAX} 个文件`);
+      return;
+    }
+    setUploadError(null);
+    setAttachments((list) =>
+      list.some((f) => f.id === file.id) ? list : [...list, file],
+    );
   }
 
   function toggleTagEditor(messageId: string) {
@@ -902,6 +917,21 @@ export function AgentChat({
                 </svg>
               )}
             </button>
+            <button
+              type="button"
+              onClick={() => setLibraryOpen(true)}
+              disabled={
+                pending ||
+                disabled ||
+                uploading ||
+                attachments.length >= ASSISTANT_ATTACHMENTS_MAX
+              }
+              aria-label="从资源库添加文件"
+              title="从资源库添加文件"
+              className="ac-btn-ghost shrink-0 px-2 py-2 text-sm"
+            >
+              <FolderIcon className="h-4 w-4" />
+            </button>
           </>
         )}
         <input
@@ -920,6 +950,14 @@ export function AgentChat({
           {pending ? "思考中…" : "发送"}
         </button>
       </div>
+      {libraryOpen && (
+        <AssistantLibraryPicker
+          open
+          onClose={() => setLibraryOpen(false)}
+          onPick={addLibraryAttachment}
+          full={attachments.length >= ASSISTANT_ATTACHMENTS_MAX}
+        />
+      )}
       {/* 挂到 body：面板自身有宽度/层级约束，弹窗不能被它裁掉或压住 */}
       {previewFile &&
         createPortal(

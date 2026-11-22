@@ -12,12 +12,16 @@ import {
   buildPersonalTools,
   buildTools,
   COMMIT_TOOL_NAMES,
+  COPY_LIBRARY_FILE_TOOL,
   CREATE_GROUP_TOOL,
   CREATE_LABEL_TOOL,
+  CREATE_LIBRARY_FOLDER_TOOL,
   CREATE_RESOURCE_USAGE_TOOL,
   CREATE_SKILL_TOOL,
   CREATE_TEAM_TOOL,
   DELETE_LABEL_TOOL,
+  DELETE_LIBRARY_FILE_TOOL,
+  DELETE_LIBRARY_FOLDER_TOOL,
   EDIT_TASK_LABELS_TOOL,
   END_RESOURCE_USAGE_TOOL,
   FOCUS_PROJECT_TOOL_NAMES,
@@ -26,9 +30,15 @@ import {
   JOIN_TEAM_TOOL,
   MANAGE_TASK_PLANS_TOOL,
   MANAGE_WIDGETS_TOOL,
+  MOVE_LIBRARY_FILE_TOOL,
+  RENAME_LIBRARY_FILE_TOOL,
+  RENAME_LIBRARY_FOLDER_TOOL,
   RESPOND_INVITE_TOOL,
+  RESTORE_LIBRARY_VERSION_TOOL,
   SAVE_CONTEXT_TOOL,
+  SAVE_FILE_TO_LIBRARY_TOOL,
   SAVE_FILE_TO_TASK_TOOL,
+  SAVE_LIBRARY_FILE_TO_TASK_TOOL,
   SEND_MESSAGE_TOOL,
   UPDATE_LABEL_TOOL,
   WRITE_TOOL_NAMES,
@@ -66,9 +76,12 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     expect(Object.keys(tools).sort()).toEqual(
       [
         "attach_message_file_to_task",
+        "browse_library",
+        "copy_library_file",
         "create_file",
         "create_group_chat",
         "create_label",
+        "create_library_folder",
         "create_milestone",
         "create_project",
         "create_resource_usage",
@@ -76,6 +89,9 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
         "create_team",
         "decompose_tasks",
         "delete_label",
+        "delete_library_file",
+        "delete_library_folder",
+        "edit_library_file",
         "edit_task_labels",
         "edit_task_links",
         "end_resource_usage",
@@ -88,6 +104,8 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
         "list_dashboard_widgets",
         "list_dependencies",
         "list_labels",
+        "list_libraries",
+        "list_library_versions",
         "list_members",
         "list_message_threads",
         "list_milestones",
@@ -97,19 +115,28 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
         "list_tasks",
         "manage_dashboard_widgets",
         "manage_task_plans",
+        "move_library_file",
         "open_file",
+        "open_library_file",
         "open_message",
         "open_page",
         "plan_sprint",
         "query_progress",
         "read_file",
+        "read_library_file",
         "read_messages",
         "read_skill",
         "read_skill_file",
+        "rename_library_file",
+        "rename_library_folder",
         "respond_group_invite",
+        "restore_library_version",
+        "save_file_to_library",
         "save_file_to_task",
-        "search_messages",
+        "save_library_file_to_task",
         "save_personal_context",
+        "search_library",
+        "search_messages",
         "send_message",
         "update_label",
         "update_tasks",
@@ -135,6 +162,12 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     expect(projectTools).not.toHaveProperty("forward_message");
     expect(projectTools).not.toHaveProperty("create_group_chat");
     expect(projectTools).not.toHaveProperty("invite_to_group");
+    // 资源库也只在工作台：个人库不该进团队共享的项目会话
+    expect(projectTools).not.toHaveProperty("list_libraries");
+    expect(projectTools).not.toHaveProperty("browse_library");
+    expect(projectTools).not.toHaveProperty("search_library");
+    expect(projectTools).not.toHaveProperty("read_library_file");
+    expect(projectTools).not.toHaveProperty("create_library_folder");
     // 个人模式反过来不重复项目内归档的读工具：项目页问「最近发生了什么」才查得到整套上下文
     expect(tools).not.toHaveProperty("list_project_activity");
     expect(tools).not.toHaveProperty("list_comments");
@@ -320,6 +353,17 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
     expect(WRITE_TOOL_NAMES).not.toContain(MANAGE_TASK_PLANS_TOOL);
     // 技能只归个人助手：项目页是团队共享会话，技能正文不该进去
     expect(WRITE_TOOL_NAMES).not.toContain(CREATE_SKILL_TOOL);
+    // 资源库写操作同理：全部只在工作台助手，项目页落库口不该认
+    expect(WRITE_TOOL_NAMES).not.toContain(CREATE_LIBRARY_FOLDER_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(RENAME_LIBRARY_FOLDER_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(DELETE_LIBRARY_FOLDER_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(RENAME_LIBRARY_FILE_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(MOVE_LIBRARY_FILE_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(COPY_LIBRARY_FILE_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(DELETE_LIBRARY_FILE_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(SAVE_FILE_TO_LIBRARY_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(SAVE_LIBRARY_FILE_TO_TASK_TOOL);
+    expect(WRITE_TOOL_NAMES).not.toContain(RESTORE_LIBRARY_VERSION_TOOL);
     expect(COMMIT_TOOL_NAMES).toEqual([
       ...WRITE_TOOL_NAMES,
       SAVE_CONTEXT_TOOL,
@@ -341,6 +385,16 @@ describe("buildPersonalTools：跨项目读工具靠 projectId，权限仍逐层
       MANAGE_WIDGETS_TOOL,
       MANAGE_TASK_PLANS_TOOL,
       CREATE_SKILL_TOOL,
+      CREATE_LIBRARY_FOLDER_TOOL,
+      RENAME_LIBRARY_FOLDER_TOOL,
+      DELETE_LIBRARY_FOLDER_TOOL,
+      RENAME_LIBRARY_FILE_TOOL,
+      MOVE_LIBRARY_FILE_TOOL,
+      COPY_LIBRARY_FILE_TOOL,
+      DELETE_LIBRARY_FILE_TOOL,
+      SAVE_FILE_TO_LIBRARY_TOOL,
+      SAVE_LIBRARY_FILE_TO_TASK_TOOL,
+      RESTORE_LIBRARY_VERSION_TOOL,
     ]);
   });
 });

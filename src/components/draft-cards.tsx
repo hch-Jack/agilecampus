@@ -838,7 +838,7 @@ function DraftCard({
       targetId?: string;
       targetName?: string;
       content?: string;
-      fileSource?: "task" | "message" | "file" | null;
+      fileSource?: "task" | "message" | "file" | "library" | null;
       attachmentId?: string | null;
       filename?: string | null;
       size?: number | null;
@@ -876,7 +876,9 @@ function DraftCard({
                 ? "项目任务附件"
                 : d.fileSource === "file"
                   ? "助手对话文件"
-                  : "消息附件"}
+                  : d.fileSource === "library"
+                    ? "资源库文件"
+                    : "消息附件"}
             </span>
             <button
               type="button"
@@ -1663,6 +1665,314 @@ function DraftCard({
         <p className="text-xs text-ink-faint">
           保存后属于你个人；助手在任务与描述吻合时会先读取这套流程。参考文件可到「AI
           配置」页补充。
+        </p>
+      </CardShell>
+    );
+  }
+
+  // ---------------------------------------------------------------- 资源库
+  if (draft.tool === "create_library_folder") {
+    const d = data as {
+      name?: string;
+      parentPath?: string;
+      libraryLabel?: string;
+      scope?: string;
+      teamId?: string | null;
+      parentId?: string | null;
+    };
+    const invalid = (d.name ?? "").trim() === "" ? "文件夹名称不能为空" : undefined;
+    return (
+      <CardShell
+        title={`新建资源库文件夹「${d.name || "未命名"}」`}
+        onConfirm={() => save("create_library_folder", d)}
+        invalid={invalid}
+      >
+        <p className="text-xs text-ink-soft">
+          {d.libraryLabel ?? "资源库"}
+          {d.parentPath ? ` / ${d.parentPath}` : " / 根目录"}
+        </p>
+        <input
+          value={d.name ?? ""}
+          onChange={(e) => setData({ ...d, name: e.target.value })}
+          maxLength={60}
+          placeholder="文件夹名称"
+          className="ac-field text-xs"
+        />
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "rename_library_folder") {
+    const d = data as {
+      folderId?: string;
+      name?: string;
+      currentName?: string;
+      path?: string;
+      libraryLabel?: string;
+    };
+    const invalid = (d.name ?? "").trim() === "" ? "文件夹名称不能为空" : undefined;
+    return (
+      <CardShell
+        title="重命名资源库文件夹"
+        onConfirm={() => save("rename_library_folder", d)}
+        invalid={invalid}
+      >
+        <p className="text-xs text-ink-soft">
+          {d.libraryLabel ?? "资源库"}｜现在叫「{d.currentName ?? "未命名"}」
+          {d.path ? `（${d.path}）` : ""}
+        </p>
+        <input
+          value={d.name ?? ""}
+          onChange={(e) => setData({ ...d, name: e.target.value })}
+          maxLength={60}
+          placeholder="新名称"
+          className="ac-field text-xs"
+        />
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "delete_library_folder") {
+    const d = data as {
+      folderId?: string;
+      mode?: "keep-files" | "delete-all";
+      name?: string;
+      path?: string;
+      libraryLabel?: string;
+    };
+    const mode = d.mode ?? "keep-files";
+    return (
+      <CardShell
+        title={`删除资源库文件夹「${d.name ?? "未命名"}」`}
+        onConfirm={() => save("delete_library_folder", d)}
+      >
+        <p className="text-xs text-ink-soft">
+          {d.libraryLabel ?? "资源库"}
+          {d.path ? ` / ${d.path}` : ""}
+        </p>
+        <select
+          value={mode}
+          onChange={(e) =>
+            setData({ ...d, mode: e.target.value as "keep-files" | "delete-all" })
+          }
+          className="ac-field text-xs"
+        >
+          <option value="keep-files">只删文件夹，内容移到上一级</option>
+          <option value="delete-all">连同子文件夹和文件一起删除</option>
+        </select>
+        {mode === "delete-all" && (
+          <p className="text-xs text-high">这会连同文件夹里的全部文件一起删除，无法恢复。</p>
+        )}
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "rename_library_file") {
+    const d = data as {
+      itemId?: string;
+      name?: string;
+      currentFilename?: string;
+      folderPath?: string;
+      libraryLabel?: string;
+    };
+    const invalid = (d.name ?? "").trim() === "" ? "文件名不能为空" : undefined;
+    return (
+      <CardShell
+        title="重命名资源库文件"
+        onConfirm={() => save("rename_library_file", d)}
+        invalid={invalid}
+      >
+        <p className="text-xs text-ink-soft">
+          {d.libraryLabel ?? "资源库"}
+          {d.folderPath ? ` / ${d.folderPath}` : ""}｜现在叫「{d.currentFilename ?? "未命名文件"}」
+        </p>
+        <input
+          value={d.name ?? ""}
+          onChange={(e) => setData({ ...d, name: e.target.value })}
+          maxLength={200}
+          placeholder="新文件名（带扩展名）"
+          className="ac-field text-xs"
+        />
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "move_library_file") {
+    const d = data as {
+      itemId?: string;
+      folderId?: string | null;
+      filename?: string;
+      currentFolderPath?: string;
+      targetPath?: string;
+      libraryLabel?: string;
+    };
+    return (
+      <CardShell
+        title="移动资源库文件"
+        onConfirm={() => save("move_library_file", d)}
+      >
+        <p className="text-xs text-ink-soft">
+          「{d.filename ?? "未命名文件"}」：{d.currentFolderPath || "根目录"} →{" "}
+          {d.targetPath || "根目录"}
+        </p>
+        <p className="text-xs text-ink-faint">
+          {d.libraryLabel ?? "资源库"}｜目标位置有同名文件时会失败，可先改名再移动。
+        </p>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "copy_library_file") {
+    const d = data as {
+      itemId?: string;
+      scope?: string;
+      teamId?: string | null;
+      folderId?: string | null;
+      filename?: string;
+      sourceFilename?: string;
+      size?: number;
+      targetLabel?: string;
+      targetPath?: string;
+    };
+    const invalid =
+      (d.filename ?? "").trim() === "" ? "新文件名不能为空" : undefined;
+    return (
+      <CardShell
+        title="复制资源库文件"
+        onConfirm={() => save("copy_library_file", d)}
+        invalid={invalid}
+      >
+        <p className="text-xs text-ink-soft">
+          「{d.sourceFilename ?? "未命名文件"}」
+          {typeof d.size === "number" ? `（${fmtSize(d.size)}）` : ""} →{" "}
+          {d.targetLabel ?? "目标资源库"}
+          {d.targetPath ? ` / ${d.targetPath}` : " / 根目录"}
+        </p>
+        <input
+          value={d.filename ?? ""}
+          onChange={(e) => setData({ ...d, filename: e.target.value })}
+          maxLength={200}
+          placeholder="新文件名（带扩展名）"
+          className="ac-field text-xs"
+        />
+        <p className="text-xs text-ink-faint">复制会新存一份，源文件不动。</p>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "delete_library_file") {
+    const d = data as {
+      itemId?: string;
+      filename?: string;
+      folderPath?: string;
+      size?: number;
+      currentVersion?: number;
+      libraryLabel?: string;
+    };
+    return (
+      <CardShell
+        title={`从资源库删除「${d.filename ?? "未命名文件"}」`}
+        onConfirm={() => save("delete_library_file", d)}
+      >
+        <p className="text-xs text-ink-soft">
+          {d.libraryLabel ?? "资源库"}
+          {d.folderPath ? ` / ${d.folderPath}` : ""}
+          {typeof d.size === "number" ? `｜${fmtSize(d.size)}` : ""}
+          {typeof d.currentVersion === "number" ? `｜共 ${d.currentVersion} 个版本` : ""}
+        </p>
+        <p className="text-xs text-high">
+          资源库记录与全部历史版本都会被删除，无法恢复；来源的任务附件/消息附件不受影响。
+        </p>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "save_file_to_library") {
+    const d = data as {
+      fileId?: string;
+      scope?: string;
+      teamId?: string | null;
+      folderId?: string | null;
+      filename?: string;
+      size?: number;
+      targetLabel?: string;
+      targetPath?: string;
+    };
+    const invalid =
+      (d.filename ?? "").trim() === "" ? "文件名不能为空" : undefined;
+    return (
+      <CardShell
+        title="保存文件进资源库"
+        onConfirm={() => save("save_file_to_library", d)}
+        invalid={invalid}
+      >
+        <p className="text-xs text-ink-soft">
+          {d.targetLabel ?? "资源库"}
+          {d.targetPath ? ` / ${d.targetPath}` : " / 根目录"}
+          {typeof d.size === "number" ? `｜${fmtSize(d.size)}` : ""}
+        </p>
+        <input
+          value={d.filename ?? ""}
+          onChange={(e) => setData({ ...d, filename: e.target.value })}
+          maxLength={200}
+          placeholder="文件名（带扩展名）"
+          className="ac-field text-xs"
+        />
+        <p className="text-xs text-ink-faint">
+          同名文件会追加为新版本；资源库与助手对话各存一份引用，删除任一边不影响另一边。
+        </p>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "save_library_file_to_task") {
+    const d = data as {
+      itemId?: string;
+      taskId?: string;
+      filename?: string;
+      size?: number;
+      taskTitle?: string;
+      libraryLabel?: string;
+    };
+    const invalid =
+      typeof d.itemId !== "string" || typeof d.taskId !== "string"
+        ? "草案缺少文件或任务 id，请让助手重拟"
+        : undefined;
+    return (
+      <CardShell
+        title="资源库文件添加为任务附件"
+        onConfirm={() => save("save_library_file_to_task", d)}
+        invalid={invalid}
+      >
+        <p className="text-xs text-ink-soft">
+          文件「{d.filename ?? "未命名文件"}」
+          {typeof d.size === "number" ? `（${fmtSize(d.size)}）` : ""}（
+          {d.libraryLabel ?? "资源库"}）→ 任务
+          {d.taskTitle ? `「${d.taskTitle}」` : "附件"}。
+        </p>
+        <p className="text-xs text-ink-faint">
+          确认后会复制一份到任务附件；之后删除资源库文件不影响任务附件。
+        </p>
+      </CardShell>
+    );
+  }
+
+  if (draft.tool === "restore_library_version") {
+    const d = data as {
+      itemId?: string;
+      version?: number;
+      filename?: string;
+      currentVersion?: number;
+      libraryLabel?: string;
+    };
+    return (
+      <CardShell
+        title="恢复资源库历史版本"
+        onConfirm={() => save("restore_library_version", d)}
+      >
+        <p className="text-xs text-ink-soft">
+          「{d.filename ?? "未命名文件"}」（{d.libraryLabel ?? "资源库"}）：把 v{d.version ?? "?"}{" "}
+          的内容恢复为新的当前版本（当前 v{d.currentVersion ?? "?"} 仍保留在历史里）。
         </p>
       </CardShell>
     );
