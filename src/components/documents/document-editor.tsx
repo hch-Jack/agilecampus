@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { decodeTextWithFallback, extOf } from "@/lib/file-preview";
 import { formatLabel, isSameEditableFormat, sheetBookTypeOf } from "@/lib/documents/format";
-import { importDocxToHtml } from "@/lib/documents/docx-import.client";
 import { grantEditorAction, revokeEditorAction, setCollaborationAction } from "@/app/(app)/documents/[documentId]/actions";
 import {
   LibrarySaveAsDialog,
@@ -12,8 +11,8 @@ import {
 } from "@/components/library/library-save-as-dialog";
 import { FileTypeIcon } from "@/components/file-type-icon";
 import { EditorSidebar } from "./editor-sidebar";
-import { RichTextEditor } from "./rich-text-editor";
 import { SheetEditor, type SheetEditorApi } from "./sheet-editor";
+import { SuperDocEditor, type SuperDocEditorApi } from "./superdoc-editor";
 import { TextEditor } from "./text-editor";
 import { useDocumentEvents } from "./use-document-events";
 import type { DocumentEditorInitial, DocumentVersionDto, LockView, PresenceUser } from "./editor-types";
@@ -24,7 +23,7 @@ type SaveMode = "autosave" | "manual" | "force" | "saveAs";
 
 type Payload =
   | { kind: "text"; text: string }
-  | { kind: "tiptap"; doc: unknown }
+  | { kind: "docx"; bytes: Uint8Array }
   | { kind: "sheet"; bytes: Uint8Array };
 
 type SavePhase =
@@ -104,7 +103,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
   const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [text, setText] = useState("");
-  const [tiptap, setTiptap] = useState<unknown>(null);
+  const [docxBytes, setDocxBytes] = useState<ArrayBuffer | null>(null);
   const [sheetBytes, setSheetBytes] = useState<ArrayBuffer | null>(null);
   const [originalUtf8, setOriginalUtf8] = useState(true);
   const [reloadToken, setReloadToken] = useState(0);
@@ -124,6 +123,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
   const [savedHint, setSavedHint] = useState("");
 
   const sheetApiRef = useRef<SheetEditorApi | null>(null);
+  const docxApiRef = useRef<SuperDocEditorApi | null>(null);
   const savingRef = useRef(false);
   const pendingRef = useRef(false);
   const reloadingRef = useRef(false);
@@ -202,11 +202,9 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
       applyMeta(state);
       const target = state.document.currentVersion;
 
-      if (format === "docx" && state.editorState != null) {
-        setTiptap(state.editorState);
-      } else if (format === "docx") {
-        const bytes = await fetchBytes();
-        setTiptap(await importDocxToHtml(bytes));
+      if (format === "docx") {
+        // SuperDoc 直接在 DOCX 字节上编辑；旧版 Tiptap editorState 不再使用
+        setDocxBytes(await fetchBytes());
       } else if (format === "text") {
         const decoded = decodeText(await fetchBytes());
         setText(decoded.text);
@@ -275,7 +273,8 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
   async function buildPayload(): Promise<Payload | null> {
     if (format === "text") return { kind: "text", text };
     if (format === "docx") {
-      return tiptap == null ? null : { kind: "tiptap", doc: tiptap };
+      const bytes = await docxApiRef.current?.getBytes();
+      return bytes ? { kind: "docx", bytes } : null;
     }
     const bytes = sheetApiRef.current?.getBytes() ?? null;
     return bytes ? { kind: "sheet", bytes } : null;
@@ -304,7 +303,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
 
     try {
       let res: Response;
-      if (payload.kind === "sheet") {
+      if (payload.kind === "sheet" || payload.kind === "docx") {
         const query = new URLSearchParams({
           baseVersion: String(versionRef.current),
           sessionId,
@@ -312,16 +311,13 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
         });
         if (opts.mode === "force") query.set("force", "1");
         if (opts.mode === "saveAs" && opts.saveAsName) query.set("asName", opts.saveAsName);
-        res = await fetch(`/api/documents/${documentId}/save-sheet?${query.toString()}`, {
+        const endpoint = payload.kind === "sheet" ? "save-sheet" : "save-docx";
+        res = await fetch(`/api/documents/${documentId}/${endpoint}?${query.toString()}`, {
           method: "POST",
           headers: { "content-type": "application/octet-stream" },
           body: payload.bytes as unknown as BodyInit,
         });
       } else {
-        const content =
-          payload.kind === "text"
-            ? { kind: "text" as const, text: payload.text }
-            : { kind: "tiptap" as const, doc: payload.doc };
         res = await fetch(`/api/documents/${documentId}/save`, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -331,7 +327,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
             force: opts.mode === "force" || undefined,
             saveAsName: opts.mode === "saveAs" ? opts.saveAsName : undefined,
             note: opts.mode === "autosave" ? "autosave" : "manual",
-            content,
+            content: { kind: "text" as const, text: payload.text },
           }),
         });
       }
@@ -511,7 +507,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
       void saveRef.current({ mode: "autosave" });
     }, wait);
     return () => window.clearTimeout(timer);
-  }, [dirty, editingAllowed, conflict, remote, format, text, tiptap]);
+  }, [dirty, editingAllowed, conflict, remote, format, text]);
 
   // 切走标签页时尽量落一次盘
   useEffect(() => {
@@ -694,26 +690,21 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
     if (!payload) return { ok: false, error: "当前内容尚未准备好，请稍后再试" };
     try {
       let res: Response;
-      if (payload.kind === "sheet") {
+      if (payload.kind === "sheet" || payload.kind === "docx") {
         const query = new URLSearchParams({
           filename: input.filename,
           scope: input.scope,
         });
         if (input.teamId) query.set("teamId", input.teamId);
         if (input.folderId) query.set("folderId", input.folderId);
-        res = await fetch(
-          `/api/documents/${documentId}/save-as-library-sheet?${query.toString()}`,
-          {
-            method: "POST",
-            headers: { "content-type": "application/octet-stream" },
-            body: payload.bytes as unknown as BodyInit,
-          },
-        );
+        const endpoint =
+          payload.kind === "sheet" ? "save-as-library-sheet" : "save-as-library-docx";
+        res = await fetch(`/api/documents/${documentId}/${endpoint}?${query.toString()}`, {
+          method: "POST",
+          headers: { "content-type": "application/octet-stream" },
+          body: payload.bytes as unknown as BodyInit,
+        });
       } else {
-        const content =
-          payload.kind === "text"
-            ? { kind: "text" as const, text: payload.text }
-            : { kind: "tiptap" as const, doc: payload.doc };
         res = await fetch(`/api/documents/${documentId}/save-as-library`, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -722,7 +713,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
             scope: input.scope,
             teamId: input.teamId,
             folderId: input.folderId,
-            content,
+            content: { kind: "text" as const, text: payload.text },
           }),
         });
       }
@@ -738,22 +729,19 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
     if (!payload) return false;
     try {
       let res: Response;
-      if (payload.kind === "sheet") {
+      if (payload.kind === "sheet" || payload.kind === "docx") {
         const query = new URLSearchParams({ filename });
-        res = await fetch(`/api/documents/${documentId}/export-sheet?${query.toString()}`, {
+        const endpoint = payload.kind === "sheet" ? "export-sheet" : "export-docx";
+        res = await fetch(`/api/documents/${documentId}/${endpoint}?${query.toString()}`, {
           method: "POST",
           headers: { "content-type": "application/octet-stream" },
           body: payload.bytes as unknown as BodyInit,
         });
       } else {
-        const content =
-          payload.kind === "text"
-            ? { kind: "text" as const, text: payload.text }
-            : { kind: "tiptap" as const, doc: payload.doc };
         res = await fetch(`/api/documents/${documentId}/export`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ filename, content }),
+          body: JSON.stringify({ filename, content: { kind: "text", text: payload.text } }),
         });
       }
       if (!res.ok) {
@@ -980,14 +968,13 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
               onSave={kickManualSave}
             />
           ) : format === "docx" ? (
-            <RichTextEditor
-              content={tiptap}
-              reloadToken={reloadToken}
+            <SuperDocEditor
+              bytes={docxBytes}
               readOnly={readOnly}
-              onChange={(doc) => {
-                setTiptap(doc);
-                markDirty();
-              }}
+              filename={docInfo.filename}
+              userName={initial.currentUserName}
+              apiRef={docxApiRef}
+              onDirty={markDirty}
               onSave={kickManualSave}
             />
           ) : (
