@@ -51,8 +51,9 @@ export function AttachmentList({
 
       {attachments.length === 0 ? (
         <p className="mt-2 text-sm text-ink-faint">
-          暂无附件
-          {canWrite ? `，可在下方添加（本地上传或从资源库选取，单文件不超过 ${MAX_FILE_SIZE_LABEL}）` : ""}
+          暂无附件{canWrite
+            ? `，可在下方添加（本地上传或从资源库选取，单文件不超过 ${MAX_FILE_SIZE_LABEL}）`
+            : ""}
         </p>
       ) : (
         <ul className="mt-2 space-y-1">
