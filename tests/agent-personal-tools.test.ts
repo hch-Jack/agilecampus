@@ -484,7 +484,7 @@ describe("个人写工具的草案，落库口都吃得下", () => {
 });
 
 // 右侧助手在项目页里会带一个「焦点项目」：不改会话归属，只多放出 6 件项目专属工具。
-// 这里钉住工具面——多放一件或少放一件都会改变模型的选择空间（42 → 48 已是有意为之）。
+// 这里钉住工具面——多放一件或少放一件都会改变模型的选择空间（每次扩面都是有意的）。
 describe("buildPersonalTools：焦点项目的工具面", () => {
   beforeEach(resetDb);
 
@@ -493,8 +493,8 @@ describe("buildPersonalTools：焦点项目的工具面", () => {
     const base = buildPersonalTools(student.id);
     const focused = buildPersonalTools(student.id, project.id);
 
-    expect(Object.keys(base)).toHaveLength(48);
-    expect(Object.keys(focused)).toHaveLength(54);
+    expect(Object.keys(base)).toHaveLength(65);
+    expect(Object.keys(focused)).toHaveLength(71);
     expect(Object.keys(focused).filter((name) => !(name in base)).sort()).toEqual(
       [...FOCUS_PROJECT_TOOL_NAMES].sort(),
     );
