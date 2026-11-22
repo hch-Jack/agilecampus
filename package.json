@@ -5,6 +5,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:superdoc-css": "node scripts/build-superdoc-css.mjs",
+    "predev": "npm run build:superdoc-css",
+    "prebuild": "npm run build:superdoc-css",
     "start": "next start",
     "lint": "eslint",
     "db:push": "drizzle-kit push",

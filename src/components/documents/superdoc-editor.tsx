@@ -3,7 +3,27 @@
 import { useEffect, useRef, useState } from "react";
 import type { SuperDoc } from "superdoc";
 import { clearChunkReloadFlag, reloadOnceForChunkError } from "@/lib/chunk-reload";
-import "superdoc/style.css";
+
+/**
+ * SuperDoc 的样式由 scripts/build-superdoc-css.mjs 合并到 public/superdoc.css。
+ * 不走 Next 的 CSS 管线：它的 `::highlight(...)` 是 CSS Custom Highlight API，
+ * Lightning CSS 不认识，会在每次构建刷 8 条伪元素警告。
+ */
+const CSS_ID = "superdoc-css";
+
+function ensureSuperDocCss(): Promise<void> {
+  if (typeof document === "undefined") return Promise.resolve();
+  if (document.getElementById(CSS_ID)) return Promise.resolve();
+  return new Promise((resolve) => {
+    const link = document.createElement("link");
+    link.id = CSS_ID;
+    link.rel = "stylesheet";
+    link.href = "/superdoc.css";
+    link.onload = () => resolve();
+    link.onerror = () => resolve();
+    document.head.appendChild(link);
+  });
+}
 
 /**
  * Word 编辑：直接交给 SuperDoc（浏览器内 DOCX/OOXML 编辑器）。
@@ -82,6 +102,8 @@ export function SuperDocEditor({
     setError("");
 
     void (async () => {
+      await ensureSuperDocCss();
+      if (cancelled) return;
       const { SuperDoc: SuperDocCtor } = await import("superdoc");
       if (cancelled) return;
       instance = new SuperDocCtor({
