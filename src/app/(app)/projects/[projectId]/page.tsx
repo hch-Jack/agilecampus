@@ -136,6 +136,41 @@ export default async function ProjectPage({
               时间线
             </Link>
             <Link
+              href={`/projects/${projectId}/burndown`}
+              className="ac-btn-ghost whitespace-nowrap"
+            >
+              <svg
+                viewBox="0 0 16 16"
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                aria-hidden="true"
+              >
+                <path d="M2 3.5h12M2 12.5h12" />
+                <path d="M3 4.5v3M6 4.5v1M9.5 4.5v6.5M13 4.5v2" />
+              </svg>
+              燃尽图
+            </Link>
+            <Link
+              href={`/projects/${projectId}/contributors`}
+              className="ac-btn-ghost whitespace-nowrap"
+            >
+              <svg
+                viewBox="0 0 16 16"
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                aria-hidden="true"
+              >
+                <circle cx="5.5" cy="5" r="2.2" />
+                <circle cx="11" cy="6.5" r="1.7" />
+                <path d="M2 13c.4-2.2 1.8-3.4 3.5-3.4S8.6 10.8 9 13M10 12.6c.3-1.5 1.2-2.4 2.5-2.4 1 0 1.9.6 2.4 1.8" />
+              </svg>
+              贡献度
+            </Link>
+            <Link
               href={`/projects/${projectId}/graph`}
               className="ac-btn-ghost whitespace-nowrap"
             >
