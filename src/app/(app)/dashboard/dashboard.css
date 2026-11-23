@@ -1015,6 +1015,23 @@ body.proj-cosmic .workbench-card.is-overdue {
   background-color: var(--dw-overdue-soft);
 }
 
+/* 拖拽浮层 portal 到 body，离开了 .dashboard-shell，拿不到上面的
+   --dw-overdue-* 变量；这里给浮层单独补一套，逾期卡拖起来颜色也一致。 */
+.workbench-card.is-overdue.proj-ghost {
+  --dw-overdue-ink: #c2410c;
+  --dw-overdue-soft: #fff4e8;
+  --dw-overdue-line: #e9a15c;
+  border-color: var(--dw-overdue-line);
+  background-color: var(--dw-overdue-soft);
+}
+body.proj-cosmic .workbench-card.is-overdue.proj-ghost {
+  --dw-overdue-ink: #ffc08a;
+  --dw-overdue-soft: rgba(255, 169, 94, 0.12);
+  --dw-overdue-line: rgba(255, 169, 94, 0.55);
+  border-color: var(--dw-overdue-line);
+  background-color: var(--dw-overdue-soft);
+}
+
 /* 待办审批卡还有未处理申请：整卡暖橙底 + 橙边，和「逾期」同一套橙色语义。
    宇宙主题的 `body.proj-cosmic .ac-card` 会压回深蓝玻璃，需要更高层级覆盖。 */
 .dashboard-widget-alert .dashboard-widget-inner {
