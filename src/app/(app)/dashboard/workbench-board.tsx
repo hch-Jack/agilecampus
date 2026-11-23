@@ -34,6 +34,16 @@ import { WorkbenchApprovalModal } from "./approval-status-modal";
 import { ApprovalHistoryModal } from "./approval-history-modal";
 import { isOverdueTask, sortBoardTasks } from "@/lib/workbench-order";
 
+export /** 看板列命中：用指针位置兜底，避免 dnd-kit 的 over 在某些布局/缩放下为空 */
+function columnKeyAt(x: number, y: number): string | null {
+  // 拖拽浮层可能盖在指针下面，用 elementsFromPoint 找到第一个真正属于列的节点
+  for (const el of document.elementsFromPoint(x, y)) {
+    const col = el.closest<HTMLElement>("[data-board-column]");
+    if (col) return col.dataset.boardColumn ?? null;
+  }
+  return null;
+}
+
 export type WorkbenchTask = {
   id: string;
   title: string;
@@ -122,8 +132,7 @@ function WorkbenchCardBody({
       <Link
         href={`/projects/${task.projectId}/tasks/${task.id}`}
         onClick={onTitleClick}
-        // card-link 把可点区域铺满整张卡；可拖拽时保留抓手光标
-        className={`card-link dw-body font-medium text-ink hover:text-primary ${
+        className={`dw-body font-medium text-ink hover:text-primary ${
           canWrite ? "cursor-grab" : "cursor-pointer"
         }`}
       >
@@ -161,6 +170,7 @@ function WorkbenchCard({
   locked: boolean;
   onOpenApproval?: () => void;
 }) {
+  const router = useRouter();
   const canWrite = WRITE_ROLES.includes(task.role);
   const overdue = isOverdueTask(task, today);
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
@@ -184,6 +194,18 @@ function WorkbenchCard({
     <div
       ref={setNodeRef}
       data-task-card-id={task.id}
+      {...listeners}
+      {...attributes}
+      onClick={(e) => {
+        if (suppressClickRef.current) {
+          e.preventDefault();
+          suppressClickRef.current = false;
+          return;
+        }
+        // 标题链、审批徽章、按钮自己处理点击；其余空白处也进任务详情
+        if ((e.target as Element | null)?.closest?.("a,button,input,select,textarea")) return;
+        router.push(`/projects/${task.projectId}/tasks/${task.id}`);
+      }}
       onMouseMove={(e) => {
         const el = e.currentTarget;
         const r = el.getBoundingClientRect();
@@ -202,19 +224,17 @@ function WorkbenchCard({
         overdue ? "is-overdue" : ""
       } ${isDragging ? "dragging" : ""}`}
     >
-      <div {...listeners} {...attributes}>
-        <WorkbenchCardBody
-          task={task}
-          today={today}
-          onTitleClick={(e) => {
-            if (suppressClickRef.current) {
-              e.preventDefault();
-              suppressClickRef.current = false;
-            }
-          }}
-          onOpenApproval={onOpenApproval}
-        />
-      </div>
+      <WorkbenchCardBody
+        task={task}
+        today={today}
+        onTitleClick={(e) => {
+          if (suppressClickRef.current) {
+            e.preventDefault();
+            suppressClickRef.current = false;
+          }
+        }}
+        onOpenApproval={onOpenApproval}
+      />
     </div>
   );
 }
@@ -224,12 +244,14 @@ function Column({
   tasks,
   today,
   locked,
+  highlight,
   onOpenApproval,
 }: {
   column: (typeof COLUMNS)[number];
   tasks: WorkbenchTask[];
   today: string;
   locked: boolean;
+  highlight: boolean;
   onOpenApproval: (task: WorkbenchTask) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.key, disabled: locked });
@@ -239,9 +261,10 @@ function Column({
   return (
     <div
       ref={setNodeRef}
+      data-board-column={column.key}
       // 手机上三列会竖排，空列 min-h-40 会把整块撑得很长，缩到 6rem
       className={`proj-column ac-scroll-hidden min-h-40 space-y-2 rounded-xl border border-line p-3 transition-colors max-sm:min-h-24 ${
-        isOver ? "drop" : ""
+        isOver || highlight ? "drop" : ""
       }`}
     >
       <h3 className={`dw-item flex items-center gap-2 font-semibold ${column.tone}`}>
@@ -296,6 +319,30 @@ export function WorkbenchBoard({
   const [historyOpen, setHistoryOpen] = useState(false);
   // 浮层宽度取被拖卡片的实际宽度：看板卡随工作台网格缩放，不能写死 262px
   const [dragWidth, setDragWidth] = useState<number | null>(null);
+  const [overKey, setOverKey] = useState<string | null>(null);
+  const dragPointRef = useRef<{ x: number; y: number } | null>(null);
+
+  // dnd-kit 的 over 在缩放/嵌套容器里可能一直是 undefined：自己按指针位置找列，
+  // 同时用它驱动列高亮，结束拖拽时也用它兜底落列。
+  useEffect(() => {
+    if (!activeTask) return;
+    let raf = 0;
+    const onMove = (e: PointerEvent) => {
+      dragPointRef.current = { x: e.clientX, y: e.clientY };
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        const p = dragPointRef.current;
+        setOverKey(p ? columnKeyAt(p.x, p.y) : null);
+      });
+    };
+    window.addEventListener("pointermove", onMove, true);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      window.removeEventListener("pointermove", onMove, true);
+      setOverKey(null);
+    };
+  }, [activeTask]);
   const [optimisticTasks, moveOptimistic] = useOptimistic(
     tasks,
     (current, move: { taskId: string; patch: ColumnPatch }) =>
@@ -324,7 +371,9 @@ export function WorkbenchBoard({
     setActiveTask(null);
     setDragWidth(null);
     const taskId = String(event.active.id);
-    const over = event.over?.id;
+    const point = dragPointRef.current;
+    dragPointRef.current = null;
+    const over = event.over?.id ?? (point ? columnKeyAt(point.x, point.y) : null);
     if (!over) return;
     const key = String(over) as (typeof COLUMNS)[number]["key"];
     if (!columns.some((c) => c.key === key)) return;
@@ -437,6 +486,7 @@ export function WorkbenchBoard({
                 tasks={optimisticTasks.filter((t) => t.status === col.key)}
                 today={today}
                 locked={locked}
+                highlight={overKey === col.key}
                 onOpenApproval={setApprovalTask}
               />
             ))}

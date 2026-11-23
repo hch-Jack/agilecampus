@@ -278,7 +278,10 @@ function FileRow({
   const editInfo = detectEditableFormat(file.filename, file.mimeType, file.size);
 
   return (
-    <li className="flex items-center gap-2 rounded px-1 py-1 hover:bg-sunken">
+    <li
+      className="relative flex cursor-pointer items-center gap-2 rounded px-1 py-1 hover:bg-sunken"
+      onClick={() => setPreviewing(true)}
+    >
       <FileTypeIcon
         filename={file.filename}
         mimeType={file.mimeType}
@@ -292,50 +295,49 @@ function FileRow({
         </span>
       </div>
 
-      {/* 在线预览：图片/PDF/音视频/文本免下载查看，其余格式弹窗内提示下载 */}
-      <button
-        type="button"
-        onClick={() => setPreviewing(true)}
-        className="text-xs text-primary underline"
+      <div
+        className="relative z-10 flex shrink-0 items-center gap-2"
+        onClick={(e) => e.stopPropagation()}
       >
-        预览
-      </button>
+        {/* 在线编辑：仅对文本/Word/表格格式显示；其它格式预览弹窗内给出只读原因 */}
+        {editInfo.editable && (
+          <EditDocumentButton
+            sourceType="task_attachment"
+            sourceId={file.id}
+            label="编辑"
+            className="text-xs text-primary underline"
+          />
+        )}
 
-      {/* 在线编辑：仅对文本/Word/表格格式显示；其它格式预览弹窗内给出只读原因 */}
-      {editInfo.editable && (
-        <EditDocumentButton
-          sourceType="task_attachment"
-          sourceId={file.id}
-          label="编辑"
+        {/* 下载走 GET 路由（always attachment 响应），与 server action 写路径分离 */}
+        <a
+          href={`/api/attachments/${file.id}`}
+          download={file.filename}
           className="text-xs text-primary underline"
-        />
-      )}
-
-      {/* 下载走 GET 路由（always attachment 响应），与 server action 写路径分离 */}
-      <a
-        href={`/api/attachments/${file.id}`}
-        download={file.filename}
-        className="text-xs text-primary underline"
-      >
-        下载
-      </a>
-
-      {canWrite && (
-        <form
-          action={deleteAction}
-          onSubmit={(e) => {
-            if (!confirm(`确认删除附件「${file.filename}」？此操作不可恢复。`))
-              e.preventDefault();
-          }}
         >
-          <input type="hidden" name="projectId" value={projectId} />
-          <input type="hidden" name="taskId" value={taskId} />
-          <input type="hidden" name="attachmentId" value={file.id} />
-          <button disabled={deleting} className="text-xs text-high underline disabled:opacity-50">
-            删除
-          </button>
-        </form>
-      )}
+          下载
+        </a>
+
+        {canWrite && (
+          <form
+            action={deleteAction}
+            onSubmit={(e) => {
+              if (!confirm(`确认删除附件「${file.filename}」？此操作不可恢复。`))
+                e.preventDefault();
+            }}
+          >
+            <input type="hidden" name="projectId" value={projectId} />
+            <input type="hidden" name="taskId" value={taskId} />
+            <input type="hidden" name="attachmentId" value={file.id} />
+            <button
+              disabled={deleting}
+              className="text-xs text-high underline disabled:opacity-50"
+            >
+              删除
+            </button>
+          </form>
+        )}
+      </div>
 
       {deleteState?.error && <p className="text-xs text-high">{deleteState.error}</p>}
 

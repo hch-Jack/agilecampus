@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { FileTypeIcon } from "@/components/file-type-icon";
+import { createPortal } from "react-dom";
+import { FilePreviewModal } from "@/components/file-preview";
+import { FileTypeIcon, FolderIcon } from "@/components/file-type-icon";
 import { dateIn, formatDateTime } from "@/lib/time";
 import type {
   DashboardAttachment,
@@ -137,37 +139,68 @@ export function RecentAttachmentsWidget({
   attachments: DashboardAttachment[];
   tz: string;
 }) {
+  const [preview, setPreview] = useState<DashboardAttachment | null>(null);
+
   return (
     <WidgetShell title="最近附件">
       {attachments.length === 0 ? (
         <WidgetEmpty>还没有上传过附件</WidgetEmpty>
       ) : (
-        <ul className="space-y-2">
+        <ul className="space-y-1">
           {attachments.map((attachment) => (
-            <li key={attachment.id} className="flex items-start gap-1.5">
-              <FileTypeIcon
-                filename={attachment.filename}
-                mimeType={attachment.mimeType}
-                className="mt-0.5 h-3.5 w-3.5 shrink-0"
-              />
-              <div className="min-w-0 flex-1">
-                <Link
-                  href={`/projects/${attachment.projectId}/tasks/${attachment.taskId}`}
-                  className="dw-item block truncate font-medium text-ink hover:text-primary"
-                  title={attachment.filename}
-                >
-                  {attachment.filename}
-                </Link>
-                <p className="dw-meta mt-0.5 truncate text-ink-faint">
-                  {attachment.projectName} · {attachment.taskTitle} · {formatSize(attachment.size)}
-                  {" · "}
-                  {dateIn(tz, attachment.createdAt)}
-                </p>
-              </div>
+            <li
+              key={attachment.id}
+              className="flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-sunken"
+            >
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-start gap-1.5 text-left"
+                onClick={() => setPreview(attachment)}
+                title={`预览「${attachment.filename}」`}
+              >
+                <FileTypeIcon
+                  filename={attachment.filename}
+                  mimeType={attachment.mimeType}
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="dw-item block truncate font-medium text-ink">
+                    {attachment.filename}
+                  </span>
+                  <span className="dw-meta mt-0.5 block truncate text-ink-faint">
+                    {attachment.projectName} · {attachment.taskTitle} ·{" "}
+                    {formatSize(attachment.size)} · {dateIn(tz, attachment.createdAt)}
+                  </span>
+                </span>
+              </button>
+              <Link
+                href={`/projects/${attachment.projectId}/tasks/${attachment.taskId}`}
+                className="grid h-6 w-6 shrink-0 place-items-center rounded text-ink-faint hover:bg-surface-2 hover:text-primary"
+                title="打开所在任务"
+                aria-label="打开所在任务"
+              >
+                <FolderIcon className="h-4 w-4" />
+              </Link>
             </li>
           ))}
         </ul>
       )}
+
+      {preview &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <FilePreviewModal
+            file={{
+              url: `/api/attachments/${preview.id}`,
+              filename: preview.filename,
+              mimeType: preview.mimeType,
+              size: preview.size,
+            }}
+            onClose={() => setPreview(null)}
+            edit={{ sourceType: "task_attachment", sourceId: preview.id }}
+          />,
+          document.body,
+        )}
     </WidgetShell>
   );
 }

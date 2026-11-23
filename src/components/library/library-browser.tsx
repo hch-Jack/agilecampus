@@ -740,13 +740,6 @@ export function LibraryBrowser({
                     {fmtSize(item.size)}
                   </span>
                   <div className="pointer-events-none relative z-10 flex flex-wrap justify-end gap-2 text-xs [&>*]:pointer-events-auto">
-                    <button
-                      type="button"
-                      className="text-primary underline"
-                      onClick={() => setPreviewId(item.id)}
-                    >
-                      预览
-                    </button>
                     {view.canEdit && editInfo.editable && (
                       <EditDocumentButton
                         sourceType="library_item"
