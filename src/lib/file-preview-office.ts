@@ -576,7 +576,7 @@ function renderSheet(ws: XLSX.WorkSheet): Omit<SheetTable, "name"> {
 export async function excelToSheets(buf: ArrayBuffer): Promise<SheetTable[]> {
   // cellStyles 让 SheetJS 顺带解析 styles.xml（字体/底色/边框/对齐）；
   // cellNF 保留数字格式，format_cell 输出和 Excel 里看到的一致
-  if (!_xlsx) _xlsx = await (new Function("return import('xlsx')") as () => Promise<typeof XLSX>)();
+  if (!_xlsx) _xlsx = await import("xlsx");
   const wb = _xlsx.read(buf, { type: "array", cellStyles: true, cellNF: true });
   return wb.SheetNames.map((name) => ({ name, ...renderSheet(wb.Sheets[name]) }));
 }
