@@ -1,6 +1,7 @@
 "use client";
 
 import type { AssistantFile } from "@/lib/agent/assistant-panel-shared";
+import { FileTypeIcon } from "@/components/file-type-icon";
 
 /**
  * 助手消息下方的文件卡。
@@ -14,13 +15,6 @@ function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
-}
-
-function kindLabel(filename: string): string {
-  const dot = filename.lastIndexOf(".");
-  const ext = dot > 0 ? filename.slice(dot + 1).toUpperCase() : "";
-  if (!ext) return "FILE";
-  return ext.length > 4 ? ext.slice(0, 4) : ext;
 }
 
 export function AssistantFileCards({
@@ -38,12 +32,11 @@ export function AssistantFileCards({
           key={file.url}
           className="flex items-center gap-2.5 rounded-field border border-line bg-surface px-2.5 py-2 transition-colors hover:border-line-strong sm:px-3"
         >
-          <span
-            aria-hidden
-            className="grid h-9 w-9 shrink-0 place-items-center rounded bg-primary-soft text-[10px] font-bold tracking-wide text-primary"
-          >
-            {kindLabel(file.filename)}
-          </span>
+          <FileTypeIcon
+            filename={file.filename}
+            mimeType={file.mimeType}
+            className="h-9 w-9 shrink-0"
+          />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-[13px] font-medium text-ink" title={file.filename}>
               {file.filename}

@@ -1,5 +1,7 @@
 // 看板筛选态 ↔ URL query 的纯函数模块。无 IO、不取系统时钟，
 // 「今日」由调用方传入，便于单测。
+import type { TaskPriority, TaskStatus } from "@/db/schema";
+
 export type GroupBy = "status" | "assignee" | "priority" | "milestone";
 
 export type BoardFilters = {
@@ -13,10 +15,10 @@ export type BoardFilters = {
 
 export type FilterableTask = {
   assigneeId: string | null;
-  priority: string;
+  priority: TaskPriority;
   milestoneId: string | null;
   dueDate: string | null;
-  status: string;
+  status: TaskStatus;
   labels: { id: string }[];
   /**
    * 有未决的完成申请时存在：任务状态仍是 todo/doing，但在看板上归入「待审批」列。

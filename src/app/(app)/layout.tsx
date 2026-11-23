@@ -16,6 +16,7 @@ import { getTimeZonePref, resolveUserTimeZone } from "@/lib/time-pref";
 import { userAvatarUrl } from "@/lib/user";
 import { getRailCollapsed, getRailLayout } from "@/lib/dashboard-layout-store";
 import { getApproverStatus, loadDashboardData } from "@/lib/dashboard-data";
+import { listMyTeamNames } from "@/lib/team";
 import { DashboardEditProvider } from "./dashboard/dashboard-edit-context";
 import { AppRail } from "./rail/rail";
 import { ProjTheme } from "./proj-theme";
@@ -44,6 +45,7 @@ export default async function AppLayout({
       timezone: users.timezone,
       avatarUpdatedAt: users.avatarUpdatedAt,
       tutorialSeenAt: users.tutorialSeenAt,
+      showWelcome: users.showWelcome,
     })
     .from(users)
     .where(eq(users.id, session.user.id));
@@ -74,6 +76,8 @@ export default async function AppLayout({
   const railData = await loadDashboardData(session.user.id, {
     only: [...new Set(railLayout.items.map((item) => item.type))],
   });
+  // 「资源库」导航下拉需要列出我加入的团队；只带 id/name，不把邀请码等带进客户端
+  const libraryTeams = await listMyTeamNames(session.user.id);
 
   return (
     <ProjTheme>
@@ -93,7 +97,7 @@ export default async function AppLayout({
             <header className="app-topbar sticky top-0 z-20 flex items-center justify-between border-b border-line bg-surface/85 px-3 py-2 backdrop-blur sm:px-6 sm:py-3">
               <div className="flex items-center gap-2 sm:gap-6">
                 {/* 手机端：四个分区放不下（会竖排折字），收进左上角菜单 */}
-                <MobileNav />
+                <MobileNav libraryTeams={libraryTeams} />
                 {/* 徽标回欢迎页（整屏的时钟页），不是工作台 */}
                 <Link href="/welcome" className="ac-hit flex items-center gap-2">
                   <span
@@ -104,7 +108,7 @@ export default async function AppLayout({
                   </span>
                   <span className="ac-brand-word hidden font-display text-lg font-semibold text-ink sm:inline">AgileCampus</span>
                 </Link>
-                <NavLinks className="hidden sm:flex" />
+                <NavLinks className="hidden sm:flex" libraryTeams={libraryTeams} />
               </div>
               <div className="flex items-center gap-1.5 sm:gap-3">
                 <AssistantToggle />
@@ -148,6 +152,7 @@ export default async function AppLayout({
                     // 选项在服务端生成后整份传给客户端：两边各算一次会因 ICU 版本不同而不一致
                     options: listTimeZones(),
                   }}
+                  showWelcome={row?.showWelcome ?? true}
                 />
               </div>
             </header>

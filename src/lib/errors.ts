@@ -27,6 +27,26 @@ export class NotFoundError extends AppError {
   }
 }
 
+/** 文档保存版本冲突：调用方已基于旧版本编辑，必须选择覆盖/加载最新/另存。 */
+export class VersionConflictError extends AppError {
+  constructor(
+    message: string,
+    public readonly currentVersion: number,
+  ) {
+    super(message);
+  }
+}
+
+/** 单人模式锁被他人持有，或自己的锁已过期/被接管。 */
+export class DocumentLockError extends AppError {
+  constructor(
+    message: string,
+    public readonly reason: "held" | "lost" | "collaboration_enabled",
+  ) {
+    super(message);
+  }
+}
+
 // postgres 唯一键冲突。drizzle 会把驱动错误包装为 DrizzleQueryError（code 在 cause 上），故两处都查
 export function isUniqueViolation(e: unknown): boolean {
   const code = (e as { code?: string }).code ?? ((e as { cause?: { code?: string } }).cause?.code);

@@ -62,13 +62,15 @@ function doc(items: DashboardLayoutItem[]): DashboardLayoutDoc {
 }
 
 describe("卡片目录与默认布局", () => {
-  it("默认布局覆盖全部卡片，尺寸合法且互不重叠", () => {
-    // 待办审批卡不在通用默认里：它面向老师/管理员，由 defaultDashboardLayoutFor(true)
-    // 追加（学生拿了恒为空态，没意义）。这里对通用默认排除它，另测审批人默认。
-    const nonApproverIds = WIDGET_IDS.filter((id) => id !== "approvals");
-    expect(DEFAULT_DASHBOARD_LAYOUT.items).toHaveLength(nonApproverIds.length);
+  // 待办审批卡面向老师/管理员，由 defaultDashboardLayoutFor(true) 追加；
+  // 我的团队/快捷入口更偏导航，不再放进默认布局，需要时可在「添加卡片」里加入。
+  const DEFAULT_EXCLUDED = new Set(["approvals", "my_teams", "quick_links"]);
+
+  it("默认布局覆盖非导航卡片，尺寸合法且互不重叠", () => {
+    const defaultIds = WIDGET_IDS.filter((id) => !DEFAULT_EXCLUDED.has(id));
+    expect(DEFAULT_DASHBOARD_LAYOUT.items).toHaveLength(defaultIds.length);
     expect(DEFAULT_DASHBOARD_LAYOUT.items.map((item) => item.type).sort()).toEqual(
-      [...nonApproverIds].sort(),
+      [...defaultIds].sort(),
     );
     assertNoOverlap(DEFAULT_DASHBOARD_LAYOUT.items);
 
@@ -83,7 +85,7 @@ describe("卡片目录与默认布局", () => {
     }
   });
 
-  it("看板默认铺满整行、比初版高一格，辅助卡按使用频率分三排", () => {
+  it("看板默认铺满整行，辅助卡按使用率重排且不再包含导航卡", () => {
     expect(find(DEFAULT_DASHBOARD_LAYOUT, "task_board")).toMatchObject({
       x: 0,
       y: 2,
@@ -93,12 +95,22 @@ describe("卡片目录与默认布局", () => {
     // 消息卡的四个瓦片要放得下大号数字：给到 3 行高，与活动流对调一行
     expect(find(DEFAULT_DASHBOARD_LAYOUT, "unread_messages")).toMatchObject({ y: 12, h: 3 });
     expect(find(DEFAULT_DASHBOARD_LAYOUT, "activity_feed")).toMatchObject({ y: 9, h: 3 });
-    // 要盯的卡片在第一排，随手用的小工具压在最底
-    expect(find(DEFAULT_DASHBOARD_LAYOUT, "upcoming")).toMatchObject({ y: 18 });
-    expect(find(DEFAULT_DASHBOARD_LAYOUT, "milestones")).toMatchObject({ y: 18 });
-    expect(find(DEFAULT_DASHBOARD_LAYOUT, "resource_usage")).toMatchObject({ y: 18 });
+
+    // 第一排：每天最常看的截止 / 最近附件 / 里程碑
+    expect(find(DEFAULT_DASHBOARD_LAYOUT, "upcoming")).toMatchObject({ y: 18, x: 0 });
+    expect(find(DEFAULT_DASHBOARD_LAYOUT, "recent_attachments")).toMatchObject({ y: 18, x: 4 });
+    expect(find(DEFAULT_DASHBOARD_LAYOUT, "milestones")).toMatchObject({ y: 18, x: 8 });
+    // 第二排：资源库 / 资源占用 / 专注计时
+    expect(find(DEFAULT_DASHBOARD_LAYOUT, "library")).toMatchObject({ y: 21, x: 0 });
+    expect(find(DEFAULT_DASHBOARD_LAYOUT, "resource_usage")).toMatchObject({ y: 21, x: 4 });
+    expect(find(DEFAULT_DASHBOARD_LAYOUT, "focus_timer")).toMatchObject({ y: 21, x: 8 });
+    // 第三排：个人小工具
     expect(find(DEFAULT_DASHBOARD_LAYOUT, "clock")).toMatchObject({ y: 24 });
+    expect(find(DEFAULT_DASHBOARD_LAYOUT, "note")).toMatchObject({ y: 24 });
     expect(find(DEFAULT_DASHBOARD_LAYOUT, "countdown")).toMatchObject({ y: 24 });
+
+    expect(find(DEFAULT_DASHBOARD_LAYOUT, "my_teams")).toBeUndefined();
+    expect(find(DEFAULT_DASHBOARD_LAYOUT, "quick_links")).toBeUndefined();
   });
 
   it("目录 id 唯一，默认布局里只有单例卡", () => {
@@ -109,8 +121,11 @@ describe("卡片目录与默认布局", () => {
 
   it("审批人默认布局 = 通用默认 + 待办审批卡，且不与任何卡重叠", () => {
     const approverDoc = defaultDashboardLayoutFor(true);
-    expect(approverDoc.items).toHaveLength(WIDGET_IDS.length);
-    expect(approverDoc.items.map((item) => item.type).sort()).toEqual([...WIDGET_IDS].sort());
+    const approverIds = WIDGET_IDS.filter((id) => id !== "my_teams" && id !== "quick_links");
+    expect(approverDoc.items).toHaveLength(approverIds.length);
+    expect(approverDoc.items.map((item) => item.type).sort()).toEqual(
+      [...approverIds].sort(),
+    );
     expect(approverDoc.items.find((item) => item.type === "approvals")).toBeDefined();
     assertNoOverlap(approverDoc.items);
     expect(defaultDashboardLayoutFor(false)).toEqual(DEFAULT_DASHBOARD_LAYOUT);

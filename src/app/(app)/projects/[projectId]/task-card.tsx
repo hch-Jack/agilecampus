@@ -5,17 +5,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useDraggable } from "@dnd-kit/core";
 import { LABEL_COLOR_CLASS } from "@/lib/board-columns";
+import { PRIORITY_BADGE } from "@/lib/task-constants";
 import { SubtaskProgress } from "@/components/subtask-progress";
 import { RejectReasonDialog } from "@/components/reject-reason-dialog";
 import { ACTIVITY_NEW_EVENT } from "@/components/activity-feed";
 import { decideApprovalAction } from "@/app/(app)/dashboard/actions";
 import type { BoardTask } from "./board";
-
-const PRIORITY_BADGE: Record<string, string> = {
-  high: "bg-high-soft text-high",
-  medium: "bg-medium-soft text-medium",
-  low: "bg-low-soft text-low",
-};
 
 export function TaskCard({
   task,

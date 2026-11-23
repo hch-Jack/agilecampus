@@ -394,6 +394,18 @@ export async function teamContentCounts(teamId: string): Promise<TeamContentCoun
   return counts.get(teamId) ?? { ...NO_CONTENT };
 }
 
+/** 顶栏资源库下拉用：只要 id/name，不跑内容计数 */
+export async function listMyTeamNames(
+  userId: string,
+): Promise<{ id: string; name: string }[]> {
+  return db
+    .select({ id: teams.id, name: teams.name })
+    .from(teamMembers)
+    .innerJoin(teams, eq(teamMembers.teamId, teams.id))
+    .where(eq(teamMembers.userId, userId))
+    .orderBy(teams.name);
+}
+
 /** 我的团队列表（含各团队的内容计数），供 /teams 一屏渲染。 */
 export async function listMyTeams(userId: string) {
   const rows = await db

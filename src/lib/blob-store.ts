@@ -116,6 +116,37 @@ export async function saveBlobFromStream(
   }
 }
 
+/**
+ * 把内存里的字节写成一份新磁盘 blob（在线文档保存用）。
+ * 与 `saveBlobFromStream` 一样先写 `.part` 再 rename，失败时清掉半成品；
+ * 不做原地覆盖——旧 blob 留给版本历史。
+ */
+export async function saveBlobFromBuffer(
+  data: Buffer,
+  maxSize: number = MAX_FILE_SIZE,
+): Promise<{ storageKey: string; size: number }> {
+  if (!data || data.length === 0) throw new AppError("不能保存空文件");
+  if (data.length > maxSize) throw new AppError(`文件不能超过 ${MAX_FILE_SIZE_LABEL}`);
+
+  const storageKey = newKey();
+  const dir = path.join(uploadRoot(), storageKey.slice(0, 2));
+  await mkdir(dir, { recursive: true });
+  const finalPath = path.join(uploadRoot(), storageKey);
+  const partPath = `${finalPath}.part`;
+
+  const handle = await open(partPath, "w");
+  try {
+    await handle.write(data);
+    await handle.close();
+    await rename(partPath, finalPath);
+    return { storageKey, size: data.length };
+  } catch (e) {
+    await handle.close().catch(() => {});
+    await unlink(partPath).catch(() => {});
+    throw e;
+  }
+}
+
 /** 复制一份磁盘 blob（新键）。源不存在 → 「文件不存在」 */
 export async function copyBlob(
   sourceKey: string,

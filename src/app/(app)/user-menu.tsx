@@ -3,7 +3,12 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import type { TimeZoneOption } from "@/lib/time";
-import { deleteAccountAction, markTutorialSeenAction, signOutAction } from "./actions";
+import {
+  deleteAccountAction,
+  markTutorialSeenAction,
+  setShowWelcomeAction,
+  signOutAction,
+} from "./actions";
 import { FeishuModal } from "./user-menu/feishu-modal";
 import { ProfileModal } from "./user-menu/profile-modal";
 import { TimezoneModal } from "./user-menu/timezone-modal";
@@ -30,6 +35,7 @@ export function UserMenu({
   feishu,
   timezone,
   tutorial,
+  showWelcome: initialShowWelcome,
 }: {
   profile: {
     name: string;
@@ -40,8 +46,11 @@ export function UserMenu({
   feishu: { boundName: string | null; boundAtLabel: string | null };
   timezone: { pref: string; options: TimeZoneOption[] };
   tutorial: { autoOpen: boolean };
+  showWelcome: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(initialShowWelcome);
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
   // 教程自动弹出走 useState 初值而非 effect：初值来自服务端给的 props，effect 里同步
   // setState 会造成级联渲染（react-hooks/set-state-in-effect）。
   const [modal, setModal] = useState<ModalKind | null>(tutorial.autoOpen ? "tutorial" : null);
@@ -52,6 +61,7 @@ export function UserMenu({
   const [deletePending, setDeletePending] = useState(false);
   const mounted = useSyncExternalStore(subscribeNoop, () => true, () => false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   // 首次登录弹出即标记已看过（幂等，见 actions）；中途关掉浏览器也不会下次再弹——
   // 回看走「设置 → 新手教程」。
@@ -62,18 +72,34 @@ export function UserMenu({
   useEffect(() => {
     if (!open) return;
     const onPointerDown = (e: PointerEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (rootRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
+    const onViewportChange = () => setOpen(false);
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("scroll", onViewportChange, true);
+    window.addEventListener("resize", onViewportChange);
     return () => {
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("scroll", onViewportChange, true);
+      window.removeEventListener("resize", onViewportChange);
     };
   }, [open]);
+
+  async function toggleShowWelcome() {
+    const next = !showWelcome;
+    setShowWelcome(next);
+    const res = await setShowWelcomeAction(next).catch(() => ({
+      error: "保存失败，请稍后重试",
+    }));
+    if ("error" in res) setShowWelcome(!next);
+  }
 
   const openModal = (kind: ModalKind) => {
     setOpen(false);
@@ -116,7 +142,20 @@ export function UserMenu({
           aria-expanded={open}
           aria-label="设置"
           title="设置"
-          onClick={() => setOpen((v) => !v)}
+          onClick={() => {
+            if (open) {
+              setOpen(false);
+              return;
+            }
+            const rect = rootRef.current?.getBoundingClientRect();
+            if (rect) {
+              setMenuPos({
+                top: rect.bottom + 8,
+                right: Math.max(8, window.innerWidth - rect.right),
+              });
+            }
+            setOpen(true);
+          }}
           className="ac-btn-ghost grid h-10 w-10 place-items-center rounded-full p-0"
         >
           <svg
@@ -133,47 +172,79 @@ export function UserMenu({
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
           </svg>
         </button>
-        {open && (
-          <div
-            role="menu"
-            className="ac-pop-in absolute right-0 top-full z-30 mt-2 w-40 overflow-hidden rounded-field border border-line bg-surface p-1 shadow-pop"
-          >
-            {MENU_ITEMS.map((item) => (
+        {/* 菜单 portal 到 body：顶栏自身有 backdrop-blur，嵌在里面的下拉采样不到
+            页面内容；挂出去才能和资源库下拉一样有真正的毛玻璃背景 */}
+        {open &&
+          menuPos &&
+          createPortal(
+            <div
+              ref={menuRef}
+              role="menu"
+              style={{
+                top: menuPos.top,
+                right: menuPos.right,
+                transformOrigin: "top right",
+              }}
+              className="ac-pop-in fixed z-50 w-52 overflow-hidden rounded-field border border-line bg-surface/85 p-1 shadow-pop backdrop-blur"
+            >
+              {MENU_ITEMS.map((item) => (
+                <button
+                  key={item.kind}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => openModal(item.kind)}
+                  className="block w-full rounded px-3 py-2 text-left text-sm text-ink transition-colors hover:bg-sunken hover:text-primary"
+                >
+                  {item.label}
+                </button>
+              ))}
               <button
-                key={item.kind}
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={showWelcome}
+                onClick={() => void toggleShowWelcome()}
+                className="flex w-full items-center justify-between gap-3 rounded px-3 py-2 text-left text-sm text-ink transition-colors hover:bg-sunken hover:text-primary"
+              >
+                <span>登录后显示欢迎页</span>
+                <span
+                  aria-hidden
+                  className={`relative h-4 w-7 shrink-0 rounded-full transition-colors ${
+                    showWelcome ? "bg-primary" : "bg-line"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-[left] ${
+                      showWelcome ? "left-3.5" : "left-0.5"
+                    }`}
+                  />
+                </span>
+              </button>
+              <div className="my-1 h-px bg-line" />
+              <form action={signOutAction} onSubmit={() => setOpen(false)}>
+                <button
+                  type="submit"
+                  role="menuitem"
+                  className="block w-full rounded px-3 py-2 text-left text-sm text-high transition-colors hover:bg-sunken"
+                >
+                  退出登录
+                </button>
+              </form>
+              <button
                 type="button"
                 role="menuitem"
-                onClick={() => openModal(item.kind)}
-                className="block w-full rounded px-3 py-2 text-left text-sm text-ink transition-colors hover:bg-sunken hover:text-primary"
-              >
-                {item.label}
-              </button>
-            ))}
-            <div className="my-1 h-px bg-line" />
-            <form action={signOutAction} onSubmit={() => setOpen(false)}>
-              <button
-                type="submit"
-                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  setDeletePassword("");
+                  setDeleteError(null);
+                  setDeleteOpen(true);
+                }}
                 className="block w-full rounded px-3 py-2 text-left text-sm text-high transition-colors hover:bg-sunken"
               >
-                退出登录
+                注销账号
               </button>
-            </form>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setOpen(false);
-                setDeletePassword("");
-                setDeleteError(null);
-                setDeleteOpen(true);
-              }}
-              className="block w-full rounded px-3 py-2 text-left text-sm text-high transition-colors hover:bg-sunken"
-            >
-              注销账号
-            </button>
-          </div>
-        )}
+            </div>,
+            document.body,
+          )}
       </div>
 
       {/* 小窗 portal 到 body：顶栏的 backdrop-filter 会把 fixed 后代限定在顶栏盒内 */}

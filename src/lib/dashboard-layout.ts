@@ -112,6 +112,7 @@ export const WIDGET_IDS = [
   "milestones",
   "resource_usage",
   "recent_attachments",
+  "library",
   "approvals",
   "focus_timer",
   "note",
@@ -311,6 +312,13 @@ export const DASHBOARD_WIDGETS: Record<DashboardWidgetId, DashboardWidgetMeta> =
     defaultSize: { w: 4, h: 4 },
     minSize: { w: 3, h: 3 },
   },
+  library: {
+    id: "library",
+    title: "资源库",
+    description: "个人与团队资源库的文件数、最近更新与快捷入口",
+    defaultSize: { w: 3, h: 3 },
+    minSize: { w: 3, h: 3 },
+  },
   approvals: {
     id: "approvals",
     title: "待办审批",
@@ -349,19 +357,19 @@ export const DASHBOARD_WIDGETS: Record<DashboardWidgetId, DashboardWidgetMeta> =
 };
 
 /**
- * 默认布局：所有卡片都放出来，按「高频 → 辅助」从上到下铺满 12 列。
+ * 默认布局：放常用卡片，按「高频 → 辅助」从上到下铺满 12 列。
  *
  * 版式（共 27 行）：
  *   y0-1   四张统计卡
  *   y2-8   看板（整行 12 列 × 7 行）—— 三个任务列同屏，不用横向挤
  *   y9-17  日程表（8 列 × 9 行）+ 最新记录 / 消息 / 我的项目（右 4 列）
- *   y18-20 第一排辅助卡：即将到期、里程碑、资源占用（要盯的）
- *   y21-23 第二排辅助卡：最近附件、我的团队、快捷入口（查资料的）
- *   y24-26 第三排小工具：时钟、专注、便签、倒计时（随手用的）
+ *   y18-20 第一排：即将到期、最近附件、项目里程碑（每天最常看的）
+ *   y21-23 第二排：资源库、资源占用、专注计时（按需查看与随手计时）
+ *   y24-26 第三排：时钟、便签、倒计时（个人小工具）
  *
- * 三排辅助卡按使用频率从「要处理」到「随手用」排：截止 / 里程碑 / 资源在最上，
- * 个人小工具压到最底。看板吃满整行后，原先在右侧的活动流、消息、我的项目
- * 下移到日程表右侧，仍然贴着首屏。
+ * 默认不再放「我的团队」「快捷入口」——这两张更偏导航，需要时可在「添加卡片」
+ * 里自行加入。辅助卡按可能的使用率从高到低排，个人小工具压到最底；
+ * 看板吃满整行后，活动流 / 消息 / 我的项目仍贴在日程表右侧。
  */
 const DEFAULT_ITEMS: DashboardLayoutItem[] = [
   { id: "stat_overdue", type: "stat_overdue", x: 0, y: 0, w: 3, h: 2 },
@@ -375,15 +383,14 @@ const DEFAULT_ITEMS: DashboardLayoutItem[] = [
   { id: "unread_messages", type: "unread_messages", x: 8, y: 12, w: 4, h: 3 },
   { id: "my_projects", type: "my_projects", x: 8, y: 15, w: 4, h: 3 },
   { id: "upcoming", type: "upcoming", x: 0, y: 18, w: 4, h: 3 },
-  { id: "milestones", type: "milestones", x: 4, y: 18, w: 4, h: 3 },
-  { id: "resource_usage", type: "resource_usage", x: 8, y: 18, w: 4, h: 3 },
-  { id: "recent_attachments", type: "recent_attachments", x: 0, y: 21, w: 4, h: 3 },
-  { id: "my_teams", type: "my_teams", x: 4, y: 21, w: 4, h: 3 },
-  { id: "quick_links", type: "quick_links", x: 8, y: 21, w: 4, h: 3 },
-  { id: "clock", type: "clock", x: 0, y: 24, w: 3, h: 3 },
-  { id: "focus_timer", type: "focus_timer", x: 3, y: 24, w: 3, h: 3 },
-  { id: "note", type: "note", x: 6, y: 24, w: 3, h: 3 },
-  { id: "countdown", type: "countdown", x: 9, y: 24, w: 3, h: 3 },
+  { id: "recent_attachments", type: "recent_attachments", x: 4, y: 18, w: 4, h: 3 },
+  { id: "milestones", type: "milestones", x: 8, y: 18, w: 4, h: 3 },
+  { id: "library", type: "library", x: 0, y: 21, w: 4, h: 3 },
+  { id: "resource_usage", type: "resource_usage", x: 4, y: 21, w: 4, h: 3 },
+  { id: "focus_timer", type: "focus_timer", x: 8, y: 21, w: 4, h: 3 },
+  { id: "clock", type: "clock", x: 0, y: 24, w: 4, h: 3 },
+  { id: "note", type: "note", x: 4, y: 24, w: 4, h: 3 },
+  { id: "countdown", type: "countdown", x: 8, y: 24, w: 4, h: 3 },
 ];
 
 export const DEFAULT_DASHBOARD_LAYOUT: DashboardLayoutDoc = { v: 1, items: DEFAULT_ITEMS };

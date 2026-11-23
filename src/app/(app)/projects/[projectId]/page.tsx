@@ -15,6 +15,8 @@ import {
 } from "@/lib/approval";
 import { getMyPermissions } from "@/lib/team-permissions";
 import { countProjectAttachments } from "@/lib/attachment";
+import { listPropertyDefs } from "@/lib/properties";
+import { parseDbFilters, applyDbFilters } from "@/lib/task-database-filters";
 import { AcceptanceControl } from "./acceptance-control";
 import { parseFilters, applyFilters } from "@/lib/board-filters";
 import { todayIn } from "@/lib/time";
@@ -24,6 +26,7 @@ import { MilestoneSection } from "./milestone-section";
 import { NewTaskForm } from "./new-task-form";
 import { ProjectOverview } from "./project-overview";
 import { TaskDatabase } from "./task-database";
+import { TaskDatabaseFilterBar } from "./task-database-filter-bar";
 import { Board } from "./board";
 import { FilterBar } from "./filter-bar";
 import { ProjectCommentList } from "./project-comment-list";
@@ -54,6 +57,7 @@ export default async function ProjectPage({
     teamLabels,
     projectBoardComments,
     attachmentCount,
+    propertyDefs,
   ] = await Promise.all([
     listProjectMilestones(session.user.id, projectId),
     listProjectTasks(session.user.id, projectId),
@@ -63,7 +67,11 @@ export default async function ProjectPage({
     listTeamLabels(session.user.id, project.teamId),
     listProjectBoardComments(session.user.id, projectId),
     countProjectAttachments(projectId),
+    listPropertyDefs(session.user.id, projectId),
   ]);
+
+  // 任务数据库（只读总览表）的按类型筛选：URL dbf 参数 → 点选式筛选态
+  const dbFilters = parseDbFilters(typeof sp.dbf === "string" ? sp.dbf : null);
 
   const filters = parseFilters(
     new URLSearchParams(
@@ -78,6 +86,20 @@ export default async function ProjectPage({
   const now = new Date();
   const today = todayIn(tz, now);
   const visibleTasks = applyFilters(projectTasks, filters, today);
+  // 任务数据库的过滤（看板同款点选式：「仅看逾期」需要 today 口径一致）
+  const dbTasks = applyDbFilters(
+    projectTasks,
+    dbFilters,
+    {
+      defs: new Map(
+        propertyDefs.map((d) => [
+          d.id,
+          { type: d.type, optionIds: (d.options ?? []).map((o) => o.id) },
+        ]),
+      ),
+    },
+    today,
+  );
   // 看板只摆顶层任务：子任务不单独成卡，改为父卡底部的进度条。
   // 进度按项目全量子任务聚合，不受筛选影响（筛选的是父任务卡片）。
   const { topLevel, progress } = splitBoardTasks(projectTasks);
@@ -106,7 +128,7 @@ export default async function ProjectPage({
           <h1 className="min-w-0 font-display text-2xl font-semibold text-ink">
             {project.name}
           </h1>
-          <div className="flex shrink-0 items-center gap-2.5">
+          <div className="flex flex-wrap items-center gap-2.5">
             <Link
               href={`/projects/${projectId}/timeline`}
               className="ac-btn-ghost proj-nav-link whitespace-nowrap"
@@ -125,6 +147,41 @@ export default async function ProjectPage({
                 <path d="M4.5 8h2M9.5 8h2" />
               </svg>
               时间线
+            </Link>
+            <Link
+              href={`/projects/${projectId}/burndown`}
+              className="ac-btn-ghost whitespace-nowrap"
+            >
+              <svg
+                viewBox="0 0 16 16"
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                aria-hidden="true"
+              >
+                <path d="M2 3.5h12M2 12.5h12" />
+                <path d="M3 4.5v3M6 4.5v1M9.5 4.5v6.5M13 4.5v2" />
+              </svg>
+              燃尽图
+            </Link>
+            <Link
+              href={`/projects/${projectId}/contributors`}
+              className="ac-btn-ghost whitespace-nowrap"
+            >
+              <svg
+                viewBox="0 0 16 16"
+                className="h-3.5 w-3.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                aria-hidden="true"
+              >
+                <circle cx="5.5" cy="5" r="2.2" />
+                <circle cx="11" cy="6.5" r="1.7" />
+                <path d="M2 13c.4-2.2 1.8-3.4 3.5-3.4S8.6 10.8 9 13M10 12.6c.3-1.5 1.2-2.4 2.5-2.4 1 0 1.9.6 2.4 1.8" />
+              </svg>
+              贡献度
             </Link>
             <Link
               href={`/projects/${projectId}/graph`}
@@ -163,6 +220,12 @@ export default async function ProjectPage({
                 <path d="M6 4.2h2.2v3.8H10M6 11.8h2.2V7.9H10" />
               </svg>
               流程图
+            </Link>
+            <Link
+              href={`/teams/${project.teamId}/library`}
+              className="ac-btn-ghost whitespace-nowrap"
+            >
+              团队资源库
             </Link>
           </div>
         </div>
@@ -252,12 +315,27 @@ export default async function ProjectPage({
       </section>
 
       {/* 任务数据库：Notion 数据库式的任务总览（只读，操作在看板/详情页） */}
-      <TaskDatabase
-        projectId={projectId}
-        tasks={projectTasks}
-        milestones={projectMilestones.map((m) => ({ id: m.id, title: m.title }))}
-        progress={progress}
-      />
+      {/* 任务数据库：Notion 式只读总览表 + 按类型筛选（URL dbf 参数，服务端过滤） */}
+      <section className="space-y-2">
+        <TaskDatabaseFilterBar
+          defs={propertyDefs.map((d) => ({
+            id: d.id,
+            name: d.name,
+            type: d.type,
+            options: d.options,
+          }))}
+          members={members.map((m) => ({ id: m.id, name: m.name }))}
+          milestones={projectMilestones.map((m) => ({ id: m.id, title: m.title }))}
+          labels={teamLabels.map((l) => ({ id: l.id, name: l.name, color: l.color }))}
+        />
+        <TaskDatabase
+          projectId={projectId}
+          tasks={dbTasks}
+          milestones={projectMilestones.map((m) => ({ id: m.id, title: m.title }))}
+          progress={progress}
+          total={projectTasks.length}
+        />
+      </section>
 
       {/* 新建任务与附件中心并排一行：任务卡收窄，附件中心做固定宽度的入口卡 */}
       <div

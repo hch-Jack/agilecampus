@@ -8,6 +8,9 @@ import {
   renderMimeFor,
 } from "@/lib/file-preview";
 import type { SheetTable } from "@/lib/file-preview-office";
+import { detectEditableFormat } from "@/lib/documents/format";
+import { EditDocumentButton } from "@/components/documents/edit-document-button";
+import { FileTypeIcon } from "@/components/file-type-icon";
 
 /** 预览目标：url 是现成的下载路由（带会话鉴权），组件内按需取内容 */
 export type PreviewFile = {
@@ -16,6 +19,81 @@ export type PreviewFile = {
   mimeType?: string | null;
   size: number;
 };
+
+export type PreviewVersionOption = {
+  version: number;
+  filename: string;
+  mimeType: string | null;
+  size: number;
+  note: string;
+  origin?: string;
+  creatorName: string | null;
+  createdAt: string;
+  /** 服务端按用户时区格式化好的时间；缺省时用浏览器本地时区 */
+  createdAtLabel?: string;
+};
+
+export type PreviewOperationOption = {
+  id: string;
+  actorName: string;
+  type: string;
+  newValue: string | null;
+  note: string | null;
+  createdAt: string;
+  createdAtLabel?: string;
+};
+
+export type PreviewVersionSidebar = {
+  versions: PreviewVersionOption[];
+  activeVersion: number;
+  currentVersion: number;
+  canRestore: boolean;
+  busy?: boolean;
+  operations: PreviewOperationOption[];
+  onSelectVersion: (version: number) => void;
+  onRestore: (version: number) => void;
+  onDeleteVersion?: (version: number) => void;
+};
+
+const VERSION_NOTE_LABEL: Record<string, string> = {
+  initial: "初始",
+  import: "首次汇总",
+  sync: "来源同步",
+  upload: "上传",
+  manual: "手动保存",
+  autosave: "自动保存",
+  restore: "恢复",
+  save_as: "另存为",
+};
+
+const OPERATION_LABEL: Record<string, string> = {
+  item_created: "创建了文件",
+  item_uploaded: "上传了文件",
+  item_imported: "汇总了文件",
+  item_synced: "同步了文件",
+  item_renamed: "重命名了文件",
+  item_moved: "移动了文件",
+  item_deleted: "删除了文件",
+  version_created: "保存了新版本",
+  version_deleted: "删除了历史版本",
+  version_restored: "恢复了历史版本",
+  version_synced: "从来源同步了新版本",
+  document_saved: "在线编辑保存",
+  document_saved_as: "另存为资源库文件",
+  document_collaboration_changed: "切换了协作模式",
+  document_editor_granted: "授予了编辑权",
+  document_editor_revoked: "撤销了编辑权",
+  folder_created: "新建了文件夹",
+  folder_renamed: "重命名了文件夹",
+  folder_deleted: "删除了文件夹",
+  live_follow_detached: "停止跟随来源",
+};
+
+function fmtWhen(value: string): string {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("zh-CN", { hour12: false });
+}
 
 function fmtSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -67,8 +145,21 @@ function extOf(filename: string): string {
  * 统一版式：所有类型共用一个接近全屏的弹窗（96vw × 92vh），内容区撑满，
  * 不再为 PPT/文档留一个只够显示一条的窄条。
  */
-export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose: () => void }) {
+export function FilePreviewModal({
+  file,
+  onClose,
+  edit,
+  versionSidebar,
+}: {
+  file: PreviewFile;
+  onClose: () => void;
+  /** 任务附件/项目附件中心传入来源；私信、助手文件保持只读 */
+  edit?: { sourceType: string; sourceId: string } | null;
+  /** 资源库文件：右侧历史版本 + 操作日志 */
+  versionSidebar?: PreviewVersionSidebar | null;
+}) {
   const kind = detectPreviewKind(file.filename, file.mimeType);
+  const editInfo = edit ? detectEditableFormat(file.filename, file.mimeType, file.size) : null;
   const renderMime = renderMimeFor(file.filename, file.mimeType);
 
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
@@ -82,6 +173,8 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
   const [pptWidth, setPptWidth] = useState(0);
   const [pptReady, setPptReady] = useState(false);
   const [error, setError] = useState("");
+  const [sideTab, setSideTab] = useState<"versions" | "operations">("versions");
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   // Word：docx-preview 直接往 body 容器建 DOM，样式写进 style 容器（卸载即清空）
   const wordBodyRef = useRef<HTMLDivElement>(null);
@@ -258,7 +351,7 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3 sm:p-5"
+      className="ac-backdrop-in fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3 sm:p-5"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
@@ -267,17 +360,40 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
       {/* 宇宙主题的 --color-surface 只有 45% 不透明度，弹窗会透出星空与页面文字；
           project.css 给 .ac-file-preview 单独压厚（浅色主题仍是纯白 surface） */}
       <div
-        className="ac-file-preview flex h-[92vh] max-h-[1000px] w-[min(96vw,1440px)] flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-2xl"
+        className="ac-file-preview ac-modal-in relative flex h-[92vh] max-h-[1000px] w-[min(96vw,1440px)] flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2 sm:px-4 sm:py-2.5">
-          <span className="shrink-0 rounded bg-sunken px-1.5 py-0.5 text-[11px] text-ink-soft">
-            {kindLabel(kind)}
-          </span>
+          <FileTypeIcon
+            filename={file.filename}
+            mimeType={file.mimeType}
+            className="h-5 w-5 shrink-0"
+            title={kindLabel(kind)}
+          />
           <span className="min-w-0 flex-1 truncate text-sm font-semibold text-ink" title={file.filename}>
             {file.filename}
           </span>
           <span className="hidden shrink-0 text-xs text-ink-faint sm:inline">{fmtSize(file.size)}</span>
+          {edit && editInfo?.editable && (
+            <EditDocumentButton sourceType={edit.sourceType} sourceId={edit.sourceId} />
+          )}
+          {edit && editInfo && !editInfo.editable && (
+            <span
+              className="hidden shrink-0 text-[11px] text-ink-faint sm:inline"
+              title={editInfo.reason}
+            >
+              不支持在线编辑
+            </span>
+          )}
+          {versionSidebar && (
+            <button
+              type="button"
+              onClick={() => setDrawerOpen(true)}
+              className="ac-btn-ghost shrink-0 px-2 py-1 text-xs lg:hidden"
+            >
+              版本
+            </button>
+          )}
           {downloadBtn}
           <button
             type="button"
@@ -289,7 +405,8 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
           </button>
         </header>
 
-        <div className="relative flex min-h-0 flex-1 flex-col bg-sunken">
+        <div className="flex min-h-0 flex-1">
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-sunken">
           {kind === "image" && (
             <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-3">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -413,9 +530,11 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
           {kind === "unsupported" && (
             <div className="grid min-h-0 flex-1 place-items-center p-6">
               <div className="text-center">
-                <p className="text-4xl" aria-hidden>
-                  📄
-                </p>
+                <FileTypeIcon
+                  filename={file.filename}
+                  mimeType={file.mimeType}
+                  className="mx-auto h-14 w-14"
+                />
                 <p className="mt-2 text-sm text-ink-soft">{unsupportedHint}</p>
                 <div className="mt-3">{downloadBtn}</div>
               </div>
@@ -436,8 +555,158 @@ export function FilePreviewModal({ file, onClose }: { file: PreviewFile; onClose
               </div>
             </div>
           )}
+          </div>
+
+          {versionSidebar && (
+            <aside className="hidden w-72 shrink-0 overflow-y-auto border-l border-line bg-surface p-3 lg:block">
+              <VersionSidebarPanel
+                sidebar={versionSidebar}
+                tab={sideTab}
+                onTab={setSideTab}
+              />
+            </aside>
+          )}
         </div>
+
+        {versionSidebar && drawerOpen && (
+          <div className="absolute inset-0 z-20 overflow-y-auto bg-surface p-4 lg:hidden">
+            <div className="mb-2 flex justify-end">
+              <button
+                type="button"
+                className="ac-btn-ghost px-2.5 py-1 text-xs"
+                onClick={() => setDrawerOpen(false)}
+              >
+                关闭
+              </button>
+            </div>
+            <VersionSidebarPanel
+              sidebar={versionSidebar}
+              tab={sideTab}
+              onTab={setSideTab}
+            />
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+function VersionSidebarPanel({
+  sidebar,
+  tab,
+  onTab,
+}: {
+  sidebar: PreviewVersionSidebar;
+  tab: "versions" | "operations";
+  onTab: (tab: "versions" | "operations") => void;
+}) {
+  return (
+    <div>
+      <div className="flex gap-1">
+        <button
+          type="button"
+          onClick={() => onTab("versions")}
+          className={`flex-1 rounded-field px-2 py-1 text-xs ${
+            tab === "versions"
+              ? "bg-primary text-white"
+              : "border border-line bg-surface text-ink-soft hover:border-primary"
+          }`}
+        >
+          历史版本
+        </button>
+        <button
+          type="button"
+          onClick={() => onTab("operations")}
+          className={`flex-1 rounded-field px-2 py-1 text-xs ${
+            tab === "operations"
+              ? "bg-primary text-white"
+              : "border border-line bg-surface text-ink-soft hover:border-primary"
+          }`}
+        >
+          操作日志
+        </button>
+      </div>
+
+      {tab === "versions" ? (
+        <ul className="mt-3 space-y-2">
+          {sidebar.versions.map((v) => {
+            const active = v.version === sidebar.activeVersion;
+            const latest = v.version === sidebar.currentVersion;
+            return (
+              <li
+                key={v.version}
+                className={`rounded-field border p-2 text-xs ${
+                  active ? "border-primary bg-primary-soft/40" : "border-line"
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => sidebar.onSelectVersion(v.version)}
+                  className="block w-full text-left"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span className="font-medium text-ink">v{v.version}</span>
+                    {latest && (
+                      <span className="ac-badge bg-done/10 text-done">最新</span>
+                    )}
+                    <span className="text-ink-faint">
+                      {VERSION_NOTE_LABEL[v.note] ?? v.note}
+                    </span>
+                  </span>
+                  <span className="mt-1 block truncate text-ink-faint">
+                    {v.creatorName ?? "未知用户"} · {fmtSize(v.size)} ·{" "}
+                    {v.createdAtLabel ?? fmtWhen(v.createdAt)}
+                  </span>
+                </button>
+                {!latest && sidebar.canRestore && (
+                  <div className="mt-1.5 flex gap-2">
+                    <button
+                      type="button"
+                      disabled={sidebar.busy}
+                      onClick={() => sidebar.onRestore(v.version)}
+                      className="text-primary underline disabled:opacity-50"
+                    >
+                      恢复此版本
+                    </button>
+                    {sidebar.onDeleteVersion && (
+                      <button
+                        type="button"
+                        disabled={sidebar.busy}
+                        onClick={() => sidebar.onDeleteVersion!(v.version)}
+                        className="text-high underline disabled:opacity-50"
+                      >
+                        删除
+                      </button>
+                    )}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+          {sidebar.versions.length === 0 && (
+            <p className="text-xs text-ink-faint">还没有历史版本。</p>
+          )}
+        </ul>
+      ) : (
+        <ul className="mt-3 space-y-2">
+          {sidebar.operations.map((op) => (
+            <li key={op.id} className="rounded-field border border-line p-2 text-xs">
+              <p className="text-ink">
+                <span className="font-medium">{op.actorName}</span>{" "}
+                {OPERATION_LABEL[op.type] ?? op.type}
+                {op.newValue ? `「${op.newValue}」` : ""}
+              </p>
+              <p className="mt-0.5 text-ink-faint">
+                {op.note ? `${op.note} · ` : ""}
+                {op.createdAtLabel ?? fmtWhen(op.createdAt)}
+              </p>
+            </li>
+          ))}
+          {sidebar.operations.length === 0 && (
+            <p className="text-xs text-ink-faint">暂无操作记录。</p>
+          )}
+        </ul>
+      )}
     </div>
   );
 }

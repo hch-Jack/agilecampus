@@ -173,5 +173,26 @@ describe("时间列的物理 schema 没有变（db:push 不该产生 ALTER）", 
     expect(getTableColumns(schema.systemMessages).readAt.hasDefault).toBe(false);
     // 项目留言板：行创建由库写（dbTimestampNow，默认值必须在）
     expect(getTableColumns(schema.projectComments).createdAt.hasDefault).toBe(true);
+    // 在线文档：创建/更新时刻由库写；版本与授权行创建随行写
+    expect(getTableColumns(schema.documents).createdAt.hasDefault).toBe(true);
+    expect(getTableColumns(schema.documents).updatedAt.hasDefault).toBe(true);
+    expect(getTableColumns(schema.documentVersions).createdAt.hasDefault).toBe(true);
+    expect(getTableColumns(schema.documentEditors).createdAt.hasDefault).toBe(true);
+    // 编辑锁：获取时刻由库写；过期时刻由应用算（不能有默认值）
+    expect(getTableColumns(schema.documentLocks).acquiredAt.hasDefault).toBe(true);
+    expect(getTableColumns(schema.documentLocks).expiresAt.hasDefault).toBe(false);
+    // 资源库：创建/更新时刻随行由库写；同步水位由应用显式写（不能有默认值）
+    expect(getTableColumns(schema.libraries).createdAt.hasDefault).toBe(true);
+    expect(getTableColumns(schema.libraries).updatedAt.hasDefault).toBe(true);
+    expect(getTableColumns(schema.libraries).lastSyncedAt.hasDefault).toBe(false);
+    expect(getTableColumns(schema.libraryFolders).createdAt.hasDefault).toBe(true);
+    expect(getTableColumns(schema.libraryFolders).updatedAt.hasDefault).toBe(true);
+    expect(getTableColumns(schema.libraryItems).createdAt.hasDefault).toBe(true);
+    expect(getTableColumns(schema.libraryItems).updatedAt.hasDefault).toBe(true);
+    expect(getTableColumns(schema.libraryVersions).createdAt.hasDefault).toBe(true);
+    expect(getTableColumns(schema.librarySourceLinks).createdAt.hasDefault).toBe(true);
+    expect(getTableColumns(schema.librarySourceLinks).updatedAt.hasDefault).toBe(true);
+    expect(getTableColumns(schema.librarySourceLinks).lastSyncedAt.hasDefault).toBe(false);
+    expect(getTableColumns(schema.libraryOperations).createdAt.hasDefault).toBe(true);
   });
 });

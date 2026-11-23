@@ -15,18 +15,14 @@ import {
   type TaskStatus,
 } from "@/db/schema";
 import { AppError, ApprovalRequestedError, ForbiddenError } from "./errors";
+import { PRIORITY_TEXT, STATUS_TEXT, TASK_WRITE_ROLES } from "./task-constants";
+import { resolveTaskPropertyValues, applyTaskProperties } from "./properties";
 import { getTeamMembership } from "./team";
 import { getProjectForUser, validateDateRange } from "./project";
 import { notifyTaskAssigned, notifyTaskCompleted } from "./notify";
 import { recordTaskActivity } from "./activity";
 import { requestTaskCompletion, withdrawTaskApprovals } from "./approval";
-
-// 任务写操作角色：admin + student（teacher 只读，设计文档 §5）
-const TASK_WRITE_ROLES = ["admin", "student"];
-
-// 动态展示文本：状态/优先级转中文，值存展示文本而非枚举，读端免映射
-const STATUS_TEXT: Record<TaskStatus, string> = { todo: "待办", doing: "进行中", done: "已完成" };
-const PRIORITY_TEXT: Record<TaskPriority, string> = { low: "低", medium: "中", high: "高" };
+import { collectTaskTreeBlobKeys, deleteBlobIfUnreferenced } from "./documents/blobs";
 
 // 动态值统一截断，空值归一为「无」
 function activityText(v: string | null | undefined, fallback = "无") {
@@ -112,6 +108,8 @@ export async function createTask(
     parentTaskId?: string;
     /** 完成是否需要审批；缺省 true（沿用既有审批口径） */
     requireApproval?: boolean;
+    /** 任务数据库自定义属性初始值（键=属性 id）。校验/合并收口在 lib/properties.ts */
+    properties?: Record<string, unknown>;
   },
   opts?: { tx?: DbTx },
 ) {
@@ -121,6 +119,11 @@ export async function createTask(
   if (input.milestoneId) await validateMilestone(projectId, input.milestoneId);
   if (input.parentTaskId) await validateParentTask(projectId, input.parentTaskId);
   validateTaskDates(access.project, input.startDate, input.dueDate);
+  // 属性值在建任务前先校验：非法值整个 createTask 报错，不留半截任务
+  const resolvedProps =
+    input.properties && Object.keys(input.properties).length > 0
+      ? await resolveTaskPropertyValues(projectId, access.project.teamId, input.properties)
+      : null;
 
   const [task] = await exec
     .insert(tasks)
@@ -142,6 +145,9 @@ export async function createTask(
 
   // 动态：创建记录（传入事务 exec 时同事务写入）
   await recordTaskActivity(exec, [{ taskId: task.id, actorId, type: "created" }]);
+
+  // 自定义属性初始值：建任务后键级合并（初始值不记动态，创建记录已覆盖）
+  if (resolvedProps) await applyTaskProperties(exec, task.id, resolvedProps);
 
   // 非事务路径：即时通知（fire-and-forget，通知内部已吞异常）。事务路径由调用方提交后补发。
   if (!opts?.tx && task.assigneeId) void notifyTaskAssigned(task);
@@ -356,7 +362,11 @@ export async function deleteTask(actorId: string, taskId: string) {
     await recordTaskActivity(db, [
       { taskId: task.parentTaskId, actorId, type: "subtask_deleted", newValue: task.title },
     ]);
+
+  // 级联删除会带走附件/文档行，但磁盘 blob 不会自己消失：先收集再清理
+  const blobKeys = await collectTaskTreeBlobKeys(taskId).catch(() => []);
   await db.delete(tasks).where(eq(tasks.id, taskId));
+  for (const key of blobKeys) await deleteBlobIfUnreferenced(key);
 }
 
 export type TaskLabel = { id: string; name: string; color: string };
@@ -406,6 +416,7 @@ export async function listProjectTasks(actorId: string, projectId: string) {
       updatedAt: tasks.updatedAt,
       completionNote: tasks.completionNote,
       requireApproval: tasks.requireApproval,
+      properties: tasks.properties,
     })
     .from(tasks)
     .leftJoin(users, eq(tasks.assigneeId, users.id))
