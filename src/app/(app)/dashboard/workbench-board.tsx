@@ -10,6 +10,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import Link from "next/link";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { PRIORITY_BADGE } from "@/lib/task-constants";
 import {
@@ -522,18 +523,23 @@ export function WorkbenchBoard({
       {historyOpen && (
         <ApprovalHistoryModal timeZone={timeZone} onClose={() => setHistoryOpen(false)} />
       )}
-      <DragOverlay dropAnimation={null}>
-        {activeTask ? (
-          <div
-            className={`ac-card workbench-card proj-card proj-ghost w-[262px] p-3 text-sm ${
-              isOverdueTask(activeTask, today) ? "is-overdue" : ""
-            }`}
-            style={dragWidth ? { width: dragWidth } : undefined}
-          >
-            <WorkbenchCardBody task={activeTask} today={today} />
-          </div>
-        ) : null}
-      </DragOverlay>
+      {/* 工作台网格会对卡片做缩放/3D 变换：浮层留在原地会被祖先的 transform
+          一起缩放，看起来不跟手。portal 到 body 后与项目看板一样跟随鼠标。 */}
+      {activeTask &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <DragOverlay dropAnimation={null}>
+            <div
+              className={`ac-card workbench-card proj-card proj-ghost w-[262px] p-3 text-sm ${
+                isOverdueTask(activeTask, today) ? "is-overdue" : ""
+              }`}
+              style={dragWidth ? { width: dragWidth } : undefined}
+            >
+              <WorkbenchCardBody task={activeTask} today={today} />
+            </div>
+          </DragOverlay>,
+          document.body,
+        )}
     </DndContext>
   );
 }
