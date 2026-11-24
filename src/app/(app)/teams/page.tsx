@@ -1,10 +1,7 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { listMyTeams } from "@/lib/team";
-import { RoleBadge } from "@/components/badges";
-import { DissolveTeamForm } from "./dissolve-team-form";
-import { ExitTeamForm } from "./exit-team-form";
+import { TeamDirectory, type TeamDirectoryRow } from "./team-directory";
 import { TeamForms } from "./team-forms";
 
 export default async function TeamsPage() {
@@ -12,62 +9,17 @@ export default async function TeamsPage() {
   if (!session?.user) redirect("/login");
 
   const myTeams = await listMyTeams(session.user.id);
+  // 页面只把数据交给客户端筛选组件；Date 先转 ISO，跨 RSC 边界更稳妥
+  const teams: TeamDirectoryRow[] = myTeams.map((t) => ({
+    ...t,
+    createdAt: t.createdAt.toISOString(),
+  }));
 
   return (
-    <main className="mx-auto max-w-2xl space-y-8 py-5 sm:py-8">
+    <main className="mx-auto max-w-5xl space-y-8 py-5 sm:py-8">
       <h1 className="font-display text-2xl font-semibold text-ink">我的团队</h1>
-      {myTeams.length === 0 ? (
-        <div className="ac-card p-8 text-center text-sm text-ink-soft">
-          尚未加入任何团队——在下方创建一个，或凭邀请码加入。
-        </div>
-      ) : (
-        <ul className="space-y-3">
-          {myTeams.map((t) => (
-            <li key={t.id} className="ac-card p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate font-display text-base font-semibold text-ink">
-                      {t.name}
-                    </span>
-                    <RoleBadge role={t.role} />
-                  </div>
-                  <p className="mt-1 text-xs text-ink-faint">
-                    邀请码 <span className="font-mono text-ink-soft">{t.inviteCode}</span>
-                  </p>
-                </div>
-              </div>
-              <div className="mt-3 flex flex-wrap gap-2 border-t border-line pt-3">
-                <Link href={`/teams/${t.id}/projects`} className="ac-btn-ghost">
-                  项目
-                </Link>
-                <Link href={`/teams/${t.id}/library`} className="ac-btn-ghost">
-                  资源库
-                </Link>
-                <Link href={`/teams/${t.id}/resources`} className="ac-btn-ghost">
-                  资源占用
-                </Link>
-                <Link href={`/teams/${t.id}/members`} className="ac-btn-ghost">
-                  成员管理
-                </Link>
-                <Link href={`/teams/${t.id}/labels`} className="ac-btn-ghost">
-                  标签
-                </Link>
-                <Link href={`/teams/${t.id}/permissions`} className="ac-btn-ghost">
-                  权限管理
-                </Link>
-              </div>
-              {/* 解散/退出按钮统一放在卡片右下角，成员页内不再出现 */}
-              {t.role === "admin" ? (
-                <DissolveTeamForm teamId={t.id} teamName={t.name} counts={t.counts} />
-              ) : (
-                <ExitTeamForm teamId={t.id} teamName={t.name} />
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
       <TeamForms />
+      <TeamDirectory teams={teams} />
     </main>
   );
 }

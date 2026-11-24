@@ -414,6 +414,7 @@ export async function listMyTeams(userId: string) {
       name: teams.name,
       inviteCode: teams.inviteCode,
       role: teamMembers.role,
+      createdAt: teams.createdAt,
     })
     .from(teamMembers)
     .innerJoin(teams, eq(teamMembers.teamId, teams.id))

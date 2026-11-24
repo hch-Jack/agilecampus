@@ -685,6 +685,7 @@ describe("listMyTeams / teamContentCounts", () => {
     const [row] = await listMyTeams(owner.id);
     expect(row.id).toBe(team.id);
     expect(row.role).toBe("admin");
+    expect(row.createdAt).toBeInstanceOf(Date);
     expect(row.counts).toEqual({ projects: 1, milestones: 1, tasks: 1, members: 2 });
   });
 
