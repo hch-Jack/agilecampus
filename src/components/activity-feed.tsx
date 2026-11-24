@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { dateIn } from "@/lib/time";
 import { clearFeedAction, deleteActivityAction, markFeedReadAction } from "@/app/(app)/actions";
+import { ConfirmDangerDialog } from "@/components/confirm-danger-dialog";
 
 // 看板拖拽成功后的广播事件：detail 携带动态流 scope（"workbench" 或 "project:<id>"），
 // 最新记录模块据此立即未读 +1。scope 字面量与 lib/activity 的 WORKBENCH_SCOPE/projectFeedScope 一致。
@@ -165,6 +166,10 @@ export function ActivityFeed({
   const [clearError, setClearError] = useState<string | null>(null);
   const [deletePendingId, setDeletePendingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // 删除 / 清除都走应用内确认弹窗（替代浏览器原生 confirm）
+  const [confirm, setConfirm] = useState<
+    { kind: "delete"; row: ActivityFeedRow } | { kind: "clear" } | null
+  >(null);
   // 自己删掉一条后 router.refresh 会让列表头变化；任务页的 bumpOnNewRows 别把它当成新动态
   const skipBump = useRef(false);
   const router = useRouter();
@@ -213,14 +218,15 @@ export function ActivityFeed({
     void markFeedReadAction(unreadScope);
   }
 
-  async function handleDelete(row: ActivityFeedRow) {
+  function handleDelete(row: ActivityFeedRow) {
     const scope = clearScope ?? unreadScope;
     if (!scope || deletePendingId) return;
-    const message = row.canPurge
-      ? "删除这条记录？会从所有人的动态流中移除，且不可恢复。"
-      : "删除这条记录？只会从你自己的动态流里隐藏，其他人仍然可见。";
-    if (!window.confirm(message)) return;
+    setConfirm({ kind: "delete", row });
+  }
 
+  async function doDelete(row: ActivityFeedRow) {
+    const scope = clearScope ?? unreadScope;
+    if (!scope) return;
     setDeletePendingId(row.id);
     setDeleteError(null);
     skipBump.current = true;
@@ -234,15 +240,13 @@ export function ActivityFeed({
     router.refresh();
   }
 
-  async function handleClear() {
+  function handleClear() {
     if (!clearScope || clearPending) return;
-    if (
-      !window.confirm(
-        "确定清除你看到的全部最新记录吗？只影响你自己的显示，其他成员照常可见；之后新产生的记录会继续显示。",
-      )
-    ) {
-      return;
-    }
+    setConfirm({ kind: "clear" });
+  }
+
+  async function doClear() {
+    if (!clearScope) return;
     setClearPending(true);
     setClearError(null);
     const res = await clearFeedAction(clearScope);
@@ -360,6 +364,25 @@ export function ActivityFeed({
           })}
         </ul>
       )}
+      <ConfirmDangerDialog
+        open={confirm !== null}
+        title={confirm?.kind === "clear" ? "清除记录" : "删除记录"}
+        confirmLabel={confirm?.kind === "clear" ? "清除全部" : "删除"}
+        onCancel={() => setConfirm(null)}
+        onConfirm={() => {
+          const current = confirm;
+          setConfirm(null);
+          if (!current) return;
+          if (current.kind === "delete") void doDelete(current.row);
+          else void doClear();
+        }}
+      >
+        {confirm?.kind === "clear"
+          ? "确定清除你看到的全部最新记录吗？只影响你自己的显示，其他成员照常可见；之后新产生的记录会继续显示。"
+          : confirm?.row.canPurge
+            ? "删除这条记录？会从所有人的动态流中移除，且不可恢复。"
+            : "删除这条记录？只会从你自己的动态流里隐藏，其他人仍然可见。"}
+      </ConfirmDangerDialog>
     </section>
   );
 }

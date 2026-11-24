@@ -49,8 +49,22 @@ export function NoteWidget({
           <button
             type="button"
             onClick={() => setEditing(true)}
-            className="ac-hit text-xs text-ink-faint transition-colors hover:text-primary"
+            className="dw-mini-btn shrink-0"
+            title="编辑便签"
           >
+            <svg
+              className="h-3.5 w-3.5"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              aria-hidden="true"
+            >
+              <path
+                d="M11.3 2.7a1.5 1.5 0 0 1 2.1 2.1L5.6 12.6l-2.9.8.8-2.9 7.8-7.8Z"
+                strokeLinejoin="round"
+              />
+            </svg>
             编辑
           </button>
         )}
@@ -249,11 +263,15 @@ export function ClockWidget({
               <button
                 type="button"
                 onClick={() => setSetting(false)}
-                className="ac-hit text-xs text-ink-faint hover:text-ink"
+                className="dw-mini-btn"
               >
                 取消
               </button>
-              <button type="button" onClick={save} className="ac-btn px-3 py-1 text-xs">
+              <button
+                type="button"
+                onClick={save}
+                className="ac-btn rounded-full px-3.5 py-1.5 text-xs"
+              >
                 保存
               </button>
             </div>
@@ -267,8 +285,23 @@ export function ClockWidget({
               <button
                 type="button"
                 onClick={openSetting}
-                className="ac-hit shrink-0 text-xs text-ink-faint transition-colors hover:text-primary"
+                className="dw-mini-btn shrink-0"
+                title="时区设置"
               >
+                <svg
+                  className="h-3.5 w-3.5"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.3"
+                  aria-hidden="true"
+                >
+                  <circle cx="8" cy="8" r="2.1" />
+                  <path
+                    d="M8 1.9v1.3M8 12.8v1.3M14.1 8h-1.3M3.2 8H1.9M12.3 3.7l-.9.9M4.6 11.4l-.9.9M12.3 12.3l-.9-.9M4.6 4.6l-.9-.9"
+                    strokeLinecap="round"
+                  />
+                </svg>
                 设置
               </button>
             </div>
@@ -373,7 +406,7 @@ export function CountdownWidget({
             <button
               type="button"
               onClick={() => setSetting(false)}
-              className="text-xs text-ink-faint hover:text-ink"
+              className="dw-mini-btn"
             >
               取消
             </button>
@@ -381,7 +414,7 @@ export function CountdownWidget({
               type="button"
               onClick={save}
               disabled={!draftTarget}
-              className="ac-btn px-3 py-1 text-xs disabled:opacity-50"
+              className="ac-btn rounded-full px-3.5 py-1.5 text-xs disabled:opacity-50"
             >
               保存
             </button>
@@ -394,8 +427,23 @@ export function CountdownWidget({
             <button
               type="button"
               onClick={openSetting}
-              className="ac-hit shrink-0 text-xs text-ink-faint transition-colors hover:text-primary"
+              className="dw-mini-btn shrink-0"
+              title="倒计时设置"
             >
+              <svg
+                className="h-3.5 w-3.5"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                aria-hidden="true"
+              >
+                <circle cx="8" cy="8" r="2.1" />
+                <path
+                  d="M8 1.9v1.3M8 12.8v1.3M14.1 8h-1.3M3.2 8H1.9M12.3 3.7l-.9.9M4.6 11.4l-.9.9M12.3 12.3l-.9-.9M4.6 4.6l-.9-.9"
+                  strokeLinecap="round"
+                />
+              </svg>
               设置
             </button>
           </div>

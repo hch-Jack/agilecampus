@@ -46,7 +46,7 @@ async function docxToText(data: Buffer): Promise<ExtractedFileText> {
 
 async function excelToText(data: Buffer): Promise<ExtractedFileText> {
   const XLSX = await import("xlsx");
-  const wb = XLSX.read(data, { type: "buffer" });
+  const wb = XLSX.read(toArrayBuffer(data), { type: "array" });
   const parts: string[] = [];
   for (const name of wb.SheetNames.slice(0, 10)) {
     const ws = wb.Sheets[name];

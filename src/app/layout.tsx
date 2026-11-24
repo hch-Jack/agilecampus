@@ -3,12 +3,12 @@ import { Geist, Fraunces } from "next/font/google";
 import "./globals.css";
 
 const geistSans = Geist({
-  variable: "--font-sans",
+  variable: "--font-geist",
   subsets: ["latin"],
 });
 
 const fraunces = Fraunces({
-  variable: "--font-display",
+  variable: "--font-fraunces",
   subsets: ["latin"],
   axes: ["opsz"],
 });

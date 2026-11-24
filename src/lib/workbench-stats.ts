@@ -9,10 +9,10 @@ export const WORKBENCH_STAT_META: Record<
   WorkbenchStatKey,
   { label: string; tone: string }
 > = {
-  overdue: { label: "逾期", tone: "text-high" },
-  today: { label: "今天截止", tone: "text-medium" },
-  week: { label: "本周截止", tone: "text-doing" },
-  doing: { label: "进行中", tone: "text-doing" },
+  overdue: { label: "逾期", tone: "text-high" },        // 越急越暖：赭红
+  today: { label: "今天截止", tone: "text-medium" },     // 琥珀
+  week: { label: "本周截止", tone: "text-doing" },       // 湛蓝：稍远的未来，冷静的提醒
+  doing: { label: "进行中", tone: "text-doing" },        // 湛蓝：正在发生
 };
 
 /**
