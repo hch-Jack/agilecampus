@@ -17,7 +17,7 @@ import {
   updateUserProfile,
   updateUserTimeZone,
 } from "@/lib/user";
-import { createApiToken, revokeApiToken } from "@/lib/api-token";
+import { createApiToken, deleteApiToken, revokeApiToken } from "@/lib/api-token";
 import {
   CONTEXT_MAX_LENGTH,
   createPersonalContext,
@@ -236,6 +236,17 @@ export async function revokeTokenAction(formData: FormData) {
 
   const id = z.uuid().parse(formData.get("id"));
   await revokeApiToken(session.user.id, id);
+  revalidatePath("/settings");
+}
+
+// 已撤销令牌的物理删除。lib 只认「本人 + 已撤销」，页面上的二次确认只是防误触，
+// 真正的权限边界仍在服务端查询条件里。
+export async function deleteTokenAction(formData: FormData) {
+  const session = await auth();
+  if (!session?.user) throw new AppError("请先登录");
+
+  const id = z.uuid().parse(formData.get("id"));
+  await deleteApiToken(session.user.id, id);
   revalidatePath("/settings");
 }
 

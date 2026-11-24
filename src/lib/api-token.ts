@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { apiTokens } from "@/db/schema";
 import { AppError } from "./errors";
@@ -74,4 +74,20 @@ export async function revokeApiToken(userId: string, id: string) {
     )
     .returning({ id: apiTokens.id });
   if (!updated) throw new AppError("令牌不存在或已撤销");
+}
+
+// 物理删除本人某条**已撤销**令牌。撤销后记录已无凭据价值，用户可彻底清掉；
+// 未撤销的必须先撤销，避免误删仍在使用的令牌（越权/不存在/未撤销一律拒）。
+export async function deleteApiToken(userId: string, id: string) {
+  const [deleted] = await db
+    .delete(apiTokens)
+    .where(
+      and(
+        eq(apiTokens.id, id),
+        eq(apiTokens.userId, userId),
+        isNotNull(apiTokens.revokedAt),
+      ),
+    )
+    .returning({ id: apiTokens.id });
+  if (!deleted) throw new AppError("令牌不存在、未撤销或无权删除");
 }
