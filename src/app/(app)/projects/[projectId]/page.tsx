@@ -340,7 +340,7 @@ export default async function ProjectPage({
       {/* 新建任务与附件中心并排一行：任务卡收窄，附件中心做固定宽度的入口卡 */}
       <div
         className={`grid items-stretch gap-4 ${
-          canWrite ? "lg:grid-cols-[minmax(0,1fr)_15rem]" : ""
+          canWrite ? "lg:grid-cols-[minmax(0,1fr)_30rem]" : ""
         }`}
       >
         {canWrite && (
