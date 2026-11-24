@@ -10,6 +10,15 @@ const nextConfig: NextConfig = {
   // Docker / CI 里项目目录本来就是推断出来的根，所以这行不改那边任何行为。
   turbopack: {
     root: __dirname,
+    // 附件按运行时路径（UPLOAD_DIR / standalone 的持久目录）读写，NFT 无法静态
+    // 收敛到 data/ 子目录，会把整个项目标成 traced。这是设计如此（构建后仍要
+    // 能读外部上传目录），只屏蔽这一条已知警告；其它 Turbopack 问题照常显示。
+    ignoreIssue: [
+      {
+        path: /next\.config\.ts$/,
+        title: /Encountered unexpected file in NFT list/,
+      },
+    ],
   },
   // 文档生成库自带动态 require（pptxgenjs 找 jszip、docx 找 xml 序列化），
   // 交给 Node 直接 require，别掺进 Turbopack 的打包图
@@ -21,7 +30,8 @@ const nextConfig: NextConfig = {
       "./node_modules/@embedpdf/fonts-sc/fonts/NotoSansHans-Bold.otf",
     ],
   },
-  // 附件上传走 server action：默认 1MB 不够，放开到 12mb（附件上限 10MB + multipart 开销余量）
+  // 大文件上传走 route handler 流式写盘（上限 1GB，见 lib/file-limits.ts），
+  // 不经过 server action；这里的 12mb 只兜底历史遗留的小文件 action。
   experimental: {
     serverActions: {
       bodySizeLimit: "12mb",

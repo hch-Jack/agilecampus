@@ -1,0 +1,265 @@
+"use client";
+
+import dynamic from "next/dynamic";
+import { useEffect, useRef, useState } from "react";
+import type { PptxFontFace } from "@betteroffice/pptx";
+import type { PptxAsyncEditorApi } from "@betteroffice/pptx-react";
+import { clearChunkReloadFlag, reloadOnceForChunkError } from "@/lib/chunk-reload";
+
+/**
+ * PowerPoint 在线编辑：BetterOffice PPTX 引擎（Apache-2.0）。
+ *
+ * 在 PPTX/OOXML 上直接编辑，保存时只重新生成改动过的幻灯片，未改动的
+ * slide part 保留原始字节；因此字体、主题、母版、图片等格式不会因为
+ * 经过 HTML/JSON 转换而丢失（个别复杂动画/特效仍可能被近似处理）。
+ */
+
+const PptxEditor = dynamic(
+  () => import("@betteroffice/pptx-react").then((m) => m.PptxEditor),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex flex-1 items-center justify-center p-6 text-sm text-ink-faint">
+        正在加载演示文稿编辑器…
+      </div>
+    ),
+  },
+);
+
+export type PptxEditorApi = {
+  getBytes: () => Promise<Uint8Array | null>;
+  markClean: () => void;
+  isDirty: () => boolean;
+  /** Markdown 形式的演示文稿内容（AI 上下文） */
+  getMarkdown: () => Promise<string>;
+  /** 把 AI 文本修改暂存为待审阅提案 */
+  stageAiEdits: (input: {
+    summary: string;
+    edits: { find: string; replace: string }[];
+  }) => Promise<{ staged: number; failed: string[] }>;
+};
+
+// 字体只加载一次：中文字体较大，避免每次进编辑器都重新拉取
+let fontsPromise: Promise<PptxFontFace[]> | null = null;
+
+function loadEditorFonts(): Promise<PptxFontFace[]> {
+  if (!fontsPromise) {
+    fontsPromise = (async () => {
+      const { BUNDLED_FONTS, loadBundledFontBytes } = await import("@betteroffice/fonts");
+      const wanted = new Set([
+        "Noto Sans SC", // 微软雅黑 / 黑体 / 等线
+        "Noto Serif SC", // 宋体 / 仿宋 / 楷体
+        "Carlito", // Calibri
+        "Liberation Sans", // Arial
+      ]);
+      const faces = BUNDLED_FONTS.filter((face) => wanted.has(face.family));
+      return Promise.all(
+        faces.map(async (face) => ({
+          family: face.family,
+          bold: face.weight === 700,
+          italic: face.style === "italic",
+          bytes: new Uint8Array(await loadBundledFontBytes(face)),
+        })),
+      );
+    })().catch((e) => {
+      fontsPromise = null;
+      throw e;
+    });
+  }
+  return fontsPromise;
+}
+
+export function PptxEditorHost({
+  bytes,
+  reloadToken,
+  readOnly,
+  filename,
+  apiRef,
+  onDirty,
+  onSave,
+}: {
+  bytes: ArrayBuffer | null;
+  /** 远程新版本/恢复历史时递增，强制重建编辑器 */
+  reloadToken: number;
+  readOnly: boolean;
+  filename: string;
+  apiRef: { current: PptxEditorApi | null };
+  onDirty: () => void;
+  onSave: () => void;
+}) {
+  const [fonts, setFonts] = useState<PptxFontFace[] | null>(null);
+  const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
+  const instanceRef = useRef<PptxAsyncEditorApi | null>(null);
+  const dirtyRef = useRef(false);
+  const onDirtyRef = useRef(onDirty);
+  const onSaveRef = useRef(onSave);
+
+  useEffect(() => {
+    onDirtyRef.current = onDirty;
+    onSaveRef.current = onSave;
+  }, [onDirty, onSave]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadEditorFonts()
+      .then((loaded) => {
+        if (cancelled) return;
+        setFonts(loaded);
+        clearChunkReloadFlag();
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        if (reloadOnceForChunkError(e)) return;
+        setError(e instanceof Error ? e.message : "字体加载失败");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [retry]);
+
+  // next/dynamic 的 chunk 加载失败会以全局错误的形式冒出来
+  useEffect(() => {
+    const onError = (e: ErrorEvent) => {
+      if (reloadOnceForChunkError(e.error ?? e.message)) e.preventDefault();
+    };
+    const onRejection = (e: PromiseRejectionEvent) => {
+      if (reloadOnceForChunkError(e.reason)) e.preventDefault();
+    };
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onRejection);
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onRejection);
+    };
+  }, []);
+
+  useEffect(() => {
+    apiRef.current = {
+      getBytes: async () => {
+        const api = instanceRef.current;
+        if (!api) return null;
+        return api.save();
+      },
+      markClean: () => {
+        dirtyRef.current = false;
+      },
+      isDirty: () => dirtyRef.current,
+      getMarkdown: async () => {
+        const api = instanceRef.current;
+        if (!api) return "";
+        const res = await api.exportMarkdown();
+        return res.ok ? res.content.markdown : "";
+      },
+      stageAiEdits: async ({ summary, edits }) => {
+        const api = instanceRef.current;
+        if (!api) throw new Error("演示文稿编辑器尚未就绪");
+        const access = await api.handleAsync();
+        const staged: {
+          type: "replaceText";
+          storyId: string;
+          start: number;
+          end: number;
+          text: string;
+        }[] = [];
+        const failed: string[] = [];
+        for (const edit of edits) {
+          try {
+            const found = await api.findText({ text: edit.find, limit: 1 });
+            const range = found.ok ? found.matches[0]?.range : null;
+            if (!range) {
+              failed.push(edit.find);
+              continue;
+            }
+            staged.push({
+              type: "replaceText",
+              storyId: range.storyId,
+              start: range.start,
+              end: range.end,
+              text: edit.replace,
+            });
+          } catch {
+            failed.push(edit.find);
+          }
+        }
+        if (staged.length > 0) {
+          await access.propose("ai-assistant", summary, staged);
+          await api.refreshProposals();
+          // 自动打开 Agent proposals 审阅面板，别让提示只停留在一条小字
+          try {
+            await api.commands.execute("proposalsPanel", { open: true });
+          } catch {
+            // 面板打不开不影响提案本身，按钮仍可手动打开
+          }
+        }
+        return { staged: staged.length, failed };
+      },
+    };
+    return () => {
+      apiRef.current = null;
+    };
+  }, [apiRef]);
+
+  if (error) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+        <p className="text-sm text-danger">{error}</p>
+        <button
+          type="button"
+          className="ac-btn px-3 py-1.5 text-xs"
+          onClick={() => {
+            setError("");
+            setFonts(null);
+            setRetry((t) => t + 1);
+          }}
+        >
+          重试
+        </button>
+      </div>
+    );
+  }
+
+  if (!bytes) {
+    return (
+      <div className="flex flex-1 items-center justify-center p-6 text-sm text-ink-faint">
+        演示文稿加载中…
+      </div>
+    );
+  }
+
+  if (!fonts) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-sm text-ink-faint">
+        <span>正在加载演示文稿字体（首次约 20MB，之后走浏览器缓存）…</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <PptxEditor
+        key={reloadToken}
+        file={bytes}
+        fonts={fonts}
+        readOnly={readOnly}
+        fileName={filename}
+        className="min-h-0 flex-1"
+        style={{ height: "100%" }}
+        onReady={(api: PptxAsyncEditorApi) => {
+          instanceRef.current = api;
+          dirtyRef.current = false;
+        }}
+        onDocumentChange={() => {
+          dirtyRef.current = true;
+          onDirtyRef.current();
+        }}
+        onSaveRequest={() => {
+          onSaveRef.current();
+          // 取消编辑器自带的下载/保存；实际的字节由父组件统一保存
+          return false;
+        }}
+        onError={(e: Error) => setError(e.message || "演示文稿编辑失败")}
+      />
+    </div>
+  );
+}

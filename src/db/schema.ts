@@ -1173,9 +1173,10 @@ export const libraryItems = pgTable(
     libraryId: uuid("library_id")
       .notNull()
       .references(() => libraries.id, { onDelete: "cascade" }),
-    folderId: uuid("folder_id")
-      .notNull()
-      .references(() => libraryFolders.id, { onDelete: "restrict" }),
+    // null = 资源库根目录（根下可放文件，也可以有文件夹）
+    folderId: uuid("folder_id").references(() => libraryFolders.id, {
+      onDelete: "restrict",
+    }),
     filename: text("filename").notNull(),
     mimeType: text("mime_type"),
     size: integer("size").notNull(),
@@ -1190,9 +1191,11 @@ export const libraryItems = pgTable(
     updatedAt: dbTimestampNow("updated_at").notNull(),
   },
   (t) => [
+    // folder_id 可为 null（根目录）。唯一索引里把 null 归一成零 UUID，
+    // 否则 PG 的 NULL 互不相等会让根目录出现同名文件。
     uniqueIndex("library_items_name_unique").on(
       t.libraryId,
-      t.folderId,
+      sql`coalesce(${t.folderId}, '00000000-0000-0000-0000-000000000000'::uuid)`,
       sql`lower(${t.filename})`,
     ),
     index("library_items_folder_idx").on(t.libraryId, t.folderId, t.updatedAt),

@@ -31,10 +31,14 @@ export async function resolveFileOpen(
       ? "/api/attachments"
       : input.source === "file"
         ? "/api/assistant/files"
-        : "/api/dm/attachments";
+        : input.source === "library"
+          ? "/api/library/items"
+          : "/api/dm/attachments";
+  // 资源库下载路由是 /api/library/items/[itemId]/content，比其它附件多一段
+  const tail = input.source === "library" ? "/content" : "";
   return {
     __showFile: true as const,
-    url: `${base}/${info.attachmentId}`,
+    url: `${base}/${info.attachmentId}${tail}`,
     filename: info.filename,
     mimeType: info.mimeType,
     size: info.size,

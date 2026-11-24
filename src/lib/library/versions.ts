@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   documents,
@@ -176,7 +176,8 @@ export async function putVersionByName(
   exec: DbExec,
   opts: {
     library: LibraryRow;
-    folderId: string;
+    /** null = 资源库根目录 */
+    folderId: string | null;
     filename: string;
     mimeType: string | null;
     storageKey: string;
@@ -279,7 +280,7 @@ export async function putVersionByName(
 export async function findItemByName(
   exec: DbExec,
   libraryId: string,
-  folderId: string,
+  folderId: string | null,
   filename: string,
 ): Promise<LibraryItemRow | null> {
   const [row] = await exec
@@ -288,7 +289,7 @@ export async function findItemByName(
     .where(
       and(
         eq(libraryItems.libraryId, libraryId),
-        eq(libraryItems.folderId, folderId),
+        folderId ? eq(libraryItems.folderId, folderId) : isNull(libraryItems.folderId),
         sql`lower(${libraryItems.filename}) = ${filename.trim().toLowerCase()}`,
       ),
     );
@@ -365,7 +366,7 @@ function normalizeFilename(raw: string): string {
 
 async function assertItemNameFree(
   libraryId: string,
-  folderId: string,
+  folderId: string | null,
   filename: string,
   exceptId?: string,
 ): Promise<void> {
@@ -375,7 +376,7 @@ async function assertItemNameFree(
     .where(
       and(
         eq(libraryItems.libraryId, libraryId),
-        eq(libraryItems.folderId, folderId),
+        folderId ? eq(libraryItems.folderId, folderId) : isNull(libraryItems.folderId),
         sql`lower(${libraryItems.filename}) = ${filename.toLowerCase()}`,
         exceptId ? sql`${libraryItems.id} <> ${exceptId}` : undefined,
       ),
@@ -415,10 +416,11 @@ export async function renameLibraryItem(
 export async function moveLibraryItem(
   actorId: string,
   itemId: string,
-  folderId: string,
+  folderId: string | null,
 ): Promise<void> {
   const access = await requireLibraryItemEdit(actorId, itemId);
-  await assertFolderInLibrary(db, access.library.id, folderId);
+  // null = 移到资源库根目录，没有文件夹可校验
+  if (folderId) await assertFolderInLibrary(db, access.library.id, folderId);
   await assertItemNameFree(access.library.id, folderId, access.item.filename, itemId);
   await db.transaction(async (tx) => {
     await tx

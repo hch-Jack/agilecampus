@@ -49,6 +49,23 @@ import {
 import { forwardChatMessage, sendChatMessage } from "@/lib/chat-transfer";
 import { createResourceUsage, endResourceUsage } from "@/lib/resource";
 import { createLabel, deleteLabel, renameLabel, setTaskLabels } from "@/lib/label";
+import {
+  createLibraryFolder,
+  deleteLibraryFolder,
+  renameLibraryFolder,
+} from "@/lib/library/folders";
+import {
+  deleteLibraryItem,
+  moveLibraryItem,
+  renameLibraryItem,
+} from "@/lib/library/versions";
+import { restoreLibraryVersion } from "@/lib/library/restore";
+import {
+  copyLibraryItem,
+  copyLibraryItemToTask,
+  libraryRefFromScope,
+  saveAgentFileToLibrary,
+} from "./library";
 import { zonedWallClockToInstant } from "@/lib/time";
 import { resolveUserTimeZone } from "@/lib/time-pref";
 import { AppError, ForbiddenError } from "@/lib/errors";
@@ -73,6 +90,16 @@ import {
   SAVE_CONTEXT_TOOL,
   SEND_MESSAGE_TOOL,
   CREATE_SKILL_TOOL,
+  CREATE_LIBRARY_FOLDER_TOOL,
+  RENAME_LIBRARY_FOLDER_TOOL,
+  DELETE_LIBRARY_FOLDER_TOOL,
+  RENAME_LIBRARY_FILE_TOOL,
+  MOVE_LIBRARY_FILE_TOOL,
+  COPY_LIBRARY_FILE_TOOL,
+  DELETE_LIBRARY_FILE_TOOL,
+  SAVE_FILE_TO_LIBRARY_TOOL,
+  SAVE_LIBRARY_FILE_TO_TASK_TOOL,
+  RESTORE_LIBRARY_VERSION_TOOL,
   skillDraftSchema,
   taskPlanDraftSchema,
   UPDATE_LABEL_TOOL,
@@ -183,7 +210,7 @@ const sendMessageSchema = z
     targetId: z.uuid(),
     content: z.string().optional(),
     // null 与 undefined 都表示「没带附件」；卡片清空附件字段时会送 null
-    fileSource: z.enum(["task", "message", "file"]).nullable().optional(),
+    fileSource: z.enum(["task", "message", "file", "library"]).nullable().optional(),
     attachmentId: z.uuid().nullable().optional(),
   })
   .refine((d) => (d.fileSource == null) === (d.attachmentId == null), {
@@ -460,6 +487,164 @@ export async function commitInviteToGroup(
   return { committed: 1, conflicts: [] };
 }
 
+// ------------------------------------------------------- 资源库
+
+// 卡片上的 libraryLabel / path / currentName 等展示字段由 zod 自动剥离；
+// 落库只认 scope/teamId 与真正的目标 id / 名称。
+const libraryScopeShape = {
+  scope: z.enum(["personal", "team"]).default("personal"),
+  // 卡片对个人库会送 teamId: null；null/缺省都表示「没有团队」
+  teamId: z.uuid().nullable().optional(),
+};
+
+const createLibraryFolderSchema = z.object({
+  ...libraryScopeShape,
+  parentId: z.uuid().nullable().optional(),
+  name: z.string().trim().min(1, "文件夹名称不能为空"),
+});
+
+const renameLibraryFolderSchema = z.object({
+  folderId: z.uuid(),
+  name: z.string().trim().min(1, "文件夹名称不能为空"),
+});
+
+const deleteLibraryFolderSchema = z.object({
+  folderId: z.uuid(),
+  mode: z.enum(["keep-files", "delete-all"]).default("keep-files"),
+});
+
+const renameLibraryFileSchema = z.object({
+  itemId: z.uuid(),
+  name: z.string().trim().min(1, "文件名不能为空"),
+});
+
+const moveLibraryFileSchema = z.object({
+  itemId: z.uuid(),
+  folderId: z.uuid().nullable(),
+});
+
+const copyLibraryFileSchema = z.object({
+  itemId: z.uuid(),
+  ...libraryScopeShape,
+  folderId: z.uuid().nullable().optional(),
+  filename: z.string().trim().min(1).max(200).optional(),
+});
+
+const deleteLibraryFileSchema = z.object({ itemId: z.uuid() });
+
+const saveFileToLibrarySchema = z.object({
+  fileId: z.uuid(),
+  ...libraryScopeShape,
+  folderId: z.uuid().nullable().optional(),
+  filename: z.string().trim().min(1).max(200).optional(),
+});
+
+const saveLibraryFileToTaskSchema = z.object({
+  itemId: z.uuid(),
+  taskId: z.uuid(),
+});
+
+const restoreLibraryVersionSchema = z.object({
+  itemId: z.uuid(),
+  version: z.number().int().min(1),
+});
+
+export async function commitCreateLibraryFolder(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = createLibraryFolderSchema.parse(draft);
+  const ref = libraryRefFromScope(actorId, d);
+  await createLibraryFolder(actorId, ref, d.parentId ?? null, d.name);
+  return { committed: 1, conflicts: [] };
+}
+
+export async function commitRenameLibraryFolder(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = renameLibraryFolderSchema.parse(draft);
+  await renameLibraryFolder(actorId, d.folderId, d.name);
+  return { committed: 1, conflicts: [] };
+}
+
+export async function commitDeleteLibraryFolder(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = deleteLibraryFolderSchema.parse(draft);
+  await deleteLibraryFolder(actorId, d.folderId, d.mode);
+  return { committed: 1, conflicts: [] };
+}
+
+export async function commitRenameLibraryFile(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = renameLibraryFileSchema.parse(draft);
+  await renameLibraryItem(actorId, d.itemId, d.name);
+  return { committed: 1, conflicts: [] };
+}
+
+export async function commitMoveLibraryFile(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = moveLibraryFileSchema.parse(draft);
+  await moveLibraryItem(actorId, d.itemId, d.folderId);
+  return { committed: 1, conflicts: [] };
+}
+
+export async function commitCopyLibraryFile(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = copyLibraryFileSchema.parse(draft);
+  await copyLibraryItem(actorId, d);
+  return { committed: 1, conflicts: [] };
+}
+
+export async function commitDeleteLibraryFile(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = deleteLibraryFileSchema.parse(draft);
+  // 只删资源库记录；任务/消息附件是来源，不在助手入口顺手删
+  await deleteLibraryItem(actorId, d.itemId);
+  return { committed: 1, conflicts: [] };
+}
+
+export async function commitSaveFileToLibrary(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = saveFileToLibrarySchema.parse(draft);
+  await saveAgentFileToLibrary(actorId, d);
+  return { committed: 1, conflicts: [] };
+}
+
+export async function commitSaveLibraryFileToTask(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = saveLibraryFileToTaskSchema.parse(draft);
+  await copyLibraryItemToTask(actorId, d.itemId, d.taskId);
+  return { committed: 1, conflicts: [] };
+}
+
+export async function commitRestoreLibraryVersion(
+  actorId: string,
+  draft: unknown,
+): Promise<CommitResult> {
+  const d = restoreLibraryVersionSchema.parse(draft);
+  await restoreLibraryVersion({
+    itemId: d.itemId,
+    userId: actorId,
+    version: d.version,
+  });
+  return { committed: 1, conflicts: [] };
+}
+
 // ------------------------------------------------------- 建团队 / 加入团队
 
 // 与网页端「创建团队」同一口径：只要求非空，不做额外的长度/字符限制。
@@ -730,6 +915,17 @@ export async function commitPersonalDraft(
   if (tool === MANAGE_WIDGETS_TOOL) return commitManageWidgets(actorId, draft);
   if (tool === MANAGE_TASK_PLANS_TOOL) return commitManageTaskPlans(actorId, draft);
   if (tool === CREATE_SKILL_TOOL) return commitCreateSkill(actorId, draft);
+  // 资源库：草案自带 scope/teamId 或条目 id，没有 projectId，同样先于拆 projectId 分派
+  if (tool === CREATE_LIBRARY_FOLDER_TOOL) return commitCreateLibraryFolder(actorId, draft);
+  if (tool === RENAME_LIBRARY_FOLDER_TOOL) return commitRenameLibraryFolder(actorId, draft);
+  if (tool === DELETE_LIBRARY_FOLDER_TOOL) return commitDeleteLibraryFolder(actorId, draft);
+  if (tool === RENAME_LIBRARY_FILE_TOOL) return commitRenameLibraryFile(actorId, draft);
+  if (tool === MOVE_LIBRARY_FILE_TOOL) return commitMoveLibraryFile(actorId, draft);
+  if (tool === COPY_LIBRARY_FILE_TOOL) return commitCopyLibraryFile(actorId, draft);
+  if (tool === DELETE_LIBRARY_FILE_TOOL) return commitDeleteLibraryFile(actorId, draft);
+  if (tool === SAVE_FILE_TO_LIBRARY_TOOL) return commitSaveFileToLibrary(actorId, draft);
+  if (tool === SAVE_LIBRARY_FILE_TO_TASK_TOOL) return commitSaveLibraryFileToTask(actorId, draft);
+  if (tool === RESTORE_LIBRARY_VERSION_TOOL) return commitRestoreLibraryVersion(actorId, draft);
 
   if (tool === "create_project") {
     // teamId 是 uuid 形状，与下面那四类同理：缺了/填成了团队名就说清楚，别甩一句「草案格式无效」

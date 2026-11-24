@@ -23,6 +23,7 @@ import { broadcast, broadcastPresence } from "./events";
 import { deleteBlobIfUnreferenced, pruneDocumentVersions } from "./blobs";
 import {
   DOCX_EDIT_MAX_BYTES,
+  PPTX_EDIT_MAX_BYTES,
   SHEET_EDIT_MAX_BYTES,
   TEXT_EDIT_MAX_BYTES,
   isSameEditableFormat,
@@ -93,6 +94,8 @@ export function maxBytesForFormat(format: DocumentFormat): number {
       return DOCX_EDIT_MAX_BYTES;
     case "sheet":
       return SHEET_EDIT_MAX_BYTES;
+    case "pptx":
+      return PPTX_EDIT_MAX_BYTES;
   }
 }
 

@@ -21,7 +21,8 @@ const bodySchema = z.object({
   filename: z.string().min(1).max(200),
   scope: z.enum(["personal", "team"]),
   teamId: z.uuid().optional(),
-  folderId: z.uuid().nullable().optional(),
+  // "root" = 资源库根目录；缺省 = 默认「手动上传」文件夹
+  folderId: z.union([z.uuid(), z.literal("root")]).nullable().optional(),
   content: contentSchema,
 });
 
@@ -78,7 +79,8 @@ export async function POST(req: Request, ctx: Ctx) {
       filename: parsed.data.filename,
       scope: parsed.data.scope,
       teamId: parsed.data.teamId,
-      folderId: parsed.data.folderId ?? null,
+      folderId:
+        parsed.data.folderId === "root" ? null : parsed.data.folderId,
       bytes,
       mimeType,
       editorState,

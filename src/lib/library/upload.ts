@@ -19,19 +19,23 @@ export async function uploadToLibrary(
   actorId: string,
   ref: LibraryRef,
   opts: {
+    /** undefined = 默认「手动上传」；null = 资源库根目录 */
     folderId?: string | null;
     filename: string;
     mimeType: string | null;
     stream: ReadableStream<Uint8Array>;
   },
-): Promise<{ itemId: string; version: number; created: boolean; folderId: string }> {
+): Promise<{ itemId: string; version: number; created: boolean; folderId: string | null }> {
   const library = await ensureLibrary(ref);
   const access = await getLibraryAccess(actorId, ref);
   if (!access?.canEdit) throw new ForbiddenError("你没有该资源库的编辑权限");
 
   const filename = normalizeFilename(opts.filename);
-  const folderId = opts.folderId || (await getDefaultFolderId(library, "manual"));
-  await assertFolderInLibrary(db, library.id, folderId);
+  const folderId =
+    opts.folderId === undefined
+      ? await getDefaultFolderId(library, "manual")
+      : opts.folderId;
+  if (folderId) await assertFolderInLibrary(db, library.id, folderId);
 
   const blob = await saveBlobFromStream(opts.stream, MAX_FILE_SIZE);
   try {

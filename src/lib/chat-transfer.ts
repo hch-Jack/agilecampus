@@ -16,6 +16,7 @@ import {
   getAttachmentMeta,
 } from "./attachment";
 import { getAgentFileForDownload, getAgentFileMeta } from "./agent/files";
+import { getLibraryFileRef } from "./library/content";
 
 /**
  * 消息发送 / 转发的公共实现。
@@ -32,9 +33,10 @@ export type ChatTarget =
 export type ChatAttachmentSource = {
   /**
    * task = 任务附件（项目文件）；message = 私信/群聊附件（转发文件）；
-   * file = 助手对话里上传/生成的文件（agent_files，只有主人能读）
+   * file = 助手对话里上传/生成的文件（agent_files，只有主人能读）；
+   * library = 资源库条目（个人/团队库，按库权限读取当前版本）
    */
-  source: "task" | "message" | "file";
+  source: "task" | "message" | "file" | "library";
   attachmentId: string;
 };
 
@@ -79,6 +81,16 @@ export async function getChatAttachmentInfo(
     return {
       source: "file",
       attachmentId: row.id,
+      filename: row.filename,
+      mimeType: row.mimeType,
+      size: row.size,
+    };
+  }
+  if (source.source === "library") {
+    const row = await getLibraryFileRef(actorId, source.attachmentId);
+    return {
+      source: "library",
+      attachmentId: source.attachmentId,
       filename: row.filename,
       mimeType: row.mimeType,
       size: row.size,
@@ -131,6 +143,17 @@ export async function loadChatAttachment(
       ...(row.storageKey
         ? { storageKey: row.storageKey }
         : { data: Buffer.from(row.data) }),
+    };
+  }
+  if (source.source === "library") {
+    const row = await getLibraryFileRef(actorId, source.attachmentId);
+    return {
+      source: "library",
+      attachmentId: source.attachmentId,
+      filename: row.filename,
+      mimeType: row.mimeType,
+      size: row.size,
+      storageKey: row.storageKey,
     };
   }
   const row = await getDmAttachmentForDownload(actorId, source.attachmentId);

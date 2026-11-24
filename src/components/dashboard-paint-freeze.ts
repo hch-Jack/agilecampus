@@ -13,69 +13,71 @@
  * 拖动宽度不传 targetPadding：直接操作保持实时跟随，不做首尾冻结。
  */
 let activeCleanup: (() => void) | null = null;
-let railBlurCleanup: (() => void) | null = null;
 
 /**
- * 左侧常驻栏收起/展开时，主内容区也做同款 500ms 模糊渐变。
- * 只模糊不降透明度，避免背后的星空中心白点透出来。
+ * 常驻栏开合后工作台的最终宽度（纯计算，便于测试）：
+ * - 正文可用宽 = 当前正文宽 - 左右 padding + 常驻栏释放的宽度；
+ * - 再受 page-wide 的 max-width 封顶。
+ * 常驻栏变窄（收起）释放宽度为正；变宽（展开）为负。
+ */
+export function railFinalShellWidth({
+  contentWidth,
+  paddingX,
+  railNow,
+  targetRailWidth,
+  maxWidth,
+}: {
+  contentWidth: number;
+  paddingX: number;
+  railNow: number;
+  targetRailWidth: number;
+  /** NaN = 没有 max-width 限制 */
+  maxWidth: number;
+}): number {
+  const available = contentWidth - paddingX + (railNow - targetRailWidth);
+  return Number.isFinite(maxWidth) ? Math.min(maxWidth, available) : available;
+}
+
+/**
+ * 左侧常驻栏收起/展开：**只有真正挤占/释放了工作台宽度**时才做首尾帧冻结 + 模糊。
+ *
+ * 宽屏下工作台被 90rem 的 page-wide 封顶，开合常驻栏吃掉的只是居中留白，shell 宽度
+ * 不变——这时不做任何冻结或模糊，只让常驻栏自己的 width 过渡把工作台平移过去。
+ * 宽度确实变化时，点击帧直接锁到最终宽度（只画首尾两帧），再用 500ms 模糊连接。
+ *
+ * 模糊只作用于工作台；其它页面完全没有模糊动画（直接不处理）。
  */
 export function beginRailPaintBlur(nextCollapsed: boolean): void {
   if (typeof document === "undefined") return;
+  if (!window.matchMedia("(min-width: 1024px)").matches) return;
 
-  // 工作台页面：和右侧抽屉一样冻结首尾帧——按**内容容器的可用宽**算出主内容最终宽度，
-  // 立刻锁宽并整体模糊，不再逐帧重排。常规栏宽 304px / 收起 30px（见 project.css）。
-  // 注意：必须从 .app-content 的可用宽出发，不能用 shell 当前宽 + 栏宽差——
-  // 宽屏下 shell 已被 max-width 封顶，开合常驻栏吃掉的是居中留白、shell 宽度不变；
-  // 旧算法会在点击帧把 shell 锁窄、580ms 清理时又弹回自然宽，看起来就是「抽风闪一下」。
   const shell = document.querySelector<HTMLElement>(".dashboard-shell");
   const rail = document.querySelector<HTMLElement>(".app-rail");
-  if (shell && rail && window.matchMedia("(min-width: 1024px)").matches) {
-    const targetRailWidth = nextCollapsed ? 30 : 304;
-    const railNow = rail.getBoundingClientRect().width;
-    const appContent = document.querySelector<HTMLElement>(".app-content");
-    if (appContent) {
-      const rect = appContent.getBoundingClientRect();
-      const style = getComputedStyle(appContent);
-      const padX =
-        (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
-      const finalAvailable = rect.width - padX + (targetRailWidth - railNow);
-      const maxWidth = parseFloat(getComputedStyle(shell.parentElement!).maxWidth);
-      const finalShellWidth = Number.isFinite(maxWidth)
-        ? Math.min(maxWidth, finalAvailable)
-        : finalAvailable;
-      // shell 宽度不会变的情形（宽屏被 max-width 封顶）：没有重排要遮掩，
-      // 直接跳过冻结与模糊，只让常驻栏按自己的 CSS 过渡平滑展开。
-      if (Math.abs(finalShellWidth - shell.getBoundingClientRect().width) < 1) return;
-      if (finalShellWidth > 0) {
-        beginDashboardPaintFreeze({ targetWidth: finalShellWidth });
-        return;
-      }
-    }
-  }
+  const appContent = document.querySelector<HTMLElement>(".app-content");
+  // 非工作台页面：常驻栏开合只走 CSS 过渡，不模糊
+  if (!shell || !rail || !appContent) return;
 
-  // 其它页面或没有常驻栏数据：至少给主内容区做同款模糊
-  const target = document.querySelector<HTMLElement>(".app-content");
-  if (!target) return;
-  railBlurCleanup?.();
-  const prevTransform = target.style.transform;
-  const prevWillChange = target.style.willChange;
-  target.style.transform = "translateZ(0)";
-  target.style.willChange = "filter";
-  target.classList.remove("dashboard-squeeze-blur");
-  void target.offsetWidth; // 重启 CSS 动画
-  target.classList.add("dashboard-squeeze-blur");
+  // 常规栏宽 304px / 收起 30px（见 dashboard.css）。收起释放 274px，展开占用 274px。
+  const targetRailWidth = nextCollapsed ? 30 : 304;
+  const railNow = rail.getBoundingClientRect().width;
+  const rect = appContent.getBoundingClientRect();
+  const style = getComputedStyle(appContent);
+  const padX =
+    (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+  const maxWidth = parseFloat(getComputedStyle(shell.parentElement!).maxWidth);
+  const finalShellWidth = railFinalShellWidth({
+    contentWidth: rect.width,
+    paddingX: padX,
+    railNow,
+    targetRailWidth,
+    maxWidth,
+  });
 
-  let cleared = false;
-  const cleanup = () => {
-    if (cleared) return;
-    cleared = true;
-    target.classList.remove("dashboard-squeeze-blur");
-    target.style.transform = prevTransform;
-    target.style.willChange = prevWillChange;
-    if (railBlurCleanup === cleanup) railBlurCleanup = null;
-  };
-  railBlurCleanup = cleanup;
-  window.setTimeout(cleanup, FADE_MS + 50);
+  // 宽度没变（宽屏封顶 / 居中留白吸收）：没有重排可遮掩，只平移，不冻结、不模糊。
+  if (Math.abs(finalShellWidth - shell.getBoundingClientRect().width) < 1) return;
+  if (finalShellWidth <= 0) return;
+
+  beginDashboardPaintFreeze({ targetWidth: finalShellWidth });
 }
 
 const FADE_MS = 500;

@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   libraries,
@@ -13,6 +13,7 @@ import type { DbExec } from "@/lib/documents/types";
 import { getLibraryAccess, assertFolderInLibrary } from "./access";
 import { libraryFileType, libraryFileTypeLabel } from "./file-kind";
 import { recordLibraryOperation } from "./operations";
+import { deleteLibraryItem } from "./versions";
 import {
   DEFAULT_FOLDER_NAMES,
   type DefaultFolderKey,
@@ -188,6 +189,7 @@ export async function listLibraryContents(
     }
   }
 
+  // 当前在根目录：除了子文件夹里的内容，还要把根目录下的文件算进来
   const itemScopeIds = searching
     ? currentId
       ? [currentId, ...descendantIds]
@@ -195,6 +197,7 @@ export async function listLibraryContents(
     : currentId
       ? [currentId]
       : [];
+  const includeRootItems = currentId === null;
 
   const countRows = await db
     .select({
@@ -216,7 +219,7 @@ export async function listLibraryContents(
     : allFolders.filter((folder) => (folder.parentId ?? null) === currentId);
 
   const itemRows =
-    itemScopeIds.length === 0
+    itemScopeIds.length === 0 && !includeRootItems
       ? []
       : await db
           .select()
@@ -224,7 +227,14 @@ export async function listLibraryContents(
           .where(
             and(
               eq(libraryItems.libraryId, library.id),
-              inArray(libraryItems.folderId, itemScopeIds),
+              includeRootItems && itemScopeIds.length > 0
+                ? or(
+                    inArray(libraryItems.folderId, itemScopeIds),
+                    isNull(libraryItems.folderId),
+                  )
+                : includeRootItems
+                  ? isNull(libraryItems.folderId)
+                  : inArray(libraryItems.folderId, itemScopeIds),
             ),
           );
 
@@ -436,7 +446,19 @@ export async function renameLibraryFolder(
   });
 }
 
-export async function deleteLibraryFolder(actorId: string, folderId: string): Promise<void> {
+export type FolderDeleteMode = "delete-all" | "keep-files";
+
+/**
+ * 删除文件夹：
+ * - `delete-all`：连同全部子文件夹与文件一起删除；
+ * - `keep-files`（默认）：只删文件夹，文件和直接子文件夹移到上一级；
+ *   目标位置有同名文件/文件夹时拒绝，让用户先处理，避免悄悄合并版本。
+ */
+export async function deleteLibraryFolder(
+  actorId: string,
+  folderId: string,
+  mode: FolderDeleteMode = "keep-files",
+): Promise<{ deletedItems: number; movedItems: number; movedFolders: number }> {
   const folder = await getFolderInLibraryById(folderId);
   if (!folder) throw new AppError("文件夹不存在");
   const ref: LibraryRef = folder.library.kind === "personal"
@@ -446,27 +468,126 @@ export async function deleteLibraryFolder(actorId: string, folderId: string): Pr
   if (!access?.canEdit) throw new ForbiddenError("你没有该资源库的编辑权限");
   if (folder.isDefault) throw new AppError("默认文件夹不能删除");
 
-  const [child] = await db
-    .select({ id: libraryFolders.id })
+  const parentId = folder.parentId;
+
+  if (mode === "keep-files") {
+    const [childFolders, childItems, destFolders, destItems] = await Promise.all([
+      db
+        .select({ id: libraryFolders.id, name: libraryFolders.name })
+        .from(libraryFolders)
+        .where(eq(libraryFolders.parentId, folderId)),
+      db
+        .select({ filename: libraryItems.filename })
+        .from(libraryItems)
+        .where(eq(libraryItems.folderId, folderId)),
+      db
+        .select({ id: libraryFolders.id, name: libraryFolders.name })
+        .from(libraryFolders)
+        .where(
+          and(
+            eq(libraryFolders.libraryId, folder.libraryId),
+            parentId ? eq(libraryFolders.parentId, parentId) : isNull(libraryFolders.parentId),
+          ),
+        ),
+      db
+        .select({ filename: libraryItems.filename })
+        .from(libraryItems)
+        .where(
+          and(
+            eq(libraryItems.libraryId, folder.libraryId),
+            parentId ? eq(libraryItems.folderId, parentId) : isNull(libraryItems.folderId),
+          ),
+        ),
+    ]);
+
+    // 被删的文件夹本身不算目标位置的占位者
+    const takenFolders = new Set(
+      destFolders.filter((f) => f.id !== folderId).map((f) => f.name.toLowerCase()),
+    );
+    for (const child of childFolders) {
+      if (takenFolders.has(child.name.toLowerCase())) {
+        throw new AppError(`上一级已有同名文件夹「${child.name}」，请先处理`);
+      }
+    }
+    const takenFiles = new Set(destItems.map((i) => i.filename.toLowerCase()));
+    for (const item of childItems) {
+      if (takenFiles.has(item.filename.toLowerCase())) {
+        throw new AppError(`上一级已有同名文件「${item.filename}」，请先处理`);
+      }
+    }
+
+    await db.transaction(async (tx) => {
+      await tx
+        .update(libraryFolders)
+        .set({ parentId, updatedAt: sql`now()` })
+        .where(eq(libraryFolders.parentId, folderId));
+      await tx
+        .update(libraryItems)
+        .set({ folderId: parentId, updatedAt: sql`now()` })
+        .where(eq(libraryItems.folderId, folderId));
+      await tx.delete(libraryFolders).where(eq(libraryFolders.id, folderId));
+      await recordLibraryOperation(tx, {
+        libraryId: folder.libraryId,
+        folderId: null,
+        actorId,
+        type: "folder_deleted",
+        oldValue: folder.name,
+        note: `文件移到上一级（${childItems.length} 个文件、${childFolders.length} 个子文件夹）`,
+      });
+    });
+    return {
+      deletedItems: 0,
+      movedItems: childItems.length,
+      movedFolders: childFolders.length,
+    };
+  }
+
+  // delete-all：先收集整棵子树（广度优先），再从叶子往根删
+  const allFolders = await db
+    .select({ id: libraryFolders.id, parentId: libraryFolders.parentId })
     .from(libraryFolders)
-    .where(eq(libraryFolders.parentId, folderId))
-    .limit(1);
-  if (child) throw new AppError("文件夹里还有子文件夹，请先清空");
-  const [item] = await db
+    .where(eq(libraryFolders.libraryId, folder.libraryId));
+  const childrenOf = new Map<string | null, string[]>();
+  for (const row of allFolders) {
+    const list = childrenOf.get(row.parentId);
+    if (list) list.push(row.id);
+    else childrenOf.set(row.parentId, [row.id]);
+  }
+  const order: string[] = [];
+  const stack = [folderId];
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    order.push(id);
+    stack.push(...(childrenOf.get(id) ?? []));
+  }
+
+  const items = await db
     .select({ id: libraryItems.id })
     .from(libraryItems)
-    .where(eq(libraryItems.folderId, folderId))
-    .limit(1);
-  if (item) throw new AppError("文件夹里还有文件，请先移动或删除");
+    .where(
+      and(
+        eq(libraryItems.libraryId, folder.libraryId),
+        inArray(libraryItems.folderId, order),
+      ),
+    );
+  for (const item of items) await deleteLibraryItem(actorId, item.id);
 
+  for (const id of order.reverse()) {
+    await db.delete(libraryFolders).where(eq(libraryFolders.id, id));
+  }
   await recordLibraryOperation(db, {
     libraryId: folder.libraryId,
     folderId: null,
     actorId,
     type: "folder_deleted",
     oldValue: folder.name,
+    note: `连同 ${items.length} 个文件、${order.length - 1} 个子文件夹一起删除`,
   });
-  await db.delete(libraryFolders).where(eq(libraryFolders.id, folderId));
+  return {
+    deletedItems: items.length,
+    movedItems: 0,
+    movedFolders: 0,
+  };
 }
 
 async function getFolderInLibraryById(folderId: string): Promise<{

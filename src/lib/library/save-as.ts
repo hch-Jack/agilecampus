@@ -34,7 +34,7 @@ export async function saveDocumentBytesToLibrary(input: {
   itemId: string;
   version: number;
   filename: string;
-  folderId: string;
+  folderId: string | null;
   scope: "personal" | "team";
   teamId?: string;
 }> {
@@ -59,8 +59,12 @@ export async function saveDocumentBytesToLibrary(input: {
   const access = await getLibraryAccess(input.userId, ref);
   if (!access?.canEdit) throw new ForbiddenError("你没有目标资源库的编辑权限");
 
-  const folderId = input.folderId || (await getDefaultFolderId(library, "manual"));
-  await assertFolderInLibrary(db, library.id, folderId);
+  // undefined = 默认「手动上传」文件夹；null = 资源库根目录
+  const folderId =
+    input.folderId === undefined
+      ? await getDefaultFolderId(library, "manual")
+      : input.folderId;
+  if (folderId) await assertFolderInLibrary(db, library.id, folderId);
 
   const blob = await saveBlobFromBuffer(input.bytes, maxBytes);
   try {

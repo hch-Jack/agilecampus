@@ -13,6 +13,7 @@ vi.mock("@/lib/auth", () => ({
 import { GET as itemRoute } from "@/app/api/library/items/[itemId]/route";
 import { GET as contentRoute } from "@/app/api/library/items/[itemId]/content/route";
 import { POST as restoreRoute } from "@/app/api/library/items/[itemId]/restore/route";
+import { POST as uploadRoute } from "@/app/api/library/upload/route";
 
 beforeAll(setupTempUploadDir);
 afterAll(teardownTempUploadDir);
@@ -120,6 +121,33 @@ describe("资源库路由", () => {
       ctx(itemId),
     );
     expect(forbidden.status).toBe(403);
+  });
+
+  it("上传：folderId=root 落到资源库根目录", async () => {
+    const s = await makeDocScene();
+    authMock.userId = s.student.id;
+    const res = await uploadRoute(
+      new Request(
+        "http://test/api/library/upload?scope=personal&folderId=root&name=root.txt&type=text/plain",
+        {
+          method: "POST",
+          body: new TextEncoder().encode("根目录内容"),
+        },
+      ),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { itemId: string; folderId: string | null };
+    expect(body.folderId).toBeNull();
+
+    const ref = { kind: "personal" as const, userId: s.student.id };
+    const root = await listLibraryContents(s.student.id, ref);
+    expect(root.items.map((i) => i.filename)).toContain("root.txt");
+
+    const content = await contentRoute(
+      new Request(`http://test/api/library/items/${body.itemId}/content`),
+      ctx(body.itemId),
+    );
+    expect(await content.text()).toBe("根目录内容");
   });
 });
 

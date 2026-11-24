@@ -1,7 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Markdown } from "@/components/markdown";
+
+export type TextEditorApi = {
+  /** 当前 textarea 里选中的文本（没有选中时为空） */
+  getSelection: () => string;
+};
 
 type Props = {
   value: string;
@@ -9,12 +14,28 @@ type Props = {
   readOnly: boolean;
   markdown: boolean;
   onSave: () => void;
+  apiRef?: { current: TextEditorApi | null };
 };
 
 /** 文本/代码/Markdown 编辑器：textarea + 可选 Markdown 预览。 */
-export function TextEditor({ value, onChange, readOnly, markdown, onSave }: Props) {
+export function TextEditor({ value, onChange, readOnly, markdown, onSave, apiRef }: Props) {
   const [tab, setTab] = useState<"edit" | "preview">("edit");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lines = useMemo(() => value.split("\n").length, [value]);
+
+  useEffect(() => {
+    if (!apiRef) return;
+    apiRef.current = {
+      getSelection: () => {
+        const el = textareaRef.current;
+        if (!el) return "";
+        return el.value.slice(el.selectionStart, el.selectionEnd);
+      },
+    };
+    return () => {
+      apiRef.current = null;
+    };
+  }, [apiRef]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -41,6 +62,7 @@ export function TextEditor({ value, onChange, readOnly, markdown, onSave }: Prop
         </div>
       ) : (
         <textarea
+          ref={textareaRef}
           className="min-h-0 w-full flex-1 resize-none bg-transparent px-4 py-3 font-mono text-[13px] leading-6 text-ink outline-none"
           value={value}
           readOnly={readOnly}

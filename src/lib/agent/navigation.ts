@@ -21,6 +21,7 @@ export const NAV_TARGETS = [
   "teams",
   "messages",
   "settings",
+  "library",
   "project",
   "project_graph",
   "project_flow",
@@ -30,6 +31,7 @@ export const NAV_TARGETS = [
   "team_projects",
   "team_resources",
   "team_labels",
+  "team_library",
 ] as const;
 
 export type NavTarget = (typeof NAV_TARGETS)[number];
@@ -40,6 +42,7 @@ const STATIC_TARGETS: Partial<Record<NavTarget, AssistantNavigation>> = {
   teams: { label: "我的团队", href: "/teams" },
   messages: { label: "消息", href: "/messages" },
   settings: { label: "AI 设置", href: "/settings" },
+  library: { label: "个人资源库", href: "/library" },
 };
 
 const PROJECT_TARGETS: Partial<Record<NavTarget, { suffix: string; label: string }>> = {
@@ -54,6 +57,7 @@ const TEAM_TARGETS: Partial<Record<NavTarget, { seg: string; label: string }>> =
   team_projects: { seg: "projects", label: "项目" },
   team_resources: { seg: "resources", label: "资源占用" },
   team_labels: { seg: "labels", label: "标签" },
+  team_library: { seg: "library", label: "资源库" },
 };
 
 export async function resolveNavigation(

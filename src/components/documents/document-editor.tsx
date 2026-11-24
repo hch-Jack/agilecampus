@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
+// 局域网 http://<IP> 属于非安全上下文：先补齐 SuperDoc/BetterOffice 需要的 crypto API
+import "@/lib/insecure-crypto-polyfill";
 import { decodeTextWithFallback, extOf } from "@/lib/file-preview";
 import { formatLabel, isSameEditableFormat, sheetBookTypeOf } from "@/lib/documents/format";
-import { importDocxToHtml } from "@/lib/documents/docx-import.client";
 import { grantEditorAction, revokeEditorAction, setCollaborationAction } from "@/app/(app)/documents/[documentId]/actions";
 import {
   LibrarySaveAsDialog,
@@ -12,9 +14,12 @@ import {
 } from "@/components/library/library-save-as-dialog";
 import { FileTypeIcon } from "@/components/file-type-icon";
 import { EditorSidebar } from "./editor-sidebar";
-import { RichTextEditor } from "./rich-text-editor";
+import { PptxEditorHost, type PptxEditorApi } from "./pptx-editor";
 import { SheetEditor, type SheetEditorApi } from "./sheet-editor";
-import { TextEditor } from "./text-editor";
+import { SuperDocEditor, type SuperDocEditorApi } from "./superdoc-editor";
+import { TextEditor, type TextEditorApi } from "./text-editor";
+import { XlsxEditorHost, type XlsxEditorApi } from "./xlsx-editor";
+import type { AiEditResponse, AiReplacement } from "@/lib/documents/ai-edits";
 import { useDocumentEvents } from "./use-document-events";
 import type { DocumentEditorInitial, DocumentVersionDto, LockView, PresenceUser } from "./editor-types";
 
@@ -24,8 +29,9 @@ type SaveMode = "autosave" | "manual" | "force" | "saveAs";
 
 type Payload =
   | { kind: "text"; text: string }
-  | { kind: "tiptap"; doc: unknown }
-  | { kind: "sheet"; bytes: Uint8Array };
+  | { kind: "docx"; bytes: Uint8Array }
+  | { kind: "sheet"; bytes: Uint8Array }
+  | { kind: "pptx"; bytes: Uint8Array };
 
 type SavePhase =
   | { kind: "idle" }
@@ -36,6 +42,42 @@ type SavePhase =
 type Conflict = { currentVersion: number; latest: DocumentVersionDto | null };
 
 type RemoteSaved = { version: number; text: string };
+
+/**
+ * 编辑器弹窗：portal 到 body + 高层级 + 毛玻璃遮罩。
+ * SuperDoc/BetterOffice 的内部浮层层级很高，放在编辑器子树里会出现
+ * 「点了弹窗却点到下面的编辑器」；挂到 body 上并用 z-[9999] 可避免。
+ */
+function EditorModal({
+  label,
+  onClose,
+  children,
+  panelClassName = "",
+}: {
+  label: string;
+  onClose: () => void;
+  children: ReactNode;
+  panelClassName?: string;
+}) {
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9999] grid place-items-center bg-ink/50 p-4 backdrop-blur-md"
+      role="dialog"
+      aria-modal="true"
+      aria-label={label}
+      onClick={onClose}
+    >
+      <div
+        className={`ac-dialog-panel w-full max-w-md p-5 ${panelClassName}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>,
+    document.body,
+  );
+}
 
 const HEARTBEAT_MS = 30_000;
 
@@ -104,8 +146,9 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
   const [phase, setPhase] = useState<"loading" | "ready" | "error">("loading");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [text, setText] = useState("");
-  const [tiptap, setTiptap] = useState<unknown>(null);
+  const [docxBytes, setDocxBytes] = useState<ArrayBuffer | null>(null);
   const [sheetBytes, setSheetBytes] = useState<ArrayBuffer | null>(null);
+  const [pptxBytes, setPptxBytes] = useState<ArrayBuffer | null>(null);
   const [originalUtf8, setOriginalUtf8] = useState(true);
   const [reloadToken, setReloadToken] = useState(0);
 
@@ -122,12 +165,26 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
   const [sidebar, setSidebar] = useState<null | "versions" | "permissions">(null);
   const [saveAsOpen, setSaveAsOpen] = useState(false);
   const [savedHint, setSavedHint] = useState("");
+  const [exitTarget, setExitTarget] = useState<{ href: string | null } | null>(null);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiInstruction, setAiInstruction] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState("");
+  const [aiHint, setAiHint] = useState("");
+  const [aiReview, setAiReview] = useState<{ count: number } | null>(null);
+  const [aiPreview, setAiPreview] = useState<{
+    summary: string;
+    edits: AiReplacement[];
+  } | null>(null);
+  const textApiRef = useRef<TextEditorApi | null>(null);
 
   const sheetApiRef = useRef<SheetEditorApi | null>(null);
+  const xlsxApiRef = useRef<XlsxEditorApi | null>(null);
+  const docxApiRef = useRef<SuperDocEditorApi | null>(null);
+  const pptxApiRef = useRef<PptxEditorApi | null>(null);
   const savingRef = useRef(false);
   const pendingRef = useRef(false);
   const reloadingRef = useRef(false);
-  const lastSaveAtRef = useRef(0);
   const lastKickRef = useRef(0);
   const dirtyRef = useRef(dirty);
   const versionRef = useRef(version);
@@ -202,11 +259,11 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
       applyMeta(state);
       const target = state.document.currentVersion;
 
-      if (format === "docx" && state.editorState != null) {
-        setTiptap(state.editorState);
-      } else if (format === "docx") {
-        const bytes = await fetchBytes();
-        setTiptap(await importDocxToHtml(bytes));
+      if (format === "docx") {
+        // SuperDoc 直接在 DOCX 字节上编辑；旧版 Tiptap editorState 不再使用
+        setDocxBytes(await fetchBytes());
+      } else if (format === "pptx") {
+        setPptxBytes(await fetchBytes());
       } else if (format === "text") {
         const decoded = decodeText(await fetchBytes());
         setText(decoded.text);
@@ -275,9 +332,17 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
   async function buildPayload(): Promise<Payload | null> {
     if (format === "text") return { kind: "text", text };
     if (format === "docx") {
-      return tiptap == null ? null : { kind: "tiptap", doc: tiptap };
+      const bytes = await docxApiRef.current?.getBytes();
+      return bytes ? { kind: "docx", bytes } : null;
     }
-    const bytes = sheetApiRef.current?.getBytes() ?? null;
+    if (format === "pptx") {
+      const bytes = await pptxApiRef.current?.getBytes();
+      return bytes ? { kind: "pptx", bytes } : null;
+    }
+    const bytes =
+      (bookType === "xlsx"
+        ? await xlsxApiRef.current?.getBytes()
+        : await sheetApiRef.current?.getBytes()) ?? null;
     return bytes ? { kind: "sheet", bytes } : null;
   }
 
@@ -304,7 +369,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
 
     try {
       let res: Response;
-      if (payload.kind === "sheet") {
+      if (payload.kind !== "text") {
         const query = new URLSearchParams({
           baseVersion: String(versionRef.current),
           sessionId,
@@ -312,16 +377,18 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
         });
         if (opts.mode === "force") query.set("force", "1");
         if (opts.mode === "saveAs" && opts.saveAsName) query.set("asName", opts.saveAsName);
-        res = await fetch(`/api/documents/${documentId}/save-sheet?${query.toString()}`, {
+        const endpoint =
+          payload.kind === "sheet"
+            ? "save-sheet"
+            : payload.kind === "docx"
+              ? "save-docx"
+              : "save-pptx";
+        res = await fetch(`/api/documents/${documentId}/${endpoint}?${query.toString()}`, {
           method: "POST",
           headers: { "content-type": "application/octet-stream" },
           body: payload.bytes as unknown as BodyInit,
         });
       } else {
-        const content =
-          payload.kind === "text"
-            ? { kind: "text" as const, text: payload.text }
-            : { kind: "tiptap" as const, doc: payload.doc };
         res = await fetch(`/api/documents/${documentId}/save`, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -331,7 +398,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
             force: opts.mode === "force" || undefined,
             saveAsName: opts.mode === "saveAs" ? opts.saveAsName : undefined,
             note: opts.mode === "autosave" ? "autosave" : "manual",
-            content,
+            content: { kind: "text" as const, text: payload.text },
           }),
         });
       }
@@ -350,7 +417,6 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
 
       if (res.ok) {
         const now = nowMs();
-        lastSaveAtRef.current = now;
         setDirty(false);
         dirtyRef.current = false;
         setSavePhase({ kind: "saved", at: now });
@@ -501,29 +567,8 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
     };
   }, [lockUrl, sessionId]);
 
-  // 自动保存：按格式防抖 + 最小间隔；有冲突/远程新版本时暂停
-  useEffect(() => {
-    if (!dirty || !editingAllowed || conflict || remote) return;
-    const debounce = format === "text" ? 1500 : format === "docx" ? 3000 : 2000;
-    const minGap = format === "text" ? 8000 : format === "docx" ? 20000 : 15000;
-    const wait = Math.max(debounce, minGap - (Date.now() - lastSaveAtRef.current));
-    const timer = window.setTimeout(() => {
-      void saveRef.current({ mode: "autosave" });
-    }, wait);
-    return () => window.clearTimeout(timer);
-  }, [dirty, editingAllowed, conflict, remote, format, text, tiptap]);
-
-  // 切走标签页时尽量落一次盘
-  useEffect(() => {
-    const onVisibility = () => {
-      if (document.visibilityState !== "hidden") return;
-      if (!dirtyRef.current || !canEditRef.current || conflictRef.current || revokedRef.current)
-        return;
-      void saveRef.current({ mode: "autosave" });
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, []);
+  // 不做自动保存：未保存的修改只在用户点「保存」或退出确认时落库，
+  // 避免每次自动保存都生成一个新版本。离开页面前仍由浏览器兜底提示。
 
   // 未保存离开提示
   useEffect(() => {
@@ -534,6 +579,27 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
     };
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, []);
+
+  // 应用内导航（顶栏、面包屑等）在未保存时先拦下来询问
+  useEffect(() => {
+    const onClick = (event: MouseEvent) => {
+      if (!dirtyRef.current || event.defaultPrevented) return;
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+        return;
+      const anchor = (event.target as Element | null)?.closest?.("a[href]");
+      if (!(anchor instanceof HTMLAnchorElement)) return;
+      if (anchor.target === "_blank" || anchor.hasAttribute("download")) return;
+      // 编辑器内容里的链接（文档内跳转/外链）不拦
+      if (anchor.closest("[data-doc-editor]")) return;
+      const href = anchor.getAttribute("href");
+      if (!href || href.startsWith("#") || /^[a-z][a-z0-9+.-]*:/i.test(href)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setExitTarget({ href });
+    };
+    window.addEventListener("click", onClick, true);
+    return () => window.removeEventListener("click", onClick, true);
   }, []);
 
   // 全局 Ctrl/Cmd+S（各编辑器内部的快捷键靠 kick 去重）
@@ -686,6 +752,215 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
     setSaveAsOpen(true);
   }
 
+  // ---------------------------------------------------------------- AI 编辑
+
+  const aiSupported =
+    format === "text" ||
+    format === "docx" ||
+    format === "pptx" ||
+    (format === "sheet" && bookType === "xlsx");
+
+  async function readAiContent(): Promise<{ content: string; selection?: string }> {
+    if (format === "text") {
+      return {
+        content: text,
+        selection: textApiRef.current?.getSelection() || undefined,
+      };
+    }
+    if (format === "docx") {
+      return { content: (await docxApiRef.current?.getText()) ?? "" };
+    }
+    if (format === "pptx") {
+      return { content: (await pptxApiRef.current?.getMarkdown()) ?? "" };
+    }
+    if (format === "sheet" && bookType === "xlsx") {
+      return { content: (await xlsxApiRef.current?.getMarkdown()) ?? "" };
+    }
+    return { content: "" };
+  }
+
+  function openAiDialog() {
+    if (!aiSupported) return;
+    setAiInstruction("");
+    setAiError("");
+    setAiPreview(null);
+    setAiOpen(true);
+  }
+
+  async function runAiEdits() {
+    const instruction = aiInstruction.trim();
+    if (!instruction || aiBusy) return;
+    setAiBusy(true);
+    setAiError("");
+    setAiPreview(null);
+    try {
+      const { content: raw, selection } = await readAiContent();
+      if (!raw.trim()) {
+        setAiError("当前文档内容为空，无法生成修改建议");
+        return;
+      }
+      const content =
+        raw.length > 110_000 ? `${raw.slice(0, 110_000)}\n…（内容过长，已截断）` : raw;
+      const res = await fetch(`/api/documents/${documentId}/ai-edits`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ instruction, content, selection }),
+      });
+      const data = (await res.json().catch(() => null)) as
+        | (AiEditResponse & { error?: string })
+        | { error?: string }
+        | null;
+      if (!res.ok || !data || "error" in data) {
+        setAiError((data as { error?: string } | null)?.error ?? "AI 生成失败，请稍后重试");
+        return;
+      }
+      if (!("kind" in data)) {
+        setAiError("AI 返回格式不正确，请重试");
+        return;
+      }
+      const result = data as AiEditResponse;
+      if (result.kind === "cells") {
+        if (format !== "sheet" || bookType !== "xlsx" || !xlsxApiRef.current) {
+          setAiError("当前格式不支持单元格修改");
+          return;
+        }
+        if (result.edits.length === 0) {
+          setAiError(result.summary || "AI 没有给出可应用的修改");
+          return;
+        }
+        const stagedResult = await xlsxApiRef.current.stageAiEdits({
+          summary: result.summary,
+          cells: result.edits,
+        });
+        setAiOpen(false);
+        setAiHint(
+          `已生成 ${stagedResult.staged} 处待确认修改${stagedResult.failed.length ? `（${stagedResult.failed.length} 处未找到目标）` : ""}，请在表格的提案审阅区确认。`,
+        );
+        return;
+      }
+
+      if (result.edits.length === 0) {
+        setAiError(result.summary || "AI 没有给出可应用的修改");
+        return;
+      }
+      if (format === "text") {
+        setAiPreview({ summary: result.summary, edits: result.edits });
+        return;
+      }
+      if (format === "docx") {
+        if (!docxApiRef.current) {
+          setAiError("Word 编辑器尚未就绪");
+          return;
+        }
+        const applied = await docxApiRef.current.applyAiEdits(result.edits);
+        if (applied.applied === 0) {
+          setAiError(
+            `AI 的 ${applied.failed.length} 条建议都没能在原文中匹配到，未产生任何修改。请换一种更具体的描述（例如直接说明要把哪一段改成什么）。`,
+          );
+          return;
+        }
+        setAiOpen(false);
+        setAiHint(
+          `已生成 ${applied.applied} 处修订${applied.failed.length ? `（${applied.failed.length} 处未匹配到原文）` : ""}。`,
+        );
+        setAiReview({ count: applied.applied });
+        return;
+      }
+      if (format === "pptx") {
+        if (!pptxApiRef.current) {
+          setAiError("演示文稿编辑器尚未就绪");
+          return;
+        }
+        const stagedResult = await pptxApiRef.current.stageAiEdits({
+          summary: result.summary,
+          edits: result.edits,
+        });
+        setAiOpen(false);
+        setAiHint(
+          `已生成 ${stagedResult.staged} 处待确认修改${stagedResult.failed.length ? `（${stagedResult.failed.length} 处未匹配到原文）` : ""}，请在演示文稿的提案审阅区确认。`,
+        );
+        return;
+      }
+      setAiError("当前格式暂不支持 AI 编辑");
+    } catch (e) {
+      setAiError(e instanceof Error ? e.message : "AI 生成失败，请稍后重试");
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
+  function applyTextAiEdits() {
+    if (!aiPreview) return;
+    let next = text;
+    let applied = 0;
+    const failed: string[] = [];
+    for (const edit of aiPreview.edits) {
+      const at = next.indexOf(edit.find);
+      if (at < 0) {
+        failed.push(edit.find);
+        continue;
+      }
+      next = `${next.slice(0, at)}${edit.replace}${next.slice(at + edit.find.length)}`;
+      applied += 1;
+    }
+    if (applied > 0) {
+      setText(next);
+      markDirty();
+      setAiHint(
+        `已应用 ${applied} 处修改${failed.length ? `（${failed.length} 处未匹配到原文）` : ""}，记得保存。`,
+      );
+    } else {
+      setAiError("所有修改都未能在原文中匹配，请调整指令或手动编辑");
+      return;
+    }
+    setAiOpen(false);
+    setAiPreview(null);
+  }
+
+  async function reviewAiEdits(action: "accept" | "reject") {
+    if (!docxApiRef.current) return;
+    try {
+      await docxApiRef.current.reviewAiEdits(action);
+      markDirty();
+      setAiReview(null);
+      setAiHint(action === "accept" ? "已接受全部 AI 修订，记得保存。" : "已拒绝全部 AI 修订。");
+    } catch (e) {
+      setAiHint(e instanceof Error ? e.message : "修订处理失败");
+    }
+  }
+
+  /** 返回/离开页面：有未保存修改时先让用户选保存还是放弃 */
+  function requestExit(href: string | null) {
+    if (!dirtyRef.current || !editingAllowed) {
+      if (href) router.push(href);
+      else router.back();
+      return;
+    }
+    setExitTarget({ href });
+  }
+
+  function applyExit(target: { href: string | null }) {
+    setExitTarget(null);
+    if (target.href) router.push(target.href);
+    else router.back();
+  }
+
+  async function saveAndExit() {
+    const target = exitTarget;
+    if (!target) return;
+    const ok = await saveRef.current({ mode: "manual" });
+    if (!ok) return; // 保存失败/冲突：留在页面处理
+    applyExit(target);
+  }
+
+  function discardAndExit() {
+    const target = exitTarget;
+    if (!target) return;
+    setDirty(false);
+    dirtyRef.current = false;
+    applyExit(target);
+  }
+
   async function saveToLibrary(input: LibrarySaveInput): Promise<{
     ok: boolean;
     error?: string;
@@ -694,26 +969,26 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
     if (!payload) return { ok: false, error: "当前内容尚未准备好，请稍后再试" };
     try {
       let res: Response;
-      if (payload.kind === "sheet") {
+      if (payload.kind !== "text") {
         const query = new URLSearchParams({
           filename: input.filename,
           scope: input.scope,
         });
         if (input.teamId) query.set("teamId", input.teamId);
-        if (input.folderId) query.set("folderId", input.folderId);
-        res = await fetch(
-          `/api/documents/${documentId}/save-as-library-sheet?${query.toString()}`,
-          {
-            method: "POST",
-            headers: { "content-type": "application/octet-stream" },
-            body: payload.bytes as unknown as BodyInit,
-          },
-        );
+        if (input.folderId === null) query.set("folderId", "root");
+        else if (input.folderId) query.set("folderId", input.folderId);
+        const endpoint =
+          payload.kind === "sheet"
+            ? "save-as-library-sheet"
+            : payload.kind === "docx"
+              ? "save-as-library-docx"
+              : "save-as-library-pptx";
+        res = await fetch(`/api/documents/${documentId}/${endpoint}?${query.toString()}`, {
+          method: "POST",
+          headers: { "content-type": "application/octet-stream" },
+          body: payload.bytes as unknown as BodyInit,
+        });
       } else {
-        const content =
-          payload.kind === "text"
-            ? { kind: "text" as const, text: payload.text }
-            : { kind: "tiptap" as const, doc: payload.doc };
         res = await fetch(`/api/documents/${documentId}/save-as-library`, {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -721,8 +996,8 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
             filename: input.filename,
             scope: input.scope,
             teamId: input.teamId,
-            folderId: input.folderId,
-            content,
+            folderId: input.folderId === null ? "root" : input.folderId,
+            content: { kind: "text" as const, text: payload.text },
           }),
         });
       }
@@ -738,22 +1013,24 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
     if (!payload) return false;
     try {
       let res: Response;
-      if (payload.kind === "sheet") {
+      if (payload.kind !== "text") {
         const query = new URLSearchParams({ filename });
-        res = await fetch(`/api/documents/${documentId}/export-sheet?${query.toString()}`, {
+        const endpoint =
+          payload.kind === "sheet"
+            ? "export-sheet"
+            : payload.kind === "docx"
+              ? "export-docx"
+              : "export-pptx";
+        res = await fetch(`/api/documents/${documentId}/${endpoint}?${query.toString()}`, {
           method: "POST",
           headers: { "content-type": "application/octet-stream" },
           body: payload.bytes as unknown as BodyInit,
         });
       } else {
-        const content =
-          payload.kind === "text"
-            ? { kind: "text" as const, text: payload.text }
-            : { kind: "tiptap" as const, doc: payload.doc };
         res = await fetch(`/api/documents/${documentId}/export`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ filename, content }),
+          body: JSON.stringify({ filename, content: { kind: "text", text: payload.text } }),
         });
       }
       if (!res.ok) {
@@ -815,14 +1092,29 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
     : "";
 
   return (
-    <div className="-mx-4 -my-4 flex h-[calc(100dvh-3rem)] flex-col overflow-hidden border-line bg-surface sm:-mx-6 sm:-my-6 sm:h-[calc(100dvh-4rem)] sm:border">
+    <div
+      data-doc-editor-root
+      className="-mx-4 -my-4 flex h-[calc(100dvh-3rem)] w-full flex-col overflow-hidden border-line bg-surface sm:-mx-6 sm:-my-6 sm:h-[calc(100dvh-4rem)] sm:border"
+    >
       <header className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2">
         {backHref ? (
-          <a href={backHref} className="ac-btn-ghost px-2 py-1 text-xs">
+          <a
+            href={backHref}
+            className="ac-btn-ghost px-2 py-1 text-xs"
+            onClick={(e) => {
+              if (!dirtyRef.current) return;
+              e.preventDefault();
+              requestExit(backHref);
+            }}
+          >
             ← 返回
           </a>
         ) : (
-          <button type="button" className="ac-btn-ghost px-2 py-1 text-xs" onClick={() => router.back()}>
+          <button
+            type="button"
+            className="ac-btn-ghost px-2 py-1 text-xs"
+            onClick={() => requestExit(null)}
+          >
             ← 返回
           </button>
         )}
@@ -879,6 +1171,19 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
           <button
             type="button"
             className="ac-btn-ghost px-2 py-1 text-xs"
+            disabled={!canEdit || readOnly || !aiSupported}
+            onClick={openAiDialog}
+            title={
+              aiSupported
+                ? "让 AI 助手为当前文档生成待确认修改"
+                : "AI 编辑暂支持文本、.docx、.xlsx、.pptx"
+            }
+          >
+            ✨ AI 编辑
+          </button>
+          <button
+            type="button"
+            className="ac-btn-ghost px-2 py-1 text-xs"
             onClick={() => setSidebar(sidebar === "versions" ? null : "versions")}
           >
             历史版本
@@ -901,6 +1206,48 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
       {savedHint && (
         <div className="border-b border-line bg-surface-2 px-3 py-1 text-xs text-done">
           {savedHint}
+        </div>
+      )}
+
+      {aiHint && (
+        <div className="flex items-center gap-2 border-b border-line bg-primary-soft px-3 py-1.5 text-xs text-primary">
+          <span className="min-w-0 flex-1">{aiHint}</span>
+          <button
+            type="button"
+            className="text-ink-faint hover:text-ink"
+            onClick={() => setAiHint("")}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {aiReview && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-line bg-accent-soft px-3 py-1.5 text-xs text-ink">
+          <span className="min-w-0 flex-1">
+            AI 已生成 {aiReview.count} 处修订（正文里带修订标记）。
+          </span>
+          <button
+            type="button"
+            className="ac-btn px-2.5 py-1 text-xs"
+            onClick={() => void reviewAiEdits("accept")}
+          >
+            接受全部修订
+          </button>
+          <button
+            type="button"
+            className="ac-btn-ghost px-2.5 py-1 text-xs"
+            onClick={() => void reviewAiEdits("reject")}
+          >
+            拒绝全部修订
+          </button>
+          <button
+            type="button"
+            className="text-ink-faint hover:text-ink"
+            onClick={() => setAiReview(null)}
+          >
+            ×
+          </button>
         </div>
       )}
 
@@ -948,7 +1295,7 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 flex-1" data-doc-editor>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {phase === "loading" ? (
             <div className="flex flex-1 items-center justify-center text-sm text-ink-faint">
@@ -978,16 +1325,36 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
               readOnly={readOnly}
               markdown={markdown}
               onSave={kickManualSave}
+              apiRef={textApiRef}
             />
           ) : format === "docx" ? (
-            <RichTextEditor
-              content={tiptap}
+            <SuperDocEditor
+              bytes={docxBytes}
+              readOnly={readOnly}
+              filename={docInfo.filename}
+              userName={initial.currentUserName}
+              apiRef={docxApiRef}
+              onDirty={markDirty}
+              onSave={kickManualSave}
+            />
+          ) : format === "pptx" ? (
+            <PptxEditorHost
+              bytes={pptxBytes}
               reloadToken={reloadToken}
               readOnly={readOnly}
-              onChange={(doc) => {
-                setTiptap(doc);
-                markDirty();
-              }}
+              filename={docInfo.filename}
+              apiRef={pptxApiRef}
+              onDirty={markDirty}
+              onSave={kickManualSave}
+            />
+          ) : bookType === "xlsx" ? (
+            <XlsxEditorHost
+              bytes={sheetBytes}
+              reloadToken={reloadToken}
+              readOnly={readOnly}
+              filename={docInfo.filename}
+              apiRef={xlsxApiRef}
+              onDirty={markDirty}
               onSave={kickManualSave}
             />
           ) : (
@@ -1102,6 +1469,139 @@ export function DocumentEditor({ initial }: { initial: DocumentEditorInitial }) 
             </div>
           </div>
         </div>
+      )}
+
+      {aiOpen && (
+        <EditorModal
+          label="AI 编辑"
+          onClose={() => !aiBusy && setAiOpen(false)}
+          panelClassName="max-w-lg space-y-3"
+        >
+            <div className="flex items-center justify-between">
+              <h2 className="font-display text-lg font-semibold text-ink">✨ AI 编辑</h2>
+              <button
+                type="button"
+                className="grid h-7 w-7 place-items-center rounded text-ink-faint hover:bg-sunken hover:text-ink"
+                aria-label="关闭"
+                onClick={() => !aiBusy && setAiOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+
+            {aiPreview ? (
+              <>
+                <p className="text-sm text-ink-soft">{aiPreview.summary}</p>
+                <ul className="max-h-64 space-y-2 overflow-y-auto rounded-field border border-line p-2 text-xs">
+                  {aiPreview.edits.map((edit, i) => (
+                    <li key={`${i}-${edit.find}`} className="space-y-0.5">
+                      <p className="whitespace-pre-wrap text-high line-through">{edit.find}</p>
+                      <p className="whitespace-pre-wrap text-done">{edit.replace}</p>
+                      {edit.note && <p className="text-ink-faint">{edit.note}</p>}
+                    </li>
+                  ))}
+                </ul>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    className="ac-btn-ghost justify-center px-3 py-1.5 text-center text-xs"
+                    onClick={() => {
+                      setAiOpen(false);
+                      setAiPreview(null);
+                    }}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    className="ac-btn justify-center px-3 py-1.5 text-center text-xs"
+                    onClick={applyTextAiEdits}
+                  >
+                    应用修改
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-ink-faint">
+                  {format === "text"
+                    ? "如已选中文本，AI 会优先针对选中片段；否则针对整份文件。"
+                    : format === "sheet"
+                      ? "AI 会以单元格写入的形式给出修改，应用后会进入待审阅提案。"
+                      : "AI 会以修订/提案的形式给出修改，应用后需要你确认接受。"}
+                </p>
+                <textarea
+                  value={aiInstruction}
+                  onChange={(e) => setAiInstruction(e.target.value)}
+                  rows={4}
+                  autoFocus
+                  placeholder="例如：把标题改得更正式；检查错别字；把第 3 行数据改成……"
+                  className="ac-field w-full text-sm"
+                />
+                {aiError && <p className="text-xs text-high">{aiError}</p>}
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    className="ac-btn-ghost justify-center px-3 py-1.5 text-center text-xs"
+                    disabled={aiBusy}
+                    onClick={() => setAiOpen(false)}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    className="ac-btn justify-center px-3 py-1.5 text-center text-xs"
+                    disabled={aiBusy || !aiInstruction.trim()}
+                    onClick={() => void runAiEdits()}
+                  >
+                    {aiBusy ? "生成中…" : "生成修改建议"}
+                  </button>
+                </div>
+              </>
+            )}
+        </EditorModal>
+      )}
+
+      {exitTarget && (
+        <EditorModal
+          label="未保存的修改"
+          onClose={() => savePhase.kind !== "saving" && setExitTarget(null)}
+          panelClassName="max-w-sm space-y-3"
+        >
+          <h2 className="font-display text-lg font-semibold text-ink">有未保存的修改</h2>
+          <p className="text-sm text-ink-soft">
+            离开前要保存这次编辑吗？保存会生成一个新版本。
+          </p>
+          <div className="space-y-2">
+            <button
+              type="button"
+              className="ac-btn w-full justify-center px-3 py-2 text-center text-sm"
+              disabled={savePhase.kind === "saving"}
+              onClick={() => void saveAndExit()}
+            >
+              {savePhase.kind === "saving" ? "保存中…" : "保存并退出"}
+            </button>
+            <button
+              type="button"
+              className="ac-btn-ghost w-full justify-center px-3 py-2 text-center text-sm text-high"
+              disabled={savePhase.kind === "saving"}
+              onClick={discardAndExit}
+            >
+              放弃更改并退出
+            </button>
+            <button
+              type="button"
+              className="w-full px-3 py-2 text-center text-xs text-ink-faint hover:text-ink"
+              disabled={savePhase.kind === "saving"}
+              onClick={() => setExitTarget(null)}
+            >
+              取消
+            </button>
+          </div>
+          {savePhase.kind === "error" && (
+            <p className="text-xs text-danger">{savePhase.message}</p>
+          )}
+        </EditorModal>
       )}
 
       <LibrarySaveAsDialog

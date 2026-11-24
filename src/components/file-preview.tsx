@@ -254,8 +254,16 @@ export function FilePreviewModal({
           objectUrl = URL.createObjectURL(new Blob([buf], { type: renderMime ?? "application/octet-stream" }));
           setBlobUrl(objectUrl);
         }
-      } catch {
-        if (!cancelled) setError(kind === "doc" ? "文档解析失败，可下载后查看" : "内容加载失败，可下载后查看");
+      } catch (e) {
+        if (!cancelled) {
+          setError(
+            e instanceof Error && e.message === "404"
+              ? "文件内容不存在或已被删除，无法预览"
+              : kind === "doc"
+                ? "文档解析失败，可下载后查看"
+                : "内容加载失败，可下载后查看",
+          );
+        }
       }
     })();
     return () => {
@@ -279,8 +287,14 @@ export function FilePreviewModal({
         const { stripDanglingPptxOverrides } = await import("@/lib/pptx-sanitize");
         const fixed = await stripDanglingPptxOverrides(buf);
         if (!cancelled) setPptBuf(fixed);
-      } catch {
-        if (!cancelled) setError("文档解析失败，可下载后查看");
+      } catch (e) {
+        if (!cancelled) {
+          setError(
+            e instanceof Error && e.message === "404"
+              ? "文件内容不存在或已被删除，无法预览"
+              : "文档解析失败，可下载后查看",
+          );
+        }
       }
     })();
     return () => {

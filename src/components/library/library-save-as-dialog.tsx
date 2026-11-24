@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { isSameEditableFormat } from "@/lib/documents/format";
+import { FolderTree } from "./folder-tree";
 import { listLibraryDestinationsAction } from "@/app/(app)/library/actions";
 import type { LibraryDestination } from "@/app/(app)/library/actions";
 
@@ -35,7 +37,7 @@ export function LibrarySaveAsDialog({
   originalFilename: string;
   defaultFilename?: string;
   sourceType: string;
-  format: "text" | "docx" | "sheet";
+  format: "text" | "docx" | "sheet" | "pptx";
   onClose: () => void;
   onSaveToLibrary: (input: LibrarySaveInput) => Promise<{
     ok: boolean;
@@ -48,7 +50,7 @@ export function LibrarySaveAsDialog({
 }) {
   const [destinations, setDestinations] = useState<LibraryDestination[]>([]);
   const [destKey, setDestKey] = useState("personal");
-  const [folderId, setFolderId] = useState("");
+  const [folderId, setFolderId] = useState<string | null>(null);
   const [filename, setFilename] = useState(defaultFilename ?? defaultCopyName(originalFilename));
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -173,15 +175,15 @@ export function LibrarySaveAsDialog({
     }
   }
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4"
+      className="fixed inset-0 z-[9999] grid place-items-center bg-ink/50 p-4 backdrop-blur-md"
       role="dialog"
       aria-modal="true"
       onClick={onClose}
     >
       <div
-        className="ac-card w-full max-w-md space-y-3 p-4"
+        className="ac-dialog-panel w-full max-w-md space-y-3 p-4"
         onClick={(e) => e.stopPropagation()}
       >
         <p className="text-sm font-semibold text-ink">另存为 / 下载</p>
@@ -195,36 +197,29 @@ export function LibrarySaveAsDialog({
           />
         </label>
 
-        <div className="flex gap-2">
-          <label className="min-w-0 flex-1 text-xs text-ink-soft">
-            目标资源库
-            <select
-              value={destKey}
-              onChange={(e) => chooseDest(e.target.value)}
-              className="ac-field mt-1 w-full text-sm"
-            >
-              {destinations.map((d) => (
-                <option key={d.key} value={d.key}>
-                  {d.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="min-w-0 flex-1 text-xs text-ink-soft">
-            文件夹
-            <select
-              value={folderId}
-              onChange={(e) => setFolderId(e.target.value)}
-              className="ac-field mt-1 w-full text-sm"
-            >
-              {(dest?.folders ?? []).map((folder) => (
-                <option key={folder.id} value={folder.id}>
-                  {" ".repeat(folder.depth * 2)}
-                  {folder.name}
-                </option>
-              ))}
-            </select>
-          </label>
+        <label className="block text-xs text-ink-soft">
+          目标资源库
+          <select
+            value={destKey}
+            onChange={(e) => chooseDest(e.target.value)}
+            className="ac-field mt-1 w-full text-sm"
+          >
+            {destinations.map((d) => (
+              <option key={d.key} value={d.key}>
+                {d.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div>
+          <p className="mb-1 text-xs text-ink-soft">保存位置</p>
+          <FolderTree
+            folders={dest?.folders ?? []}
+            value={folderId}
+            onChange={setFolderId}
+            rootLabel="资源库根目录"
+          />
         </div>
 
         {error && <p className="text-xs text-high">{error}</p>}
@@ -278,6 +273,7 @@ export function LibrarySaveAsDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

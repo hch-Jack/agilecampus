@@ -43,6 +43,21 @@ import {
   readTaskAttachmentText,
   saveAgentFile,
 } from "./files";
+import {
+  browseLibrary,
+  describeLibraryFolder,
+  describeLibraryItem,
+  describeTargetFolder,
+  editLibraryFileEnvelope,
+  libraryFileOpenEnvelope,
+  listItemVersionsForAgent,
+  myLibrariesSummary,
+  readLibraryFileText,
+  resolveLibraryScope,
+  resolveSaveFolder,
+  searchLibrary,
+} from "./library";
+import { LIBRARY_FILE_TYPES } from "@/lib/library/file-kind";
 import { GENERATE_MAX_CHARS, GENERATE_SUPPORTED_LABEL, generateFile } from "./file-generate";
 import {
   documentSpecSchema,
@@ -625,6 +640,18 @@ async function planTaskDaysDraft(actorId: string, ops: TaskPlanOp[]) {
   return draftEnvelope(MANAGE_TASK_PLANS_TOOL, { ops, summary });
 }
 
+// 资源库工具的公共参数：两个 scope 的库选择方式一致，避免 17 处各写一遍
+const libraryScopeArgs = {
+  scope: z
+    .enum(["personal", "team"])
+    .default("personal")
+    .describe("personal = 个人资源库；team = 团队资源库（需 teamId）"),
+  teamId: z
+    .uuid()
+    .optional()
+    .describe("scope=team 时必填；取自快照「我的团队」"),
+};
+
 function buildBasePersonalTools(actorId: string) {
   return {
     list_projects: tool({
@@ -635,8 +662,8 @@ function buildBasePersonalTools(actorId: string) {
     }),
     open_page: tool({
       description:
-        "把用户当前页面跳到平台内的某个页面：工作台、所有项目、我的团队、消息、AI 设置，" +
-        "某个项目的看板/关系图/流程图/时间线，某条任务详情，某个团队的成员/项目/资源占用/标签。" +
+        "把用户当前页面跳到平台内的某个页面：工作台、所有项目、我的团队、消息、AI 设置、个人资源库，" +
+        "某个项目的看板/关系图/流程图/时间线，某条任务详情，某个团队的成员/项目/资源占用/标签/资源库。" +
         "只在用户明确要求「打开 / 去 / 跳到 / 带我看看」某页时调用；单纯查数据（问进度、要清单）不要调它。" +
         "这是只读动作，**立即生效、不需要确认卡**；调用后正文说「已为你打开…」即可。",
       inputSchema: z.object({
@@ -754,7 +781,9 @@ function buildBasePersonalTools(actorId: string) {
           filename: row.filename,
           mimeType: row.mimeType,
           size: row.size,
-          hint: "文件已生成，可直接下载；要放进任务或发给别人，继续调用 save_file_to_task / send_message。",
+          hint:
+            "文件已生成，可直接下载；要放进任务、存进资源库或发给别人，继续调用 " +
+            "save_file_to_task / save_file_to_library / send_message。",
         };
       },
     }),
@@ -779,6 +808,369 @@ function buildBasePersonalTools(actorId: string) {
           filename: file.filename,
           size: file.size,
           taskTitle: task.title,
+        });
+      },
+    }),
+
+    // ---------------------------------------------------------------- 资源库
+    list_libraries: tool({
+      description:
+        "列出我的资源库概览：个人库文件数、各团队库文件数与最近更新的文件（含 itemId）。" +
+        "用户问「我有哪些资源库 / 资源库里最近有什么」时用。无需参数。",
+      inputSchema: z.object({}),
+      execute: async () => myLibrariesSummary(actorId),
+    }),
+    browse_library: tool({
+      description:
+        "浏览某个资源库目录（个人 / 团队）：返回当前文件夹下的子文件夹（folderId、路径、文件数）" +
+        "与文件（itemId、文件名、所在路径、大小、版本数、来源）。根目录 = 整库。" +
+        "可按文件名关键词、类型、排序筛选；浏览前会做一次节流同步，能看到刚上传的文件。" +
+        "要把文件读出来、预览、编辑、移动、复制或删除前，先用它取 folderId / itemId。",
+      inputSchema: z.object({
+        ...libraryScopeArgs,
+        folderId: z
+          .uuid()
+          .nullable()
+          .optional()
+          .describe("要浏览的文件夹 id；null/省略 = 资源库根目录"),
+        q: z.string().max(100).optional().describe("按文件名关键词过滤（当前文件夹及子文件夹）"),
+        type: z.enum(LIBRARY_FILE_TYPES).optional().describe("文件类型筛选；省略 = 全部"),
+        sort: z.enum(["name", "modified", "size", "type"]).optional(),
+        dir: z.enum(["asc", "desc"]).optional(),
+      }),
+      execute: async (input) => browseLibrary(actorId, input),
+    }),
+    search_library: tool({
+      description:
+        "在我的个人资源库与全部团队资源库里按**文件名**搜索（不区分大小写，不搜正文）。" +
+        "返回命中的文件（itemId、路径、所属库）与文件夹。用户问「资源库里有没有 X」" +
+        "或不知道文件在哪个文件夹时用。",
+      inputSchema: z.object({
+        query: z.string().min(1).max(100).describe("文件名关键词（按字面量匹配）"),
+        scope: z
+          .enum(["all", "personal", "team"])
+          .default("all")
+          .describe("all = 个人库 + 全部团队库；team = 只看某个团队库（需 teamId）"),
+        teamId: z.uuid().optional().describe("scope=team 时必填"),
+        limit: z.number().int().min(1).max(50).optional().describe("默认 20，最多 50"),
+      }),
+      execute: async (input) => searchLibrary(actorId, input),
+    }),
+    read_library_file: tool({
+      description:
+        "读取资源库文件的**正文**（不是预览）：文本/代码/CSV/JSON 直接解码，Word（.docx）与 Excel 抽成纯文本；" +
+        "PDF/PPT/图片读不了会返回说明，改用 open_library_file。可指定历史版本。" +
+        "itemId 取自 browse_library / search_library 的 items[].itemId。",
+      inputSchema: z.object({
+        itemId: z.uuid().describe("资源库文件 id"),
+        version: z.number().int().min(1).optional().describe("历史版本号；省略 = 当前版本"),
+      }),
+      execute: async ({ itemId, version }) => readLibraryFileText(actorId, itemId, version),
+    }),
+    open_library_file: tool({
+      description:
+        "在界面里打开资源库文件的预览（图片、PDF、文本、Word、Excel、PPT 等）。" +
+        "用户说「打开 / 看看 / 预览资源库里的 X」时用。只读、立即生效、不需要确认卡。",
+      inputSchema: z.object({
+        itemId: z.uuid().describe("取自 browse_library / search_library"),
+        version: z.number().int().min(1).optional().describe("历史版本号；省略 = 当前版本"),
+      }),
+      execute: async ({ itemId, version }) => libraryFileOpenEnvelope(actorId, itemId, version),
+    }),
+    edit_library_file: tool({
+      description:
+        "把资源库文件放进在线编辑器打开（docx / xlsx / pptx / 文本等可编辑格式），" +
+        "用户说「拿资源库里的 X 出来改一下 / 在线编辑」时用。会跳到编辑页，立即生效、不需要确认卡；" +
+        "保存后自动成为资源库的新版本。旧版 .doc/.ppt 或超限文件会返回错误，可改用 open_library_file。",
+      inputSchema: z.object({
+        itemId: z.uuid().describe("取自 browse_library / search_library"),
+      }),
+      execute: async ({ itemId }) => editLibraryFileEnvelope(actorId, itemId),
+    }),
+    list_library_versions: tool({
+      description:
+        "列出资源库文件的版本历史（版本号、文件名、大小、保存说明、操作者、时间）。" +
+        "用户问「这个文件改过几版 / 想恢复旧版本」时用；恢复前先取 version。",
+      inputSchema: z.object({
+        itemId: z.uuid().describe("取自 browse_library / search_library"),
+      }),
+      execute: async ({ itemId }) => listItemVersionsForAgent(actorId, itemId),
+    }),
+    create_library_folder: tool({
+      description:
+        "拟一个「新建资源库文件夹」草案。parentId 省略/null = 建在根目录。" +
+        "同名文件夹、默认文件夹等限制在确认落库时校验。仅产草案，需人工确认。",
+      inputSchema: z.object({
+        ...libraryScopeArgs,
+        parentId: z
+          .uuid()
+          .nullable()
+          .optional()
+          .describe("父文件夹 id（取自 browse_library 的 folders[].folderId）；省略 = 根目录"),
+        name: z.string().min(1).max(60).describe("文件夹名称"),
+      }),
+      execute: async ({ scope, teamId, parentId, name }) => {
+        const target = await resolveLibraryScope(actorId, { scope, teamId }, { needEdit: true });
+        let parentPath = "";
+        if (parentId) {
+          const parent = await describeLibraryFolder(actorId, parentId);
+          if (parent.libraryId !== target.library.id)
+            throw new AppError("父文件夹不属于目标资源库");
+          parentPath = parent.path;
+        }
+        return draftEnvelope(CREATE_LIBRARY_FOLDER_TOOL, {
+          scope,
+          teamId: target.ref.kind === "team" ? target.ref.teamId : null,
+          parentId: parentId ?? null,
+          parentPath,
+          name: name.trim(),
+          libraryLabel: target.label,
+        });
+      },
+    }),
+    rename_library_folder: tool({
+      description:
+        "拟一个「重命名资源库文件夹」草案。默认文件夹（任务附件/私信/群聊/助手生成/手动上传/群文件）不能改名，" +
+        "拟稿时会直接拒绝。仅产草案，需人工确认。",
+      inputSchema: z.object({
+        folderId: z.uuid().describe("取自 browse_library 的 folders[].folderId"),
+        name: z.string().min(1).max(60).describe("新名称"),
+      }),
+      execute: async ({ folderId, name }) => {
+        const folder = await describeLibraryFolder(actorId, folderId);
+        if (folder.isDefault) throw new AppError("默认文件夹不能改名");
+        const target = await resolveLibraryScope(
+          actorId,
+          { scope: folder.scope, teamId: folder.teamId },
+          { needEdit: true },
+        );
+        return draftEnvelope(RENAME_LIBRARY_FOLDER_TOOL, {
+          folderId,
+          name: name.trim(),
+          currentName: folder.name,
+          path: folder.path,
+          libraryLabel: target.label,
+        });
+      },
+    }),
+    delete_library_folder: tool({
+      description:
+        "拟一个「删除资源库文件夹」草案。mode=keep-files（默认）只删文件夹，内容移到上一级；" +
+        "mode=delete-all 连同全部子文件夹与文件一起删除（不可恢复）。默认文件夹不能删。" +
+        "仅产草案，需人工确认。",
+      inputSchema: z.object({
+        folderId: z.uuid().describe("取自 browse_library 的 folders[].folderId"),
+        mode: z
+          .enum(["keep-files", "delete-all"])
+          .default("keep-files")
+          .describe("keep-files = 内容移到上一级；delete-all = 连同文件一起删除"),
+      }),
+      execute: async ({ folderId, mode }) => {
+        const folder = await describeLibraryFolder(actorId, folderId);
+        if (folder.isDefault) throw new AppError("默认文件夹不能删除");
+        await resolveLibraryScope(
+          actorId,
+          { scope: folder.scope, teamId: folder.teamId },
+          { needEdit: true },
+        );
+        return draftEnvelope(DELETE_LIBRARY_FOLDER_TOOL, {
+          folderId,
+          mode,
+          name: folder.name,
+          path: folder.path,
+          libraryLabel: folder.libraryLabel,
+        });
+      },
+    }),
+    rename_library_file: tool({
+      description:
+        "拟一个「重命名资源库文件」草案。同一文件夹内已有同名文件时会拒绝。仅产草案，需人工确认。",
+      inputSchema: z.object({
+        itemId: z.uuid().describe("取自 browse_library / search_library"),
+        name: z.string().min(1).max(200).describe("新文件名（要带扩展名）"),
+      }),
+      execute: async ({ itemId, name }) => {
+        const item = await describeLibraryItem(actorId, itemId);
+        await resolveLibraryScope(
+          actorId,
+          { scope: item.scope, teamId: item.teamId },
+          { needEdit: true },
+        );
+        return draftEnvelope(RENAME_LIBRARY_FILE_TOOL, {
+          itemId,
+          name: name.trim(),
+          currentFilename: item.filename,
+          folderPath: item.folderPath,
+          libraryLabel: item.libraryLabel,
+        });
+      },
+    }),
+    move_library_file: tool({
+      description:
+        "拟一个「移动资源库文件到另一个文件夹」草案。folderId=null 表示移到资源库根目录。" +
+        "目标位置有同名文件时会拒绝。仅产草案，需人工确认。",
+      inputSchema: z.object({
+        itemId: z.uuid().describe("取自 browse_library / search_library"),
+        folderId: z
+          .uuid()
+          .nullable()
+          .describe("目标文件夹 id；null = 资源库根目录"),
+      }),
+      execute: async ({ itemId, folderId }) => {
+        const item = await describeLibraryItem(actorId, itemId);
+        const target = await resolveLibraryScope(
+          actorId,
+          { scope: item.scope, teamId: item.teamId },
+          { needEdit: true },
+        );
+        const dest = await describeTargetFolder(target.library, folderId);
+        return draftEnvelope(MOVE_LIBRARY_FILE_TOOL, {
+          itemId,
+          folderId: dest.folderId,
+          filename: item.filename,
+          currentFolderPath: item.folderPath,
+          targetPath: dest.path,
+          libraryLabel: target.label,
+        });
+      },
+    }),
+    copy_library_file: tool({
+      description:
+        "拟一个「把资源库文件复制到另一个库 / 文件夹」草案（可顺便改名）。" +
+        "复制会新存一份，源文件不动；目标位置已有同名文件时会拒绝，请换名或换文件夹。" +
+        "用户说「把资源库的 X 拷到团队库 / 放到另一个文件夹 / 另存一份」时用。仅产草案，需人工确认。",
+      inputSchema: z.object({
+        itemId: z.uuid().describe("源文件 id，取自 browse_library / search_library"),
+        ...libraryScopeArgs,
+        folderId: z
+          .uuid()
+          .nullable()
+          .optional()
+          .describe("目标文件夹 id；null = 目标库根目录；省略 = 默认「手动上传」文件夹"),
+        filename: z.string().min(1).max(200).optional().describe("新文件名；省略沿用原名"),
+      }),
+      execute: async ({ itemId, scope, teamId, folderId, filename }) => {
+        const source = await describeLibraryItem(actorId, itemId);
+        const target = await resolveLibraryScope(actorId, { scope, teamId }, { needEdit: true });
+        const dest = await resolveSaveFolder(target.library, scope, folderId, "manual");
+        return draftEnvelope(COPY_LIBRARY_FILE_TOOL, {
+          itemId,
+          scope,
+          teamId: target.ref.kind === "team" ? target.ref.teamId : null,
+          folderId: dest.folderId,
+          filename: filename?.trim() || source.filename,
+          sourceFilename: source.filename,
+          size: source.size,
+          targetLabel: target.label,
+          targetPath: dest.path,
+        });
+      },
+    }),
+    delete_library_file: tool({
+      description:
+        "拟一个「从资源库删除文件」草案。只删资源库记录与版本，**不会**删除来源的任务附件或消息附件。" +
+        "文件不可恢复（历史版本一并删除），确认前先向用户说清。仅产草案，需人工确认。",
+      inputSchema: z.object({
+        itemId: z.uuid().describe("取自 browse_library / search_library"),
+      }),
+      execute: async ({ itemId }) => {
+        const item = await describeLibraryItem(actorId, itemId);
+        await resolveLibraryScope(
+          actorId,
+          { scope: item.scope, teamId: item.teamId },
+          { needEdit: true },
+        );
+        return draftEnvelope(DELETE_LIBRARY_FILE_TOOL, {
+          itemId,
+          filename: item.filename,
+          folderPath: item.folderPath,
+          size: item.size,
+          currentVersion: item.currentVersion,
+          libraryLabel: item.libraryLabel,
+        });
+      },
+    }),
+    save_file_to_library: tool({
+      description:
+        "把助手对话里的文件（fileId）拟成「保存进资源库」草案。" +
+        "fileId 取自本轮消息末尾的文件清单、create_file 的返回值或历史文件。" +
+        "省略 folderId 时：个人库存进「助手生成」，团队库存进「手动上传」；同名会追加为新版本。" +
+        "仅产草案，需人工确认。",
+      inputSchema: z.object({
+        fileId: z.uuid().describe("助手对话文件的 id（上传或 create_file 生成）"),
+        ...libraryScopeArgs,
+        folderId: z
+          .uuid()
+          .nullable()
+          .optional()
+          .describe("目标文件夹 id；null = 根目录；省略 = 默认文件夹"),
+        filename: z.string().min(1).max(200).optional().describe("保存后的文件名；省略沿用原名"),
+      }),
+      execute: async ({ fileId, scope, teamId, folderId, filename }) => {
+        const file = await getAgentFileMeta(actorId, fileId);
+        const target = await resolveLibraryScope(actorId, { scope, teamId }, { needEdit: true });
+        const dest = await resolveSaveFolder(target.library, scope, folderId);
+        return draftEnvelope(SAVE_FILE_TO_LIBRARY_TOOL, {
+          fileId,
+          scope,
+          teamId: target.ref.kind === "team" ? target.ref.teamId : null,
+          folderId: dest.folderId,
+          filename: filename?.trim() || file.filename,
+          size: file.size,
+          targetLabel: target.label,
+          targetPath: dest.path,
+        });
+      },
+    }),
+    save_library_file_to_task: tool({
+      description:
+        "把资源库文件添加为任务附件：拟一张草案，确认后**复制文件字节**新建任务附件" +
+        "（之后删除资源库文件不影响任务附件）。itemId 取自 browse_library / search_library；" +
+        "taskId 取自 list_tasks / get_task_detail。仅产草案，需人工确认。",
+      inputSchema: z.object({
+        itemId: z.uuid().describe("资源库文件 id"),
+        taskId: z.uuid().describe("目标任务 id；须对该任务有写权限"),
+      }),
+      execute: async ({ itemId, taskId }) => {
+        const item = await describeLibraryItem(actorId, itemId);
+        const task = await getTaskDetailBundle(actorId, taskId);
+        await requireTaskWrite(actorId, task.projectId);
+        return draftEnvelope(SAVE_LIBRARY_FILE_TO_TASK_TOOL, {
+          itemId,
+          taskId,
+          filename: item.filename,
+          size: item.size,
+          taskTitle: task.title,
+          libraryLabel: item.libraryLabel,
+        });
+      },
+    }),
+    restore_library_version: tool({
+      description:
+        "拟一个「恢复资源库文件历史版本」草案：把指定版本的内容恢复为新的当前版本（旧版本保留）。" +
+        "version 取自 list_library_versions；恢复前先确认版本号。仅产草案，需人工确认。",
+      inputSchema: z.object({
+        itemId: z.uuid().describe("取自 browse_library / search_library"),
+        version: z.number().int().min(1).describe("要恢复的版本号"),
+      }),
+      execute: async ({ itemId, version }) => {
+        const item = await describeLibraryItem(actorId, itemId);
+        await resolveLibraryScope(
+          actorId,
+          { scope: item.scope, teamId: item.teamId },
+          { needEdit: true },
+        );
+        const history = await listItemVersionsForAgent(actorId, itemId);
+        if (!history.versions.some((v) => v.version === version))
+          throw new AppError("该版本不存在，请先 list_library_versions 查看版本号");
+        if (version === item.currentVersion)
+          throw new AppError("这已经是当前版本，无需恢复");
+        return draftEnvelope(RESTORE_LIBRARY_VERSION_TOOL, {
+          itemId,
+          version,
+          filename: item.filename,
+          currentVersion: item.currentVersion,
+          libraryLabel: item.libraryLabel,
         });
       },
     }),
@@ -1014,10 +1406,11 @@ function buildBasePersonalTools(actorId: string) {
     }),
     send_message: tool({
       description:
-        "拟一条发送消息草案：给个人或群聊发文本，可附一份文件。文件来源三选一：" +
+        "拟一条发送消息草案：给个人或群聊发文本，可附一份文件。文件来源四选一：" +
         "fileSource=task（任务附件，attachmentId 取自 list_attachments）、" +
         "fileSource=message（消息附件，attachmentId 取自 read_messages）、" +
-        "fileSource=file（助手上传/生成的文件，attachmentId 取自文件清单或 create_file 的返回值）。" +
+        "fileSource=file（助手上传/生成的文件，attachmentId 取自文件清单或 create_file 的返回值）、" +
+        "fileSource=library（资源库文件，attachmentId 用 browse_library / search_library 的 itemId）。" +
         "targetType=user 时 targetId 取自 find_contact / list_message_threads / list_members；" +
         "targetType=group 时取自 list_message_threads。仅产草案，确认后才会真正发送；绝不能声称已发送。",
       inputSchema: z.object({
@@ -1025,9 +1418,9 @@ function buildBasePersonalTools(actorId: string) {
         targetId: z.uuid().describe("对方 userId 或群聊 groupId"),
         content: z.string().optional().describe("消息正文；与文件至少给一个"),
         fileSource: z
-          .enum(["task", "message", "file"])
+          .enum(["task", "message", "file", "library"])
           .optional()
-          .describe("附件来源：task=任务附件，message=消息附件，file=助手对话文件"),
+          .describe("附件来源：task=任务附件，message=消息附件，file=助手对话文件，library=资源库文件"),
         attachmentId: z.uuid().optional().describe("附件 id；给了 fileSource 就必须给"),
       }),
       execute: async ({ targetType, targetId, content, fileSource, attachmentId }) => {
@@ -1705,7 +2098,7 @@ type FocusProjectTools = Pick<
   (typeof FOCUS_PROJECT_TOOL_NAMES)[number]
 >;
 
-/** 无焦点项目：恰好是控制台基础工具集（测试钉着这 34 件的全集） */
+/** 无焦点项目：恰好是控制台基础工具集（测试钉着全集） */
 export function buildPersonalTools(actorId: string): BasePersonalTools;
 /** 有焦点项目：基础工具集 + 六件项目专属工具 */
 export function buildPersonalTools(
@@ -1789,6 +2182,19 @@ export const MANAGE_TASK_PLANS_TOOL = "manage_task_plans" as const;
 // 技能正文会随工具结果进入共享对话记录，等于让队友看到，故不接。
 export const CREATE_SKILL_TOOL = "create_skill" as const;
 
+// 资源库写操作：只挂在工作台助手（个人 scope）。项目助手是团队共享会话，
+// 个人资源库的内容不该出现在队友可见的对话里；团队库也统一从个人助手操作。
+export const CREATE_LIBRARY_FOLDER_TOOL = "create_library_folder" as const;
+export const RENAME_LIBRARY_FOLDER_TOOL = "rename_library_folder" as const;
+export const DELETE_LIBRARY_FOLDER_TOOL = "delete_library_folder" as const;
+export const RENAME_LIBRARY_FILE_TOOL = "rename_library_file" as const;
+export const MOVE_LIBRARY_FILE_TOOL = "move_library_file" as const;
+export const COPY_LIBRARY_FILE_TOOL = "copy_library_file" as const;
+export const DELETE_LIBRARY_FILE_TOOL = "delete_library_file" as const;
+export const SAVE_FILE_TO_LIBRARY_TOOL = "save_file_to_library" as const;
+export const SAVE_LIBRARY_FILE_TO_TASK_TOOL = "save_library_file_to_task" as const;
+export const RESTORE_LIBRARY_VERSION_TOOL = "restore_library_version" as const;
+
 /** 需要人工确认才落库的工具全集 —— 两个 scope 的草案都走同一张确认卡 */
 export const COMMIT_TOOL_NAMES = [
   ...WRITE_TOOL_NAMES,
@@ -1811,6 +2217,16 @@ export const COMMIT_TOOL_NAMES = [
   MANAGE_WIDGETS_TOOL,
   MANAGE_TASK_PLANS_TOOL,
   CREATE_SKILL_TOOL,
+  CREATE_LIBRARY_FOLDER_TOOL,
+  RENAME_LIBRARY_FOLDER_TOOL,
+  DELETE_LIBRARY_FOLDER_TOOL,
+  RENAME_LIBRARY_FILE_TOOL,
+  MOVE_LIBRARY_FILE_TOOL,
+  COPY_LIBRARY_FILE_TOOL,
+  DELETE_LIBRARY_FILE_TOOL,
+  SAVE_FILE_TO_LIBRARY_TOOL,
+  SAVE_LIBRARY_FILE_TO_TASK_TOOL,
+  RESTORE_LIBRARY_VERSION_TOOL,
 ] as const;
 
 export type CommitToolName = (typeof COMMIT_TOOL_NAMES)[number];

@@ -316,6 +316,21 @@ body.proj-cosmic [role="dialog"] * {
   transform-origin: top right;
   animation: ac-pop-in .22s cubic-bezier(.22, .72, .28, 1) both;
 }
+
+/* —— 上拉菜单：从按钮下方浮入（附件来源菜单等） —— */
+@keyframes ac-pop-up-in {
+  from { opacity: 0; transform: translateY(6px) scale(.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.ac-pop-up-in {
+  transform-origin: bottom left;
+  animation: ac-pop-up-in .2s cubic-bezier(.22, .72, .28, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ac-pop-up-in {
+    animation: none;
+  }
+}
 .ac-modal-in {
   animation: ac-modal-in .3s cubic-bezier(.22, .72, .28, 1) both;
 }
@@ -329,6 +344,15 @@ body.proj-cosmic .ac-modal-in {
 
 /* —— 新手教程小窗的换步动画：内容淡入上浮，同款曲线 ——
    弹窗内元素被 [role="dialog"] * 的 animation:none 禁掉，星空主题下需同款 !important 恢复 */
+/* 编辑器侧栏（历史版本/权限）滑入 */
+@keyframes ac-sidebar-in {
+  from { opacity: 0; transform: translateX(14px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.ac-sidebar-in {
+  animation: ac-sidebar-in .2s cubic-bezier(.22, .72, .28, 1) both;
+}
+
 @keyframes ac-step-in {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -493,6 +517,10 @@ body.proj-cosmic .mobile-nav-sheet {
   max-width: 64rem;
 }
 .app-content:has(.page-wide) {
+  max-width: none;
+}
+/* 在线文档编辑器：占满整个正文区，左右不再被 64rem 限宽 */
+.app-content:has([data-doc-editor-root]) {
   max-width: none;
 }
 .page-wide {
