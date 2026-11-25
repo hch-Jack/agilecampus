@@ -233,16 +233,20 @@ export default async function TaskDetailPage({
 
       {/* 动态走「最新记录」同款模块：未读角标+标记已读+新消息红点+内部滚动+清除记录。
           任务页无拖拽事件源，改由回流的新行驱动未读 +1（bumpOnNewRows） */}
-      <ActivityFeed
-        activities={activities}
-        tz={tz}
-        now={new Date()}
-        title="动态"
-        unreadScope={taskFeedScope(taskId)}
-        unreadCount={taskFeedUnread}
-        clearScope={taskFeedScope(taskId)}
-        bumpOnNewRows
-      />
+      {/* 与项目页「最新记录」同高（20rem），记录再多也只内部滚动 */}
+      <div className="h-80">
+        <ActivityFeed
+          activities={activities}
+          tz={tz}
+          now={new Date()}
+          title="动态"
+          unreadScope={taskFeedScope(taskId)}
+          unreadCount={taskFeedUnread}
+          clearScope={taskFeedScope(taskId)}
+          bumpOnNewRows
+          fill
+        />
+      </div>
     </main>
   );
 }

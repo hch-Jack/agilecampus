@@ -264,7 +264,9 @@ export function ActivityFeed({
       className={
         embedded
           ? "flex h-full min-h-0 flex-col p-3"
-          : "ac-card p-5"
+          : fill
+            ? "ac-card flex h-full min-h-0 flex-col p-5"
+            : "ac-card p-5"
       }
     >
       <div className="flex shrink-0 items-center justify-between gap-3">
