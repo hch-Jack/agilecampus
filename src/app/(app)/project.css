@@ -390,6 +390,21 @@ body.proj-cosmic .proj-column {
   -webkit-backdrop-filter: blur(10px);
   transition: border-color .2s ease, background .2s ease, box-shadow .2s ease;
 }
+
+/* 项目看板：每列最多约 6 张卡，超出在列内滚动；滚动条隐藏，
+   与工作台看板保持同样的「可滚动但不留滚动条」观感。 */
+@media (min-width: 640px) {
+  .proj-board-column {
+    max-height: 40rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .proj-board-column::-webkit-scrollbar {
+    display: none;
+  }
+}
 body.proj-cosmic .proj-column.drop {
   border-color: rgba(156, 196, 245, .85);
   background: rgba(156, 196, 245, .10);

@@ -32,6 +32,7 @@ import { Board } from "./board";
 import { FilterBar } from "./filter-bar";
 import { ProjectCommentList } from "./project-comment-list";
 import { TaskStatusPie } from "./task-status-pie";
+import { LastProjectTracker } from "./last-project-tracker";
 
 export default async function ProjectPage({
   params,
@@ -130,6 +131,7 @@ export default async function ProjectPage({
 
   return (
     <main className="page-wide space-y-8 py-5 sm:py-8">
+      <LastProjectTracker projectId={projectId} />
       <header>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <h1 className="min-w-0 font-display text-2xl font-semibold text-ink">
@@ -157,11 +159,11 @@ export default async function ProjectPage({
             </Link>
             <Link
               href={`/projects/${projectId}/burndown`}
-              className="ac-btn-ghost whitespace-nowrap"
+              className="ac-btn-ghost proj-nav-link whitespace-nowrap"
             >
               <svg
                 viewBox="0 0 16 16"
-                className="h-3.5 w-3.5"
+                className="h-4 w-4"
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="1.3"
@@ -174,11 +176,11 @@ export default async function ProjectPage({
             </Link>
             <Link
               href={`/projects/${projectId}/contributors`}
-              className="ac-btn-ghost whitespace-nowrap"
+              className="ac-btn-ghost proj-nav-link whitespace-nowrap"
             >
               <svg
                 viewBox="0 0 16 16"
-                className="h-3.5 w-3.5"
+                className="h-4 w-4"
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="1.3"
@@ -229,9 +231,19 @@ export default async function ProjectPage({
               流程图
             </Link>
             <Link
-              href={`/teams/${project.teamId}/library`}
-              className="ac-btn-ghost whitespace-nowrap"
+              href={`/teams/${project.teamId}/library?fromProject=${projectId}`}
+              className="ac-btn-ghost proj-nav-link whitespace-nowrap"
             >
+              <svg
+                viewBox="0 0 16 16"
+                className="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.3"
+                aria-hidden="true"
+              >
+                <path d="M1.5 4.2A1.2 1.2 0 0 1 2.7 3h3.1l1.2 1.4h6.3a1.2 1.2 0 0 1 1.2 1.2v7.2a1.2 1.2 0 0 1-1.2 1.2H2.7a1.2 1.2 0 0 1-1.2-1.2Z" />
+              </svg>
               团队资源库
             </Link>
           </div>

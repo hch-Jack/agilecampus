@@ -515,7 +515,10 @@ export function WorkbenchBoard({
 
         {error && <p className="dw-body mt-1 text-high">{error}</p>}
 
-        <div className="workbench-board-content ac-scroll-hidden mt-2 min-h-0 flex-1">
+        <div
+          key={`${hideDone}-${projectFilter ?? "all"}`}
+          className="workbench-board-content ac-scroll-hidden ac-step-in mt-2 min-h-0 flex-1"
+        >
           <div
             className="workbench-columns grid gap-4"
             style={{ "--workbench-cols": columns.length } as CSSProperties}

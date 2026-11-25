@@ -8,6 +8,7 @@ import { parseLibraryQuery } from "@/lib/library/query";
 import { listLibraryOperations } from "@/lib/library/operations";
 import { syncTeamLibrary } from "@/lib/library/sync";
 import { LibraryBrowser } from "@/components/library/library-browser";
+import { BackToProjectButton } from "@/components/library/back-to-project-button";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +34,9 @@ export default async function TeamLibraryPage({
   const sp = await searchParams;
   const folderId = one(sp.folder);
   const query = parseLibraryQuery(sp);
+  const fromProjectRaw = one(sp.fromProject);
+  const fromProject =
+    fromProjectRaw && z.uuid().safeParse(fromProjectRaw).success ? fromProjectRaw : null;
   const ref = { kind: "team" as const, teamId };
 
   await syncTeamLibrary(session.user.id, teamId, { force: true }).catch(() => {});
@@ -47,9 +51,12 @@ export default async function TeamLibraryPage({
   return (
     <div className="mx-auto max-w-5xl space-y-4 py-5 sm:py-8">
       <div>
-        <a href="/teams" className="text-xs text-ink-faint hover:text-primary">
-          ← 我的团队
-        </a>
+        <div className="flex flex-wrap items-center gap-3">
+          <a href="/teams" className="text-xs text-ink-faint hover:text-primary">
+            ← 我的团队
+          </a>
+          <BackToProjectButton projectId={fromProject} />
+        </div>
         <h1 className="mt-1 font-display text-2xl font-semibold text-ink">
           {team.name} · 资源库
         </h1>

@@ -64,7 +64,7 @@ function Column({
   return (
     <div
       ref={setNodeRef}
-      className={`proj-column min-h-40 shrink-0 space-y-2 rounded-xl border border-line p-3 transition-colors max-sm:snap-start ${
+      className={`proj-column proj-board-column min-h-40 shrink-0 space-y-2 rounded-xl border border-line p-3 transition-colors max-sm:snap-start ${
         stretch ? "w-72 lg:w-auto lg:min-w-[13rem] lg:flex-1" : "w-72"
       } ${isOver ? "drop" : ""}`}
     >

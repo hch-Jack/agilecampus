@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import type { ApprovalHistoryRow } from "@/lib/approval";
 import { APPROVAL_TYPE_LABEL, approvalDetailHref, approvalSubject } from "@/lib/approval-view";
@@ -132,16 +133,18 @@ export function ApprovalHistoryModal({
   const requested = rows?.filter((r) => r.direction === "requested") ?? [];
   const decided = rows?.filter((r) => r.direction === "decided") ?? [];
 
-  return (
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="ac-backdrop-in fixed inset-0 z-[9999] flex items-center justify-center bg-ink/50 p-4 backdrop-blur-md"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-label="审批记录"
     >
       <div
-        className="flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-field border border-line bg-surface shadow-2xl max-sm:max-h-[85dvh]"
+        className="ac-dialog-panel ac-modal-in flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden max-sm:max-h-[85dvh]"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex items-center gap-2 border-b border-line px-4 py-2.5">
@@ -181,6 +184,7 @@ export function ApprovalHistoryModal({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
