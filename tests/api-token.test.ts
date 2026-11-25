@@ -5,6 +5,7 @@ import {
   verifyApiToken,
   listApiTokens,
   revokeApiToken,
+  deleteApiToken,
 } from "@/lib/api-token";
 import { resetDb } from "./helpers";
 
@@ -111,5 +112,45 @@ describe("listApiTokens / revokeApiToken", () => {
     const { id } = await createApiToken(user.id, "令牌");
     await revokeApiToken(user.id, id);
     await expect(revokeApiToken(user.id, id)).rejects.toThrow();
+  });
+});
+
+describe("deleteApiToken", () => {
+  beforeEach(resetDb);
+
+  it("删除已撤销令牌后列表不再显示", async () => {
+    const user = await makeUser("owner@example.com");
+    const { id } = await createApiToken(user.id, "令牌");
+    await revokeApiToken(user.id, id);
+
+    await deleteApiToken(user.id, id);
+    expect(await listApiTokens(user.id)).toHaveLength(0);
+  });
+
+  it("生效中的令牌不可删除", async () => {
+    const user = await makeUser("owner@example.com");
+    const { id } = await createApiToken(user.id, "令牌");
+
+    await expect(deleteApiToken(user.id, id)).rejects.toThrow("未撤销");
+    expect(await listApiTokens(user.id)).toHaveLength(1);
+  });
+
+  it("不能删除他人令牌", async () => {
+    const a = await makeUser("a@example.com");
+    const b = await makeUser("b@example.com");
+    const { id } = await createApiToken(a.id, "甲的令牌");
+    await revokeApiToken(a.id, id);
+
+    await expect(deleteApiToken(b.id, id)).rejects.toThrow();
+    expect(await listApiTokens(a.id)).toHaveLength(1);
+  });
+
+  it("重复删除被拒", async () => {
+    const user = await makeUser("owner@example.com");
+    const { id } = await createApiToken(user.id, "令牌");
+    await revokeApiToken(user.id, id);
+
+    await deleteApiToken(user.id, id);
+    await expect(deleteApiToken(user.id, id)).rejects.toThrow();
   });
 });

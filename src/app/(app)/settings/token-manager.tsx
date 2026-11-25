@@ -1,7 +1,13 @@
 "use client";
 
-import { useActionState, useState } from "react";
-import { createTokenAction, revokeTokenAction, type CreateTokenState } from "./actions";
+import { useActionState, useRef, useState } from "react";
+import { ConfirmDangerDialog } from "@/components/confirm-danger-dialog";
+import {
+  createTokenAction,
+  deleteTokenAction,
+  revokeTokenAction,
+  type CreateTokenState,
+} from "./actions";
 
 export interface TokenRow {
   id: string;
@@ -71,13 +77,15 @@ export function TokenManager({ tokens }: { tokens: TokenRow[] }) {
                     {t.lastUsedLabel ? ` · 最近使用 ${t.lastUsedLabel}` : " · 从未使用"}
                   </p>
                 </div>
-                {!t.revoked && (
+                {!t.revoked ? (
                   <form action={revokeTokenAction}>
                     <input type="hidden" name="id" value={t.id} />
                     <button className="ac-btn-ghost text-high hover:border-high hover:text-high">
                       撤销
                     </button>
                   </form>
+                ) : (
+                  <DeleteTokenButton id={t.id} name={t.name} />
                 )}
               </li>
             ))}
@@ -85,6 +93,40 @@ export function TokenManager({ tokens }: { tokens: TokenRow[] }) {
         )}
       </div>
     </div>
+  );
+}
+
+// 已撤销令牌的删除入口：删除不可恢复，故复用全站的危险操作确认弹窗。
+// 弹窗挂在 body（Portal），确认后借表单引用提交服务端 action，成功后列表重渲染、该行消失。
+function DeleteTokenButton({ id, name }: { id: string; name: string }) {
+  const [open, setOpen] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  return (
+    <>
+      <form action={deleteTokenAction} ref={formRef}>
+        <input type="hidden" name="id" value={id} />
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="ac-btn-ghost text-high hover:border-high hover:text-high"
+        >
+          删除
+        </button>
+      </form>
+      <ConfirmDangerDialog
+        open={open}
+        title="删除令牌"
+        confirmLabel="删除"
+        onCancel={() => setOpen(false)}
+        onConfirm={() => {
+          setOpen(false);
+          formRef.current?.requestSubmit();
+        }}
+      >
+        删除「{name}」？该令牌已撤销，删除后将从列表中移除且无法恢复。
+      </ConfirmDangerDialog>
+    </>
   );
 }
 

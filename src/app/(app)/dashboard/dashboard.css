@@ -1066,7 +1066,7 @@ body.proj-cosmic .dashboard-widget-alert .dashboard-widget-inner {
 }
 
 /* 看板列：窄卡片单列堆叠，宽到 560px 才按当前列数排开。
-   列数由「隐藏已完成」决定（2 或 3），走内联 CSS 变量，别写死三列留空位。 */
+   列数由「待审批」列与「隐藏已完成」决定（3 或 4），走内联 CSS 变量，别写死列数留空位。 */
 .workbench-board-content {
   container-type: inline-size;
   overflow-y: auto;

@@ -13,6 +13,7 @@ import {
   listPendingAcceptanceProjectIds,
   listPendingTaskDoneApprovals,
 } from "@/lib/approval";
+import { countTaskStatuses } from "@/lib/task-status-counts";
 import { getMyPermissions } from "@/lib/team-permissions";
 import { countProjectAttachments } from "@/lib/attachment";
 import { listPropertyDefs } from "@/lib/properties";
@@ -30,6 +31,7 @@ import { TaskDatabaseFilterBar } from "./task-database-filter-bar";
 import { Board } from "./board";
 import { FilterBar } from "./filter-bar";
 import { ProjectCommentList } from "./project-comment-list";
+import { TaskStatusPie } from "./task-status-pie";
 
 export default async function ProjectPage({
   params,
@@ -120,6 +122,11 @@ export default async function ProjectPage({
   const canApproveTaskDone = myPerms?.taskDone ?? false;
   // 概览进度：项目内全部任务（含子任务）的完成数
   const taskDone = projectTasks.filter((t) => t.status === "done").length;
+  // 饼图与看板同口径：待审批优先于底层状态；统计项目全部任务（含子任务）
+  const taskStatusCounts = countTaskStatuses(
+    projectTasks,
+    new Set(pendingTaskApprovals.keys()),
+  );
 
   return (
     <main className="page-wide space-y-8 py-5 sm:py-8">
@@ -340,7 +347,7 @@ export default async function ProjectPage({
       {/* 新建任务与附件中心并排一行：任务卡收窄，附件中心做固定宽度的入口卡 */}
       <div
         className={`grid items-stretch gap-4 ${
-          canWrite ? "lg:grid-cols-[minmax(0,1fr)_15rem]" : ""
+          canWrite ? "lg:grid-cols-[minmax(0,1fr)_30rem] lg:min-h-80" : ""
         }`}
       >
         {canWrite && (
@@ -390,15 +397,23 @@ export default async function ProjectPage({
         />
       </section>
 
-      {/* 本项目专属口径：只统计该项目的记录（不限「分配给我」）；「清除记录」只清自己视角 */}
-      <ActivityFeed
-        activities={projectActivities}
-        tz={tz}
-        now={now}
-        unreadScope={projectFeedScope(projectId)}
-        unreadCount={projectFeedUnread}
-        clearScope={projectFeedScope(projectId)}
-      />
+      {/* 底部信息区：最新记录 + 任务分布。两块与「新建任务」卡等高（20rem），
+          记录再多也只内部滚动，不再把页面撑长 */}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_30rem]">
+        <div className="h-80">
+          {/* 本项目专属口径：只统计该项目的记录（不限「分配给我」）；「清除记录」只清自己视角 */}
+          <ActivityFeed
+            activities={projectActivities}
+            tz={tz}
+            now={now}
+            unreadScope={projectFeedScope(projectId)}
+            unreadCount={projectFeedUnread}
+            clearScope={projectFeedScope(projectId)}
+            fill
+          />
+        </div>
+        <TaskStatusPie counts={taskStatusCounts} />
+      </div>
     </main>
   );
 }

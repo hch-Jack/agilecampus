@@ -29,9 +29,11 @@ export default async function WelcomePage() {
       username={session.user.name ?? ""}
       avatarUrl={avatarUrl}
       timeZone={tz}
+      overdue={s.overdue}
+      dueToday={s.dueToday}
+      dueThisWeek={s.dueThisWeek}
       doing={s.doing}
-      todo={s.todo}
-      risk={s.risk}
+      plannedToday={s.plannedToday}
     />
   );
 }

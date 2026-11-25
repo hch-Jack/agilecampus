@@ -30,18 +30,23 @@ type Props = {
   avatarUrl: string | null;
   /** 用户所选时区：钟面、日期、昼夜与问候语一律按它算，不按浏览器本地时间 */
   timeZone: string;
+  overdue: number;
+  dueToday: number;
+  dueThisWeek: number;
   doing: number;
-  todo: number;
-  risk: number;
+  /** 今日计划：日程表里覆盖今天的排期任务数 */
+  plannedToday: number;
 };
 
 export function WelcomeScreen({
   username,
   avatarUrl,
   timeZone,
+  overdue,
+  dueToday,
+  dueThisWeek,
   doing,
-  todo,
-  risk,
+  plannedToday,
 }: Props) {
   const [now, setNow] = useState<Date | null>(null);
   const [quote] = useState(() => QUOTES[Math.floor(Math.random() * QUOTES.length)]);
@@ -112,17 +117,29 @@ export function WelcomeScreen({
         <div className="quote-by">—— {quote.a}</div>
 
         <div className="chips">
-          <div className="chip c1">
-            <span className="c-dot doing" />
-            正在进行中的任务 <b>{doing}</b> 项
+          <div className="chip-row">
+            <div className="chip c1">
+              <span className="c-dot overdue" />
+              <b>{overdue}</b> 项任务已逾期
+            </div>
+            <div className="chip c2">
+              <span className="c-dot today" />
+              <b>{dueToday}</b> 项任务今日截止
+            </div>
+            <div className="chip c3">
+              <span className="c-dot week" />
+              <b>{dueThisWeek}</b> 项任务本周截止
+            </div>
           </div>
-          <div className="chip c2">
-            <span className="c-dot todo" />
-            还有 <b>{todo}</b> 项任务等待开始
-          </div>
-          <div className="chip c3">
-            <span className="c-dot risk" />
-            有 <b>{risk}</b> 项任务临近逾期
+          <div className="chip-row">
+            <div className="chip c4">
+              <span className="c-dot doing" />
+              <b>{doing}</b> 项任务正在进行中
+            </div>
+            <div className="chip c5">
+              <span className="c-dot plan" />
+              今日计划 <b>{plannedToday}</b> 项任务
+            </div>
           </div>
         </div>
 

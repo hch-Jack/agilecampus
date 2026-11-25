@@ -34,6 +34,10 @@ import { CompletionRequestModal } from "@/components/completion-request-modal";
 import { WorkbenchApprovalModal } from "./approval-status-modal";
 import { ApprovalHistoryModal } from "./approval-history-modal";
 import { isOverdueTask, sortBoardTasks } from "@/lib/workbench-order";
+import {
+  workbenchColumnForTask,
+  type WorkbenchColumnKey,
+} from "@/lib/workbench-board-columns";
 
 export /** 看板列命中：用指针位置兜底，避免 dnd-kit 的 over 在某些布局/缩放下为空 */
 function columnKeyAt(x: number, y: number): string | null {
@@ -72,12 +76,20 @@ export type WorkbenchTask = {
 // 与 TASK_WRITE_ROLES（lib/task.ts）同集：admin/student 可写，teacher 只读。
 const WRITE_ROLES = ["admin", "student"];
 
-// 三列固定（照 board-columns.ts 的 status 分支；不共用 deriveColumns，其签名绑 members/milestones）
-const COLUMNS = [
-  { key: "todo", label: "待办", tone: "text-todo" },
-  { key: "doing", label: "进行中", tone: "text-doing" },
-  { key: "done", label: "已完成", tone: "text-done" },
-] as const;
+// 四列固定（照 board-columns.ts 的 status 分支；不共用 deriveColumns，其签名绑 members/milestones）。
+// 「待审批」由 pending 的完成申请派生，不新增任务状态；带申请的任务只出现在这一列。
+const COLUMNS: ReadonlyArray<{
+  key: WorkbenchColumnKey;
+  label: string;
+  tone: string;
+  /** 落列提交的状态补丁：待审批列等同「已完成」，由审批流转成完成申请 */
+  patch: ColumnPatch;
+}> = [
+  { key: "todo", label: "待办", tone: "text-todo", patch: { status: "todo" } },
+  { key: "doing", label: "进行中", tone: "text-doing", patch: { status: "doing" } },
+  { key: "pending", label: "待审批", tone: "text-medium", patch: { status: "done" } },
+  { key: "done", label: "已完成", tone: "text-done", patch: { status: "done" } },
+];
 
 // 完成审批状态的醒目徽章：学生提交完成申请后出现在自己的任务卡上，
 // 点开可看审批详情（审批中/已通过/已驳回）。stopPropagation 防误触拖拽。
@@ -263,7 +275,7 @@ function Column({
     <div
       ref={setNodeRef}
       data-board-column={column.key}
-      // 手机上三列会竖排，空列 min-h-40 会把整块撑得很长，缩到 6rem
+      // 手机上多列会竖排，空列 min-h-40 会把整块撑得很长，缩到 6rem
       className={`proj-column ac-scroll-hidden min-h-40 space-y-2 rounded-xl border border-line p-3 transition-colors max-sm:min-h-24 ${
         isOver || highlight ? "drop" : ""
       }`}
@@ -310,7 +322,7 @@ export function WorkbenchBoard({
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
   // 「隐藏已完成」时连整列一起收掉：服务端已经把 done 任务过滤掉，
-  // 再留一个空列只会白占三分之一宽度
+  // 再留一个空列只会白占四分之一宽度
   const columns = hideDone ? COLUMNS.filter((c) => c.key !== "done") : COLUMNS;
   const [activeTask, setActiveTask] = useState<WorkbenchTask | null>(null);
   // 学生拖到「已完成」→ 完成申请弹窗（确认 + 填写完成情况/附件）；审批详情弹窗
@@ -346,8 +358,20 @@ export function WorkbenchBoard({
   }, [activeTask]);
   const [optimisticTasks, moveOptimistic] = useOptimistic(
     tasks,
-    (current, move: { taskId: string; patch: ColumnPatch }) =>
-      current.map((t) => (t.id === move.taskId ? { ...t, ...move.patch } : t)),
+    (
+      current,
+      move: { taskId: string; patch: ColumnPatch; clearApproval?: boolean },
+    ) =>
+      current.map((t) =>
+        t.id === move.taskId
+          ? {
+              ...t,
+              ...move.patch,
+              // 待审批卡拖回待办/进行中 = 撤回申请：同步摘掉申请状态，卡片立即回列
+              ...(move.clearApproval ? { approvalStatus: undefined } : {}),
+            }
+          : t,
+      ),
   );
   // 与项目看板同一口径：鼠标按下移 4px 即拖；触屏长按 250ms 才拖，否则交给页面滚动
   const sensors = useSensors(
@@ -376,26 +400,42 @@ export function WorkbenchBoard({
     dragPointRef.current = null;
     const over = event.over?.id ?? (point ? columnKeyAt(point.x, point.y) : null);
     if (!over) return;
-    const key = String(over) as (typeof COLUMNS)[number]["key"];
-    if (!columns.some((c) => c.key === key)) return;
+    const key = String(over) as WorkbenchColumnKey;
+    const column = columns.find((c) => c.key === key);
     const task = optimisticTasks.find((t) => t.id === taskId);
-    // 已在目标列则无须提交
-    if (!task || task.status === key) return;
+    // 已在目标列则无须提交（待审批列的卡底层状态可能已是 doing，不能只比 status）
+    if (!column || !task || workbenchColumnForTask(task) === key) return;
 
-    const patch: ColumnPatch = { status: key };
-    // 学生把任务拖到「已完成」：不直接落列，先弹完成申请窗（确认 + 完成情况/附件）。
+    const isPending = task.approvalStatus === "pending";
+
+    // 审批中的卡片只允许拖回待办/进行中（= 撤回申请）；拖到待审批/已完成不作为
+    if (isPending && column.patch.status === "done") return;
+
+    // 学生把任务拖到「待审批」或「已完成」：需要审批的才弹完成申请窗（确认 + 完成情况/附件）。
     // 任务停留在原列，提交受理后由整页回流带出「审批中」徽章。
     // 建任务时关掉了「需要审批」的任务不弹窗，走下面的普通改状态分支直接完成。
-    if (key === "done" && task.role === "student" && task.status !== "done" && task.requireApproval) {
+    if (
+      column.patch.status === "done" &&
+      task.role === "student" &&
+      task.status !== "done" &&
+      task.requireApproval
+    ) {
       setCompletionTask(task);
       return;
     }
+    // 待审批卡拖回待办/进行中：服务端 updateTask 会撤掉未决申请，客户端同步清字段
+    const clearApproval = isPending;
+
     startTransition(async () => {
       setError(null);
-      moveOptimistic({ taskId, patch });
+      moveOptimistic({ taskId, patch: column.patch, clearApproval });
       // 复用项目看板的 action：权限校验在 updateTask 内逐任务判角色（teacher 拒），
       // 完成后刷新当前 /dashboard 路由，顺带失效项目页缓存
-      const res = await moveTaskAction({ taskId, projectId: task.projectId, patch });
+      const res = await moveTaskAction({
+        taskId,
+        projectId: task.projectId,
+        patch: column.patch,
+      });
       if (res?.error) {
         setError(res.error);
         return;
@@ -484,7 +524,7 @@ export function WorkbenchBoard({
               <Column
                 key={col.key}
                 column={col}
-                tasks={optimisticTasks.filter((t) => t.status === col.key)}
+                tasks={optimisticTasks.filter((t) => workbenchColumnForTask(t) === col.key)}
                 today={today}
                 locked={locked}
                 highlight={overKey === col.key}
