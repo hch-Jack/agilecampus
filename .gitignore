@@ -47,6 +47,9 @@ next-env.d.ts
 # 本机 agent 工具配置（.agents/ 与 .claude/skills/ 内容重复）
 /.agents/
 /.claude/launch.json
+# .claude/skills 下由 skills CLI 建的 junction（指向已忽略的 .agents/，提交会变成 41MB 实体文件）
+/.claude/skills/*
+!/.claude/skills/agilecampus/
 
 # 本地 compose 覆盖文件（端口改 5433 等），不入库
 docker-compose.override.yml
