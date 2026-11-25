@@ -1,70 +1,52 @@
-import { and, count, eq, isNotNull, lte, or } from "drizzle-orm";
-import { db } from "@/db";
-import { projects, tasks } from "@/db/schema";
-import { addDays, todayIn } from "./time";
+import { addDays, todayIn, weekdayOfDate } from "./time";
+import { listMyTasks } from "./task";
+import { listMyTaskPlans, type TaskPlanSegment } from "./task-plan";
+import { buildWorkbenchStats } from "./workbench-stats";
 
 export type WelcomeStats = {
+  overdue: number;
+  dueToday: number;
+  dueThisWeek: number;
   doing: number;
-  todo: number;
-  risk: number;
-  phaseDone: number;
-  phaseTotal: number;
-  totalDone: number;
-  totalTotal: number;
+  plannedToday: number;
 };
 
-function sumByStatus(rows: { status: string; n: number }[]) {
-  const todo = Number(rows.find((r) => r.status === "todo")?.n ?? 0);
-  const doing = Number(rows.find((r) => r.status === "doing")?.n ?? 0);
-  const done = Number(rows.find((r) => r.status === "done")?.n ?? 0);
-  return { todo, doing, done, total: todo + doing + done };
+/**
+ * 今日计划数：计划段是闭区间，一个任务当天可能有多段；按「任务」去重，
+ * 与日程表格子里的 `plannedTasksOnDay` 口径一致。
+ */
+export function countPlannedTasksOnDay(
+  plans: Record<string, TaskPlanSegment[]>,
+  day: string,
+): number {
+  return Object.values(plans).filter((segments) =>
+    segments.some((segment) => segment.start <= day && day <= segment.end),
+  ).length;
 }
 
-// 欢迎页数据（只读）：进行中 / 待办 / 临近逾期 + 两条进度。
-// tz 由调用方解析后传入 —— 本模块不读 cookie，保持「给什么时区就按什么算」。
+/**
+ * 欢迎页数据（只读）：四项任务统计 + 今日计划。
+ *
+ * 统计口径与工作台「任务统计」一致（我的任务 = 进行中项目里的顶层任务，
+ * 按用户时区的日历串比较日期）；今日计划直接读日程表的个人排期。
+ */
 export async function getWelcomeStats(userId: string, tz: string): Promise<WelcomeStats> {
-  // 我的全部任务，按状态聚合
-  const mineRows = await db
-    .select({ status: tasks.status, n: count() })
-    .from(tasks)
-    .where(eq(tasks.assigneeId, userId))
-    .groupBy(tasks.status);
-  const mine = sumByStatus(mineRows);
+  const tasks = await listMyTasks(userId);
+  const today = todayIn(tz);
+  const weekEnd = addDays(today, (7 - weekdayOfDate(today)) % 7);
+  const stats = buildWorkbenchStats(tasks, today, weekEnd);
 
-  // 「本阶段」＝我参与的进行中(active)项目里的任务
-  const phaseRows = await db
-    .select({ status: tasks.status, n: count() })
-    .from(tasks)
-    .innerJoin(projects, eq(tasks.projectId, projects.id))
-    .where(and(eq(tasks.assigneeId, userId), eq(projects.status, "active")))
-    .groupBy(tasks.status);
-  const phase = sumByStatus(phaseRows);
-
-  // 临近逾期：未完成且截止日期在 3 天内（含已逾期）。
-  // 边界走「用户的今天是哪一天 + 3」的纯日历运算 —— 原先是
-  // `setDate` 加三天再 toISOString()，那等于拿 UTC 的今天往后推，
-  // 北京时间晚上 8 点后整体偏一天。
-  const warnStr = addDays(todayIn(tz), 3);
-  const [riskRow] = await db
-    .select({ n: count() })
-    .from(tasks)
-    .where(
-      and(
-        eq(tasks.assigneeId, userId),
-        or(eq(tasks.status, "todo"), eq(tasks.status, "doing")),
-        isNotNull(tasks.dueDate),
-        lte(tasks.dueDate, warnStr),
-      ),
-    );
+  // 日程表的计划只覆盖我的任务，故这里用同一批 taskId 取计划段
+  const plans = await listMyTaskPlans(
+    userId,
+    tasks.map((task) => task.id),
+  );
 
   return {
-    doing: mine.doing,
-    todo: mine.todo,
-    risk: Number(riskRow?.n ?? 0),
-    phaseDone: phase.done,
-    phaseTotal: phase.total,
-    totalDone: mine.done,
-    totalTotal: mine.total,
+    overdue: stats.overdue,
+    dueToday: stats.today,
+    dueThisWeek: stats.week,
+    doing: stats.doing,
+    plannedToday: countPlannedTasksOnDay(plans, today),
   };
 }
-

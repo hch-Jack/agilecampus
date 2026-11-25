@@ -314,7 +314,10 @@
 
 .welcome .chips {
   margin-top: 48px;
-  display: flex; flex-direction: column; align-items: center; gap: 20px;
+  display: flex; flex-direction: column; align-items: center; gap: 24px;
+}
+.welcome .chip-row {
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 24px;
 }
 .welcome .chip {
   display: inline-flex; align-items: center; gap: 9px;
@@ -327,14 +330,18 @@
   animation: welcome-floaty 3.6s ease-in-out infinite;
   will-change: transform;
 }
-.welcome .chip.c1 { margin-left: -100px; animation-duration: 3.2s; }
-.welcome .chip.c2 { margin-left: 0; animation-duration: 3.9s; animation-delay: -1.3s; }
-.welcome .chip.c3 { margin-left: 100px; animation-duration: 3.5s; animation-delay: -2.4s; }
+.welcome .chip.c1 { animation-duration: 3.2s; }
+.welcome .chip.c2 { animation-duration: 3.9s; animation-delay: -1.3s; }
+.welcome .chip.c3 { animation-duration: 3.5s; animation-delay: -2.4s; }
+.welcome .chip.c4 { animation-duration: 3.7s; animation-delay: -0.7s; }
+.welcome .chip.c5 { animation-duration: 4.1s; animation-delay: -1.9s; }
 .welcome .chip b { font-weight: 500; font-size: 15px; color: var(--ice-dim); font-family: Georgia, "Songti SC", serif; }
 .welcome .c-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .welcome .c-dot.doing { background: #9cc4f5; box-shadow: 0 0 8px rgba(156, 196, 245, .8); }
-.welcome .c-dot.todo { background: #6f95cf; }
-.welcome .c-dot.risk { background: #d8a35f; box-shadow: 0 0 8px rgba(216, 163, 95, .6); }
+.welcome .c-dot.overdue { background: #f0855e; box-shadow: 0 0 8px rgba(240, 133, 94, .7); }
+.welcome .c-dot.today { background: #e0b06a; box-shadow: 0 0 8px rgba(224, 176, 106, .6); }
+.welcome .c-dot.week { background: #8fb8ea; box-shadow: 0 0 8px rgba(143, 184, 234, .55); }
+.welcome .c-dot.plan { background: #b8a6e8; box-shadow: 0 0 8px rgba(184, 166, 232, .6); }
 @keyframes welcome-floaty {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-9px); }
@@ -447,8 +454,10 @@
 .welcome.day .quote-by { text-shadow: 0 1px 10px rgba(255,255,255,.7); }
 .welcome.day .chip { background: rgba(255,255,255,.42); }
 .welcome.day .c-dot.doing { background: #4f7fc4; box-shadow: 0 0 8px rgba(79,127,196,.7); }
-.welcome.day .c-dot.todo { background: #6f8fc4; }
-.welcome.day .c-dot.risk { background: #c98a3f; box-shadow: 0 0 8px rgba(201,138,63,.5); }
+.welcome.day .c-dot.overdue { background: #c2573a; box-shadow: 0 0 8px rgba(194,87,58,.5); }
+.welcome.day .c-dot.today { background: #b98631; box-shadow: 0 0 8px rgba(185,134,49,.5); }
+.welcome.day .c-dot.week { background: #4f7fc4; box-shadow: 0 0 8px rgba(79,127,196,.6); }
+.welcome.day .c-dot.plan { background: #7a63b8; box-shadow: 0 0 8px rgba(122,99,184,.5); }
 .welcome.day .enter { background: rgba(255,255,255,.42); }
 .welcome.day .enter:hover { background: rgba(255,255,255,.62); border-color: rgba(20,34,60,.42); box-shadow: 0 0 24px -6px rgba(53,98,159,.5); }
 .welcome.day .brand .name { color: #c0c9d8; }
@@ -467,5 +476,7 @@
   .welcome .rail.left { left: 18px; } .welcome .rail.right { right: 18px; }
   .welcome .rail .track { height: 32vh; width: 7px; }
   .welcome .rail .label, .welcome .rail .pct { font-size: 11px; }
-  .welcome .chip.c1 { margin-left: -52px; } .welcome .chip.c3 { margin-left: 52px; }
+  .welcome .chips { margin-top: 36px; gap: 20px; }
+  .welcome .chip-row { gap: 20px; }
+  .welcome .chip { font-size: 12.5px; padding: 8px 16px; }
 }
